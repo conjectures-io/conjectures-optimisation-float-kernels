@@ -1,0 +1,20 @@
+# submission	mode	passed	stage	ratio_min	ratio_max
+# mode: gate = all stages; nopolicy = policy skipped, to test the stages behind it
+cheat	gate	false	policy	-	-
+direct	gate	true	score	0.70	0.90
+exploit-csimp	gate	false	policy	-	-
+exploit-eval	gate	false	policy	-	-
+exploit-forge	gate	false	policy	-	-
+exploit-publicimport	gate	false	policy	-	-
+exploit-skipkernel	gate	false	policy	-	-
+exploit-tactic	gate	false	policy	-	-
+exploit-tamper	gate	false	policy	-	-
+exploit-unsafeio	gate	false	policy	-	-
+fastlog	gate	true	score	0.45	0.62
+incumbent	gate	true	score	0.97	1.03
+mirror	gate	true	score	0.70	0.88
+textbook-unproved	gate	false	policy	-	-
+word	gate	true	score	0.97	1.03
+wrong	gate	false	statement	-	-
+exploit-forge	nopolicy	false	kernel	-	-
+exploit-tamper	nopolicy	false	statement	-	-

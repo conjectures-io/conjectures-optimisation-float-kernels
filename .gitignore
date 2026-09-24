@@ -1,0 +1,14 @@
+# Lean build output and fetched dependencies (FloatLib, Mathlib)
+lean/.lake/
+# The miner file the gate copies in before each build
+lean/work/
+# Gate state: pinned incumbent binary, sandbox scratch, lock, run records
+pinned/
+.sandbox/
+gate.lock
+logs/
+results/
+# Python
+.venv/
+__pycache__/
+.ruff_cache/
