@@ -1,0 +1,3 @@
+# The chain watcher and the weight setter (./setup.sh --chain); nothing else imports it.
+# Bounded because bittensor 11.x removed Subtensor.get_uid_for_hotkey_on_subnet.
+bittensor>=10.4.1,<11
