@@ -3,15 +3,16 @@
 ## Quick Summary
 
 - You submit one Lean file, `Kernel.lean`: a binary32 addition `Submission.add` and a proof `Submission.add_spec` that it equals FloatLib's reference `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the kernel, audits axioms, then times your kernel against the incumbent. Lower time wins.
-- The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `submissions/fastlog`, runs at **0.53x** of its time; an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
-- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 18 expected verdicts in about 4 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
-- The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror` and `fastlog` are three accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
+- The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `submissions/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
+- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 25 expected verdicts in about 9 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
+- The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror`, `fastlog` and `tuned` are four accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
+- Two more slots, binary32 `mul` and `fma`, run on the same gate with `--slot mul|fma` (section 13); their incumbents are FloatLib's own kernels and nothing faster is proven yet.
 - Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
 
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                                # 18/18 cases as expected = ready
+.venv/bin/python selftest.py                                # 25/25 cases as expected = ready
 cp -r submissions/textbook-unproved my-kernel               # the fast adder, one sorry left
 .venv/bin/python gate.py --bench my-kernel                  # speed only, proof not checked
 .venv/bin/python gate.py my-kernel                          # the real gate: all six stages
@@ -47,7 +48,7 @@ export PATH=$HOME/.elan/bin:$PATH
 ### Test the environment
 
 ```bash
-.venv/bin/python selftest.py     # about 4 minutes
+.venv/bin/python selftest.py     # about 9 minutes
 ```
 
 The self-test gates every fixture in `submissions/` and compares each verdict with
@@ -56,10 +57,12 @@ It also reruns `exploit-forge` and `exploit-tamper` with policy skipped, to show
 policy hold on their own. A healthy machine ends with:
 
 ```
-[selftest] ok   wrong                  gate
-[selftest] ok   exploit-forge          nopolicy
-[selftest] ok   exploit-tamper         nopolicy
-[selftest] 18/18 cases as expected
+[selftest] ok   exploit-forge          add  nopolicy
+[selftest] ok   exploit-tamper         add  nopolicy
+[selftest] ok   mul-incumbent          mul  gate
+...
+[selftest] ok   fma-wrong              fma  gate
+[selftest] 25/25 cases as expected
 ```
 
 Exit code 0 means the toolchain, the build, the sandbox, the kernel re-check and the timing all
@@ -76,8 +79,8 @@ and rerun.
 | a busy core 3 | `BENCH_CPU=5` (any idle core) | same pinning on another core |
 
 Everything runs from the repository root. A submission directory can live anywhere; pass its path.
-The gate builds `pinned/bench_incumbent`, the incumbent's timing binary, on its first run and
-rebuilds it whenever the bench, the contract, the lakefile or the toolchain changes.
+The gate builds `pinned/<slot>/bench_incumbent`, each slot's incumbent timing binary, on its first
+run and rebuilds it whenever the bench, the contract, the lakefile or the toolchain changes.
 
 ## 2. What you submit
 
@@ -129,14 +132,17 @@ Where the ladder stands today, on the reference machine:
 | `word` | `Configured.Backend.wordAdd` called directly | accepted | 1.000x: the dispatch layer is free, calling deeper buys nothing |
 | `direct` | the word kernel `addFiniteImpl?` on raw bits, skipping the carrier codec | accepted | 0.80x |
 | `mirror` | `addFiniteImpl?` step for step on bare words, no `Option` or `Model` | accepted | 0.78x |
-| `fastlog` | `mirror` with a binary-search `log2` in the rounding step | **accepted** | **0.53x** (near-one 0.61, wide-gap 0.44, cancel 0.57) |
+| `fastlog` | `mirror` with a binary-search `log2` in the rounding step | **accepted** | 0.53x (near-one 0.61, wide-gap 0.44, cancel 0.57) |
+| `tuned` | `fastlog` with a one-compare special test and the rounding step on machine words | **accepted** | **0.50x** (near-one 0.56, wide-gap 0.40, cancel 0.55) |
 | `textbook-unproved` | guard/round/sticky adder in `UInt32`/`UInt64`, falls back for specials | rejected, `sorry` | **0.40x** (near-one 0.40, wide-gap 0.27, cancel 0.57) |
 | `wrong` | subtraction with the addition theorem | rejected at statement | |
 
 Where the time went, measured on the same seed: the carrier codec and the `Option`/`Model`
 wrappers cost about 20% (`direct`, `mirror`); `UInt64.log2`, which the runtime computes one bit at
 a time, cost about 30% more (`fastlog`). Removing the `Nat` conversions in the rounding step bought
-nothing. What is left between 0.53x and the textbook adder's 0.40x is the algorithm itself: the
+nothing before `fastlog`; on top of it, together with a one-compare special-operand test, it buys
+6.5% (`tuned`, 0.934 of `fastlog`'s time over three paired runs). What is left between 0.50x and
+the textbook adder's 0.40x is the algorithm itself: the
 certified kernel rounds a 64-bit aligned sum through a general-purpose `roundProduct`, the textbook
 adder keeps three guard bits and rounds directly. Beating `fastlog` by a lot needs a new algorithm
 and a new rounding proof.
@@ -261,7 +267,11 @@ and show the word kernel returns your bits (`impl_eq` in `mirror`: unfold `addFi
 
 **Changing a helper, not the algorithm** (`fastlog`): prove the new helper equals the old one on
 every input, then `rw` it into FloatLib's function. `fastLog2_eq : fastLog2 x = x.log2` is about 70 lines
-of `Nat.log2_eq_iff`, one step lemma used six times, and `omega`.
+of `Nat.log2_eq_iff`, one step lemma used six times, and `omega`. `tuned` adds three more of the
+same kind, 128 lines in all: `sp1_eq` (the one-compare test is the four comparisons, by moving to
+`toNat` and letting `omega` handle the shifts and masks), `rseAny_eq` (a word shift rounds like the
+natural-number one) and `mkW_ofNat` (packing on words is `mkBits`, which only reads its fields
+through `UInt32.ofNat`).
 
 **Route 2: a new algorithm down to the dyadic model.** Rewrite with `addFiniteImpl_eq` and
 `addFinite_eq`, and prove your bits equal `roundDyadic (addDyadic dx dy)` on the fast path. This is
@@ -321,7 +331,7 @@ cp -r submissions/textbook-unproved my-kernel
 ## 11. Read in this order
 
 1. `lean/contract/Contract.lean` - the obligation, 23 lines.
-2. `submissions/incumbent/Kernel.lean`, then `submissions/fastlog/Kernel.lean` - the start and the best proven kernel, with every proof pattern of section 7.
+2. `submissions/incumbent/Kernel.lean`, then `submissions/fastlog/Kernel.lean` and `submissions/tuned/Kernel.lean` - the start and the best proven kernels, with every proof pattern of section 7.
 3. `submissions/textbook-unproved/Kernel.lean` - the unproved target at 0.40x.
 4. `lean/.lake/packages/floatlib/FloatLib/Floats/ExecFloat/Backends/Word/Narrow/Addition/Runtime.lean` - the incumbent's kernel, 80 lines.
 5. `.../Word/Narrow/Addition/Proof.lean` - its proof, 563 lines: the argument you will adapt.
@@ -365,3 +375,39 @@ python miner/submit.py leaderboard --url http://<validator>:9300
 - **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin. Ties go to the earlier submission.
 - **Emission:** a placeholder until rewards are announced. The leaderboard's first qualifying hotkey receives the winner share and the rest burns.
 - **Later slots** use the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.
+
+## 13. The multiplication and fused multiply-add slots
+
+Everything above applies, with these names swapped in. Pass `--slot` to the gate; the default is `add`.
+
+| slot | kernel you define | theorem you prove | gate statement | incumbent |
+|---|---|---|---|---|
+| `add` | `Submission.add x y` | `add_spec : ∀ x y, add x y = ExecFloat.Spec.add x y` | `Obligation` | `ExecFloat.add` |
+| `mul` | `Submission.mul x y` | `mul_spec : ∀ x y, mul x y = ExecFloat.Spec.mul x y` | `MulObligation` | `ExecFloat.mul` |
+| `fma` | `Submission.fma x y z` | `fma_spec : ∀ x y z, fma x y z = ExecFloat.Spec.fma x y z` | `FmaObligation` | `ExecFloat.fma` |
+
+```bash
+.venv/bin/python gate.py --slot mul --bench my-mul          # time an unproved multiplication
+.venv/bin/python gate.py --slot fma submissions/fma-word     # the full gate on the fma slot
+```
+
+`ExecFloat.Spec.fma` rounds once: `x * y + z` computed exactly, then rounded. Multiplying,
+rounding and adding is a different function, and `submissions/fma-wrong` shows it fails to prove.
+FloatLib's word kernels `Configured.Backend.wordMul` and `wordFma`, with `wordMul_eq_spec` and
+`wordFma_eq_spec`, play the role `wordAdd` plays in section 7.
+
+Each slot times its own operand classes, 500,000 calls each, summed:
+
+| slot | class | operands |
+|---|---|---|
+| `mul` | `near-one` | both factors within 3 binades of one |
+| `mul` | `spread` | exponents over the whole normal range: overflow, underflow and normal products |
+| `mul` | `tiny` | products in the subnormal range |
+| `fma` | `near-one` | all three near one, a dot product's accumulate step |
+| `fma` | `cancel` | a negative addend the size of the product: cancellation |
+| `fma` | `wide` | an addend 20 to 40 binades from the product, either side |
+
+Where to look first: FloatLib's fma takes about 250 ns on the `wide` class against about 65 ns on
+the other two, so the far-addend path is the obvious target. The summed score weights classes by
+the incumbent's time, so `wide` is about two thirds of the fma score.
+

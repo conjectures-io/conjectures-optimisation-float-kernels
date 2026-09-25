@@ -3,18 +3,20 @@
 ## Quick Summary
 
 - A proof-gated speed competition on [FloatLib](https://github.com/lean-dojo/FloatLib)'s verified floating-point kernels. A miner submits one Lean file: a binary32 addition `Submission.add` and a proof that it equals `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the Lean kernel, audits axioms, then times the kernel against the incumbent. Lower time wins.
-- The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `submissions/fastlog`, runs at **0.53x** of its time; an unproved textbook adder reaches **0.40x**.
+- The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `submissions/tuned`, runs at **0.50x** of its time (`fastlog` 0.53x); an unproved textbook adder reaches **0.40x**.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected. This README is the overview for operators and reviewers.
-- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 18 expected verdicts (about 4 minutes).
+- Three slots share one gate: binary32 `add` (the main one), `mul` and `fma`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma`). The validator service accepts `add` submissions only for now.
+- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 25 expected verdicts across the three slots (about 9 minutes).
 - A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                        # 18/18 cases as expected = ready
+.venv/bin/python selftest.py                        # 25/25 cases as expected = ready
 .venv/bin/python gate.py submissions/fastlog        # intake, policy, statement, kernel, axioms, score
 .venv/bin/python gate.py --bench my-kernel          # time an unproved kernel; never a verdict
+.venv/bin/python gate.py --slot mul submissions/mul-incumbent   # the multiplication slot
 ```
 
 ## How the gate works
@@ -43,15 +45,16 @@ Same seed, 500k pairs per operand class, 25 rounds, one CPU:
 | `word` | `Configured.Backend.wordAdd` called directly | accepted | 1.00x: dispatch is free |
 | `direct` | the word kernel `addFiniteImpl?` on raw bits, no carrier codec | accepted | 0.80x |
 | `mirror` | `addFiniteImpl?` step for step on bare words, no `Option` or `Model` | accepted | 0.78x |
-| `fastlog` | `mirror` with a binary-search `log2` in `roundProduct` | accepted | **0.53x** |
+| `fastlog` | `mirror` with a binary-search `log2` in `roundProduct` | accepted | 0.53x |
+| `tuned` | `fastlog` with a one-compare special test and a rounding step on machine words | accepted | **0.50x** |
 | `textbook-unproved` | guard/round/sticky adder, specials to `ExecFloat.add` | rejected at policy (`sorry`) | 0.40x with `--bench` |
 | `wrong` | subtraction with the addition theorem | rejected at statement | |
 | `cheat` | the host FPU with `native_decide` | rejected at policy | |
 
 Where the incumbent's time goes: the carrier codec and the `Option`/`Model` wrappers around the
 word kernel cost about 20%; `UInt64.log2`, which the runtime computes one bit at a time, about 30%.
-None of the three accepted faster kernels needed new floating-point reasoning: each proves it
-equals `wordAdd` and reuses `wordAdd_eq_spec`. Below 0.53x the cost is the algorithm itself, and
+None of the four accepted faster kernels needed new floating-point reasoning: each proves it
+equals `wordAdd` and reuses `wordAdd_eq_spec`. Below 0.50x the cost is the algorithm itself, and
 beating it means proving a new rounding argument, FloatLib's own being 563 lines.
 
 ## Security model
@@ -121,8 +124,9 @@ Each process runs from `validator/` (`cd validator && python -m service.api`); p
 | `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the leaderboard's first qualifying hotkey (placeholder rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
 
 **Promoting a winner** is an operator step: copy the winning `Kernel.lean` somewhere stable, set
-`GATE_INCUMBENT` to it in `.env`, and restart the gate worker. The gate rebuilds the pinned
-binary on its next run, and the leaderboard moves to the new incumbent's ratios.
+`GATE_INCUMBENT` to it in `.env` (`GATE_INCUMBENT_MUL`, `GATE_INCUMBENT_FMA` for the other slots),
+and restart the gate worker. The gate rebuilds that slot's pinned binary under `pinned/<slot>/`
+on its next run, and the leaderboard moves to the new incumbent's ratios.
 
 The service layer is ported from our DEFLATE competition (conjectures-miniz-oxide):
 registrations and entitlement claims, the Postgres rate limiter, signed timestamps, the

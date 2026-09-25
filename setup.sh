@@ -62,4 +62,4 @@ if [ "$chain" = 1 ]; then
   log "installing the bittensor SDK"
   .venv/bin/pip install -q -r requirements-chain.txt
 fi
-log "done - test the environment: .venv/bin/python selftest.py (about 4 minutes)"
+log "done - test the environment: .venv/bin/python selftest.py (about 9 minutes)"
