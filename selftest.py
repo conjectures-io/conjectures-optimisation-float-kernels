@@ -39,15 +39,19 @@ def load() -> list[Case]:
     return cases
 
 
-def check(case: Case, digest: str) -> str | None:
-    # Gates one case and returns what differs from the expectation, or None.
+def run_case(name: str, mode: str, digest: str) -> gate.Verdict:
+    # Gates one submission; mode `nopolicy` skips the policy stage to test the stages behind it.
     stages = gate.STAGES
-    if case.mode == "nopolicy":
+    if mode == "nopolicy":
         gate.STAGES = [s for s in stages if s[0] != "policy"]
     try:
-        v = gate.gate(HERE / "submissions" / case.name, digest)
+        return gate.gate(HERE / "submissions" / name, digest)
     finally:
         gate.STAGES = stages
+
+
+def check(case: Case, v: gate.Verdict) -> str | None:
+    # What differs between a verdict and its expectation, or None.
     if (v.passed, v.stage) != (case.passed, case.stage):
         return f"got passed={v.passed} stage={v.stage} ({v.reason[:120]})"
     if case.ratio_min is not None and not (case.ratio_min <= (v.ratio or 0) <= case.ratio_max):
@@ -65,7 +69,7 @@ def main() -> int:
         fcntl.flock(lock, fcntl.LOCK_EX)
         digest = gate.pin()
         for case in cases:
-            problem = check(case, digest)
+            problem = check(case, run_case(case.name, case.mode, digest))
             status = "FAIL" if problem else "ok"
             logger.info(f"[selftest] {status:4} {case.name:22} {case.mode:8} {problem or ''}")
             if problem:

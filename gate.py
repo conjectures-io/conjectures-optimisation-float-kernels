@@ -29,7 +29,10 @@ LAYER = HERE / ".sandbox" / "layer"
 OWN_STEMS = {"Submission", "Verify", "Main", "bench"}
 WORK = LIB / "work" / "Submission.lean"
 PINNED = HERE / "pinned" / "bench_incumbent"
-INCUMBENT = HERE / "submissions" / "incumbent" / "Kernel.lean"
+# The kernel submissions are timed against; point it at a winner to promote it (repins).
+INCUMBENT = Path(
+    os.environ.get("GATE_INCUMBENT", HERE / "submissions" / "incumbent" / "Kernel.lean")
+)
 # Everything the pinned binary is built from; a change to any of them rebuilds it.
 PIN_INPUTS = [INCUMBENT] + [
     LIB / p
@@ -337,34 +340,45 @@ def run_stages(src: Path, v: Verdict, stages: list) -> None:
 
 
 def main() -> int:
-    # Gates each submission directory under one lock, writing a log and a JSON result per run.
-    args = [a for a in sys.argv[1:] if a != "--bench"]
-    mode = "bench" if "--bench" in sys.argv else "gate"
-    if not args:
+    # Gates each submission under one lock; exit 0 all accepted, 1 any rejected, 2 validator error.
+    argv = sys.argv[1:]
+    verdict_path = None
+    if "--verdict" in argv:
+        i = argv.index("--verdict")
+        verdict_path = Path(argv[i + 1]) if i + 1 < len(argv) else None
+        argv = argv[:i] + argv[i + 2 :]
+    args = [a for a in argv if a != "--bench"]
+    mode = "bench" if "--bench" in argv else "gate"
+    if not args or ("--verdict" in sys.argv and (verdict_path is None or len(args) != 1)):
         print("usage: gate.py [--bench] submissions/<name> [...]")
+        print("       gate.py <submission dir> --verdict <file.json>   (one submission)")
         return 2
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     logger.add(HERE / "logs" / f"gate-{stamp}.log", level="DEBUG")
     results = HERE / "results"
     results.mkdir(exist_ok=True)
-    failed = 0
+    failed, broken = 0, False
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             digest = pin()
         except Exception:  # noqa: BLE001 - no pinned incumbent means nothing can be scored
             logger.exception("[pin] failed")
-            return 1
+            return 2
         for arg in args:
             v = gate(Path(arg).resolve(), digest, mode)
             out = results / f"{v.submission}-{mode}-{stamp}.json"
             out.write_text(json.dumps(asdict(v), indent=2))
+            if verdict_path is not None:
+                verdict_path.write_text(json.dumps(asdict(v), indent=2))
             logger.info(
                 f"[{mode}] {v.submission} passed={v.passed} stage={v.stage} ratio={v.ratio}"
                 + (" (UNPROVED - bench only, not a verdict)" if mode == "bench" else "")
             )
             failed += not v.passed
-    return 1 if failed else 0
+            # A stage that crashed is the validator's fault, not the miner's.
+            broken = broken or v.reason.startswith("gate error:")
+    return 2 if broken else 1 if failed else 0
 
 
 if __name__ == "__main__":
