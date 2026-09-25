@@ -9,7 +9,7 @@ from .engine import create_db_engine, database_url, session_factory, session_sco
 from .ratelimit import RateLimiter
 from .registrations import NoSlot, RegistrationsDb
 from .scoring import ScoredSubmission, ScoringDb
-from .status import PENDING, SubmissionState
+from .status import PENDING, SLOTS, SubmissionState
 from .submissions import SubmissionsDb
 
 __all__ = [
@@ -18,6 +18,7 @@ __all__ = [
     "RateLimiter",
     "RegistrationsDb",
     "ScoredSubmission",
+    "SLOTS",
     "ScoringDb",
     "Store",
     "SubmissionState",

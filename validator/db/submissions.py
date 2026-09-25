@@ -39,18 +39,19 @@ class SubmissionsDb:
         self._registrations = RegistrationsDb(sessions)
 
     # --- writing --------------------------------------------------------------
-    def add(self, hotkey: str, digest: str) -> tuple[int, bool]:
+    def add(self, hotkey: str, digest: str, slot: str = "add") -> tuple[int, bool]:
         # Queue a submission; returns (id, fresh), and a resubmitted file keeps its id.
         with session_scope(self._sessions) as session:
             stmt = (
                 insert(models.Submission)
                 .values(
                     hotkey=hotkey,
+                    slot=slot,
                     digest=digest,
                     submitted_at=clock.now(),
                     state=SubmissionState.QUEUED.value,
                 )
-                .on_conflict_do_nothing(index_elements=["hotkey", "digest"])
+                .on_conflict_do_nothing(index_elements=["hotkey", "slot", "digest"])
                 .returning(models.Submission.id)
             )
             fresh_id = session.execute(stmt).scalar_one_or_none()
@@ -58,7 +59,9 @@ class SubmissionsDb:
                 return int(fresh_id), True
             existing = session.execute(
                 select(models.Submission.id).where(
-                    models.Submission.hotkey == hotkey, models.Submission.digest == digest
+                    models.Submission.hotkey == hotkey,
+                    models.Submission.slot == slot,
+                    models.Submission.digest == digest,
                 )
             ).scalar_one()
             return int(existing), False
@@ -195,19 +198,22 @@ class SubmissionsDb:
                 ).scalar_one()
             )
 
-    def current_incumbent(self) -> str | None:
-        # The incumbent of the newest verdict; promoting a new one makes older ratios incomparable.
+    def current_incumbent(self, slot: str = "add") -> str | None:
+        # The slot's incumbent at its newest verdict; a promotion makes older ratios incomparable.
         with session_scope(self._sessions) as session:
             return session.execute(
                 select(models.Submission.incumbent_sha256)
-                .where(models.Submission.incumbent_sha256.is_not(None))
+                .where(
+                    models.Submission.slot == slot,
+                    models.Submission.incumbent_sha256.is_not(None),
+                )
                 .order_by(models.Submission.id.desc())
                 .limit(1)
             ).scalar_one_or_none()
 
-    def leaderboard(self) -> list[models.Submission]:
-        # Each hotkey's best accepted ratio vs the incumbent, fastest first, earlier wins ties.
-        incumbent = self.current_incumbent()
+    def leaderboard(self, slot: str = "add") -> list[models.Submission]:
+        # Each hotkey's best accepted ratio vs the slot's incumbent, fastest first, ties earlier.
+        incumbent = self.current_incumbent(slot)
         if incumbent is None:
             return []
         with session_scope(self._sessions) as session:
@@ -216,6 +222,7 @@ class SubmissionsDb:
                     select(models.Submission)
                     .distinct(models.Submission.hotkey)
                     .where(
+                        models.Submission.slot == slot,
                         models.Submission.state == SubmissionState.ACCEPTED.value,
                         models.Submission.ratio.is_not(None),
                         models.Submission.incumbent_sha256 == incumbent,

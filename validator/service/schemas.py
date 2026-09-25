@@ -22,6 +22,7 @@ class Ready(Health):
 class SubmitAccepted(BaseModel):
     # The queued submission's id, and how many registrations the hotkey has left to spend.
     submission: int
+    slot: str
     state: str
     digest: str
     slots_remaining: int
@@ -33,6 +34,7 @@ class SubmissionView(BaseModel):
 
     id: int
     hotkey: str
+    slot: str
     digest: str
     submitted_at: str
     state: str
@@ -56,7 +58,8 @@ class Ranking(BaseModel):
 
 
 class Leaderboard(BaseModel):
-    # Fastest first; `qualifies` marks ratios at or below the promotion bar.
+    # One slot's board, fastest first; `qualifies` marks ratios at or below the promotion bar.
+    slot: str
     incumbent_sha256: str | None = None
     promotion_bar: float
     ranking: list[Ranking]

@@ -20,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from .status import STATE_VALUES
+from .status import SLOTS, STATE_VALUES
 
 
 class Base(DeclarativeBase):
@@ -63,6 +63,8 @@ class Submission(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     hotkey: Mapped[str] = mapped_column(Text, nullable=False)
+    # Which competition slot the kernel is for: add, mul or fma.
+    slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="add")
     # sha256(Kernel.lean), hex: what the miner signed, and the submission's identity.
     digest: Mapped[str] = mapped_column(Text, nullable=False)
     submitted_at: Mapped[dt.datetime] = mapped_column(
@@ -94,7 +96,8 @@ class Submission(Base):
     claim: Mapped[EntitlementClaim | None] = relationship(back_populates="submission")
 
     __table_args__ = (
-        UniqueConstraint("hotkey", "digest", name="uq_submissions_hotkey_digest"),
+        UniqueConstraint("hotkey", "slot", "digest", name="uq_submissions_hotkey_slot_digest"),
+        CheckConstraint(f"slot IN ({_in_list(SLOTS)})", name="ck_submissions_slot"),
         CheckConstraint("digest ~ '^[0-9a-f]{64}$'", name="ck_submissions_digest"),
         CheckConstraint(
             "incumbent_sha256 IS NULL OR incumbent_sha256 ~ '^[0-9a-f]{64}$'",

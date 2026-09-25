@@ -19,9 +19,10 @@ def digest_of(kernel: bytes) -> str:
     return hashlib.sha256(kernel).hexdigest()
 
 
-def submit_message(digest: str, hotkey: str, timestamp: int) -> bytes:
-    # What a miner signs: file digest, hotkey and timestamp, so a signature fits one upload once.
-    return f"submit:{digest}:{hotkey}:{timestamp}".encode()
+def submit_message(digest: str, hotkey: str, timestamp: int, slot: str = "add") -> bytes:
+    # What a miner signs: slot, file digest, hotkey and timestamp - one upload to one slot, once.
+    prefix = "submit" if slot == "add" else f"submit:{slot}"
+    return f"{prefix}:{digest}:{hotkey}:{timestamp}".encode()
 
 
 def verify(hotkey: str, message: bytes, signature_hex: str) -> bool:

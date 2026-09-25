@@ -30,6 +30,8 @@ class StatusResult(TypedDict):
     id: int
     state: str
     submitted_at: str
+    # The competition slot; absent from pre-slot services, so read with .get().
+    slot: NotRequired[str]
     stage: str | None
     reason: str | None
     ratio: float | None
@@ -45,7 +47,7 @@ class LeaderboardEntry(TypedDict):
 
 
 class LeaderboardResult(TypedDict):
-    # GET /leaderboard.
+    # GET /leaderboard?slot=...
     incumbent_sha256: str | None
     promotion_bar: float
     ranking: list[LeaderboardEntry]
@@ -60,8 +62,9 @@ def kernel_of(d: Path) -> bytes:
 
 
 def cmd_submit(args: argparse.Namespace) -> None:
-    # Hash the file, sign (hash, hotkey, now), upload; print the submission id.
+    # Hash the file, sign (slot, hash, hotkey, now), upload; print the submission id.
     d, hotkey, url = cast(str, args.dir), cast(str, args.hotkey), cast(str, args.url)
+    slot = cast(str, args.slot)
     lean = kernel_of(Path(d))
     kp = sig.load_keypair(hotkey)
     digest = sig.digest_of(lean)
@@ -71,8 +74,9 @@ def cmd_submit(args: argparse.Namespace) -> None:
         f"{url}/submit",
         data={
             "hotkey": kp.ss58_address,
-            "signature": sig.sign(kp, sig.submit_message(digest, kp.ss58_address, timestamp)),
+            "signature": sig.sign(kp, sig.submit_message(digest, kp.ss58_address, timestamp, slot)),
             "timestamp": timestamp,
+            "slot": slot,
         },
         files={"Kernel.lean": ("Kernel.lean", lean)},
         timeout=TIMEOUT,
@@ -87,7 +91,7 @@ def cmd_submit(args: argparse.Namespace) -> None:
             reason = nested.get("reason", nested)
         sys.exit(f"submit refused ({r.status_code}): {reason}")
     s = cast(SubmitResult, r.json())
-    print(f"submission {s['submission']} {s['state']}  digest {digest}")
+    print(f"submission {s['submission']} ({slot}) {s['state']}  digest {digest}")
     if (left := s.get("slots_remaining")) is not None:
         print(f"{left} registration slot(s) left; one registration buys one accepted submission")
     print(f"check with: submit.py status {s['submission']} --url {url}")
@@ -100,7 +104,8 @@ def cmd_status(args: argparse.Namespace) -> None:
     if r.status_code != 200:
         sys.exit(f"{r.status_code}: {r.text}")
     s = cast(StatusResult, r.json())
-    print(f"submission {s['id']}  state {s['state']}  submitted {s['submitted_at']}")
+    slot = s.get("slot", "add")
+    print(f"submission {s['id']} ({slot})  state {s['state']}  submitted {s['submitted_at']}")
     if s["stage"]:
         print(f"stage {s['stage']}" + (f": {s['reason']}" if s["reason"] else ""))
     if s["ratio"] is not None:
@@ -110,13 +115,14 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def cmd_leaderboard(args: argparse.Namespace) -> None:
-    # Print the ranking.
-    url = cast(str, args.url)
-    r = requests.get(f"{url}/leaderboard", timeout=TIMEOUT)
+    # Print one slot's ranking.
+    url, slot = cast(str, args.url), cast(str, args.slot)
+    r = requests.get(f"{url}/leaderboard", params={"slot": slot}, timeout=TIMEOUT)
     if r.status_code != 200:
         sys.exit(f"{r.status_code}: {r.text}")
     b = cast(LeaderboardResult, r.json())
-    print(f"incumbent {(b['incumbent_sha256'] or '-')[:16]}; promotion bar {b['promotion_bar']}x")
+    inc = (b["incumbent_sha256"] or "-")[:16]
+    print(f"slot {slot}; incumbent {inc}; promotion bar {b['promotion_bar']}x")
     if not b["ranking"]:
         print("leaderboard: empty")
         return
@@ -139,11 +145,13 @@ def main() -> None:
     p.add_argument("dir", help="submission directory with Kernel.lean")
     p.add_argument("--hotkey", required=True, help="Bittensor hotkey file (or //Alice for tests)")
     p.add_argument("--url", required=True, help="service URL, e.g. http://host:9300")
+    p.add_argument("--slot", default="add", choices=["add", "mul", "fma"], help="default add")
     st = sub.add_parser("status")
     st.add_argument("id", type=int)
     st.add_argument("--url", required=True)
     lb = sub.add_parser("leaderboard")
     lb.add_argument("--url", required=True)
+    lb.add_argument("--slot", default="add", choices=["add", "mul", "fma"])
     args = ap.parse_args()
     CMDS[cast(str, args.cmd)](args)
 

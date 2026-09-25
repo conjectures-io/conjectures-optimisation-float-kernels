@@ -32,7 +32,8 @@ class ScoringDb:
         # Each hotkey's best accepted ratio against the current incumbent, fastest first.
         return [
             ScoredSubmission(r.id, r.hotkey, float(r.ratio or 0.0), r.submitted_at)
-            for r in self._submissions.leaderboard()
+            # Only the add board pays until the rewards say how emission splits across slots.
+            for r in self._submissions.leaderboard("add")
         ]
 
     def record_weight_set(

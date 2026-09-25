@@ -47,9 +47,12 @@ def recorded(verdict: Path) -> dict[str, object]:
     }
 
 
-def run_gate(submission_dir: Path, verdict: Path) -> subprocess.CompletedProcess[str]:
-    # Run gate.py over one submission directory, capped; a timeout rejects with its reason.
+def run_gate(
+    submission_dir: Path, verdict: Path, slot: str = "add"
+) -> subprocess.CompletedProcess[str]:
+    # Run gate.py over one submission directory in its slot, capped; a timeout rejects.
     cmd = [sys.executable, str(GATE), str(submission_dir), "--verdict", str(verdict)]
+    cmd += ["--slot", slot]
     with subprocess.Popen(
         cmd,
         cwd=GATE.parent,
@@ -83,10 +86,10 @@ def run_gate(submission_dir: Path, verdict: Path) -> subprocess.CompletedProcess
 
 def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> str:
     # Gate one claimed submission; an undefined exit or no verdict requeues it uncharged.
-    logger.info(f"[worker] verifying submission {sub.id} ({sub.hotkey[:8]}…)")
+    logger.info(f"[worker] verifying submission {sub.id} slot={sub.slot} ({sub.hotkey[:8]}…)")
     with tempfile.TemporaryDirectory(prefix=f"gate-{sub.id}-") as tmp:
         verdict = Path(tmp) / "verdict.json"
-        result = run_gate(settings.submission_dir(sub.id), verdict)
+        result = run_gate(settings.submission_dir(sub.id), verdict, sub.slot)
         fields = recorded(verdict)
     state = STATE_OF_EXIT.get(result.returncode)
 
