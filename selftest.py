@@ -18,8 +18,9 @@ EXPECTED = HERE / "submissions" / "expected.tsv"
 
 @dataclass
 class Case:
-    # One expected verdict: the submission, how to gate it, and what must come out.
+    # One expected verdict: the submission, its slot, how to gate it, and what must come out.
     name: str
+    slot: str
     mode: str
     passed: bool
     stage: str
@@ -33,19 +34,19 @@ def load() -> list[Case]:
     for line in EXPECTED.read_text().splitlines():
         if not line.strip() or line.startswith("#"):
             continue
-        name, mode, passed, stage, lo, hi = line.split("\t")
+        name, slot, mode, passed, stage, lo, hi = line.split("\t")
         bound = [None if b == "-" else float(b) for b in (lo, hi)]
-        cases.append(Case(name, mode, passed == "true", stage, bound[0], bound[1]))
+        cases.append(Case(name, slot, mode, passed == "true", stage, bound[0], bound[1]))
     return cases
 
 
-def run_case(name: str, mode: str, digest: str) -> gate.Verdict:
+def run_case(case: Case, digest: str) -> gate.Verdict:
     # Gates one submission; mode `nopolicy` skips the policy stage to test the stages behind it.
     stages = gate.STAGES
-    if mode == "nopolicy":
+    if case.mode == "nopolicy":
         gate.STAGES = [s for s in stages if s[0] != "policy"]
     try:
-        return gate.gate(HERE / "submissions" / name, digest)
+        return gate.gate(HERE / "submissions" / case.name, digest, slot=case.slot)
     finally:
         gate.STAGES = stages
 
@@ -67,11 +68,13 @@ def main() -> int:
     failures = []
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        digest = gate.pin()
+        digests = {slot: gate.pin(gate.SLOTS[slot]) for slot in sorted({c.slot for c in cases})}
         for case in cases:
-            problem = check(case, run_case(case.name, case.mode, digest))
+            problem = check(case, run_case(case, digests[case.slot]))
             status = "FAIL" if problem else "ok"
-            logger.info(f"[selftest] {status:4} {case.name:22} {case.mode:8} {problem or ''}")
+            logger.info(
+                f"[selftest] {status:4} {case.name:22} {case.slot:4} {case.mode:8} {problem or ''}"
+            )
             if problem:
                 failures.append(case.name)
     logger.info(f"[selftest] {len(cases) - len(failures)}/{len(cases)} cases as expected")

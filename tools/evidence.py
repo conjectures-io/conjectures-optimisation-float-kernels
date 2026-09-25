@@ -235,7 +235,7 @@ def main() -> int:
     t0 = time.monotonic()
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        digest = gate.pin()
+        digest = gate.pin(gate.SLOTS["add"])
         env = environment(digest)
         rows = gate_rows(digest)
         contain = containment(digest)

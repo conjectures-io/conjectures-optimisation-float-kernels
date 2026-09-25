@@ -1,4 +1,4 @@
-"""Proof-gated FloatLib kernel gate - intake, policy, statement, axioms, score - one at a time."""
+"""Proof-gated FloatLib kernel gate - intake, policy, statement, axioms, score - per slot."""
 
 from __future__ import annotations
 
@@ -25,26 +25,70 @@ BUILD = LIB / ".lake" / "build"
 CONFIG = LIB / ".lake" / "config"
 SCRATCH = HERE / ".sandbox" / "config"
 LAYER = HERE / ".sandbox" / "layer"
-# Build outputs a submission may write, by file stem: its module, the gate, the bench binary.
-OWN_STEMS = {"Submission", "Verify", "Main", "bench"}
+# Build outputs a submission may write, by file stem: its module, the gates, the bench binaries.
+OWN_STEMS = {"Submission", "Verify", "VerifyMul", "VerifyFma", "Main", "MainMul", "MainFma"}
+OWN_STEMS |= {"bench", "benchMul", "benchFma"}
 WORK = LIB / "work" / "Submission.lean"
-PINNED = HERE / "pinned" / "bench_incumbent"
-# The kernel submissions are timed against; point it at a winner to promote it (repins).
-INCUMBENT = Path(
-    os.environ.get("GATE_INCUMBENT", HERE / "submissions" / "incumbent" / "Kernel.lean")
-)
-# Everything the pinned binary is built from; a change to any of them rebuilds it.
-PIN_INPUTS = [INCUMBENT] + [
+# Shared inputs of every pinned binary; a change to any of them rebuilds it.
+SHARED_INPUTS = [
     LIB / p
-    for p in (
-        "bench/Bench.lean",
-        "bench/Main.lean",
-        "contract/Contract.lean",
-        "lakefile.lean",
-        "lake-manifest.json",
-        "lean-toolchain",
-    )
+    for p in ("bench/Bench.lean", "contract/Contract.lean", "lakefile.lean")
+    + ("lake-manifest.json", "lean-toolchain")
 ]
+
+
+@dataclass(frozen=True)
+class Slot:
+    # One competition slot: its Lean gate module, its bench exe and main, and its incumbent.
+    name: str
+    verify: str
+    bench: str
+    main: str
+    incumbent: Path
+
+    @property
+    def pinned(self) -> Path:
+        # The incumbent's bench binary, built once per change of its inputs.
+        return HERE / "pinned" / self.name / "bench_incumbent"
+
+    @property
+    def inputs(self) -> list[Path]:
+        # Everything the pinned binary is built from.
+        return [self.incumbent, LIB / "bench" / self.main] + SHARED_INPUTS
+
+
+# Each slot's incumbent; point GATE_INCUMBENT[_MUL|_FMA] at a winner to promote it (repins).
+SLOTS = {
+    "add": Slot(
+        "add",
+        "Verify",
+        "bench",
+        "Main.lean",
+        Path(os.environ.get("GATE_INCUMBENT", HERE / "submissions" / "incumbent" / "Kernel.lean")),
+    ),
+    "mul": Slot(
+        "mul",
+        "VerifyMul",
+        "benchMul",
+        "MainMul.lean",
+        Path(
+            os.environ.get(
+                "GATE_INCUMBENT_MUL", HERE / "submissions" / "mul-incumbent" / "Kernel.lean"
+            )
+        ),
+    ),
+    "fma": Slot(
+        "fma",
+        "VerifyFma",
+        "benchFma",
+        "MainFma.lean",
+        Path(
+            os.environ.get(
+                "GATE_INCUMBENT_FMA", HERE / "submissions" / "fma-incumbent" / "Kernel.lean"
+            )
+        ),
+    ),
+}
 LAKE = str(Path.home() / ".elan" / "bin" / "lake")
 
 _PAIRS = int(os.environ.get("BENCH_PAIRS", "500000"))
@@ -80,6 +124,7 @@ BANNED = re.compile(
 class Verdict:
     # One submission's outcome, logged and written as the JSON result.
     submission: str
+    slot: str = "add"
     mode: str = "gate"
     stage: str = "intake"
     passed: bool = False
@@ -152,23 +197,23 @@ def errors(out: str) -> str:
     return " | ".join(ln.strip() for ln in out.splitlines() if "error" in ln)[:600]
 
 
-def pin() -> str:
-    # Refreshes the Lake config, rebuilds the pinned incumbent when its inputs change; its sha256.
+def pin(slot: Slot) -> str:
+    # Refreshes the Lake config, rebuilds the slot's pinned incumbent when its inputs change.
     subprocess.run([LAKE, "env", "true"], cwd=LIB, check=True, capture_output=True)
-    inputs = hashlib.sha256(b"".join(p.read_bytes() for p in PIN_INPUTS)).hexdigest()
-    stamp = PINNED.with_name("inputs.sha256")
-    if not PINNED.exists() or not stamp.exists() or stamp.read_text() != inputs:
-        logger.info(f"[pin] building bench from submissions/incumbent, inputs {inputs[:16]}")
+    inputs = hashlib.sha256(b"".join(p.read_bytes() for p in slot.inputs)).hexdigest()
+    stamp = slot.pinned.with_name("inputs.sha256")
+    if not slot.pinned.exists() or not stamp.exists() or stamp.read_text() != inputs:
+        logger.info(f"[pin] building {slot.bench} from {slot.incumbent}, inputs {inputs[:16]}")
         WORK.parent.mkdir(exist_ok=True)
-        shutil.copy2(INCUMBENT, WORK)
-        code, out = run([LAKE, "build", "bench"], _BUILD_TIMEOUT, build="trusted")
+        shutil.copy2(slot.incumbent, WORK)
+        code, out = run([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="trusted")
         if code != 0:
-            raise RuntimeError(f"the incumbent bench does not build: {errors(out)}")
-        PINNED.parent.mkdir(exist_ok=True)
-        shutil.copy2(BUILD / "bin" / "bench", PINNED)
+            raise RuntimeError(f"the {slot.name} incumbent bench does not build: {errors(out)}")
+        slot.pinned.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(BUILD / "bin" / slot.bench, slot.pinned)
         stamp.write_text(inputs)
-    digest = hashlib.sha256(PINNED.read_bytes()).hexdigest()
-    logger.info(f"[pin] incumbent {PINNED} sha256={digest[:16]}")
+    digest = hashlib.sha256(slot.pinned.read_bytes()).hexdigest()
+    logger.info(f"[pin] {slot.name} incumbent {slot.pinned} sha256={digest[:16]}")
     return digest
 
 
@@ -205,12 +250,13 @@ def policy(src: Path, v: Verdict) -> str | None:
 
 def statement(src: Path, v: Verdict) -> str | None:
     # The obligation typechecks and the bench links, writing only into this submission's layer.
+    slot = SLOTS[v.slot]
     WORK.parent.mkdir(exist_ok=True)
     shutil.copy2(src, WORK)
-    code, out = run([LAKE, "build", "Verify"], _BUILD_TIMEOUT, build="write")
+    code, out = run([LAKE, "build", slot.verify], _BUILD_TIMEOUT, build="write")
     if code != 0:
         return f"the obligation does not typecheck: {errors(out)}"
-    code, out = run([LAKE, "build", "bench"], _BUILD_TIMEOUT, build="write")
+    code, out = run([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="write")
     if code != 0:
         return f"the bench binary does not build: {errors(out)}"
     if bad := foreign(LAYER / "upper"):
@@ -220,8 +266,8 @@ def statement(src: Path, v: Verdict) -> str | None:
 
 
 def kernel(src: Path, v: Verdict) -> str | None:
-    # Replays Submission and Verify declarations through the kernel instead of trusting oleans.
-    for module in ("Submission", "Verify"):
+    # Replays Submission and the slot's gate through the kernel instead of trusting oleans.
+    for module in ("Submission", SLOTS[v.slot].verify):
         code, out = run([LAKE, "env", "leanchecker", module], _BUILD_TIMEOUT, build="read")
         if code != 0:
             return f"leanchecker rejects {module}: {out.strip()[-300:]}"
@@ -231,7 +277,8 @@ def kernel(src: Path, v: Verdict) -> str | None:
 
 def axioms(src: Path, v: Verdict) -> str | None:
     # `#print axioms accepted` lists Lean's three and nothing else.
-    code, out = run([LAKE, "env", "lean", "verify/Verify.lean"], _BUILD_TIMEOUT, build="read")
+    gate_file = f"verify/{SLOTS[v.slot].verify}.lean"
+    code, out = run([LAKE, "env", "lean", gate_file], _BUILD_TIMEOUT, build="read")
     m = re.search(r"depends on axioms: \[([^\]]*)\]", out.replace("\n", " "))
     if code != 0 or not m:
         return f"no axiom report: {errors(out) or out[-300:]}"
@@ -255,9 +302,10 @@ def score(src: Path, v: Verdict) -> str | None:
     # Alternates incumbent and submission processes on a fresh seed; checksums must match per class.
     v.seed = int(os.environ.get("BENCH_SEED", secrets.randbelow(2**32)))
     logger.info(f"[score] seed={v.seed} pairs={_PAIRS} rounds={_ROUNDS} cpu={_BENCH_CPU or 'any'}")
+    slot = SLOTS[v.slot]
     runs: dict[str, list[dict[str, tuple[int, int]]]] = {"inc": [], "sub": []}
     for r in range(_ROUNDS):
-        order = [("inc", PINNED, ""), ("sub", BUILD / "bin" / "bench", "read")]
+        order = [("inc", slot.pinned, ""), ("sub", BUILD / "bin" / slot.bench, "read")]
         for who, binary, build in order if r % 2 == 0 else order[::-1]:
             res = bench(binary, v.seed, build)
             if isinstance(res, str):
@@ -306,9 +354,9 @@ BENCH_STAGES = [("intake", intake), ("statement", statement), ("score", score)]
 # ── Entry point ──────────────────────────────────────────────
 
 
-def gate(sub_dir: Path, digest: str, mode: str = "gate") -> Verdict:
+def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> Verdict:
     # Gates one submission on a fresh build layer, which is dropped afterwards.
-    v = Verdict(submission=sub_dir.name, mode=mode, incumbent_sha256=digest)
+    v = Verdict(submission=sub_dir.name, slot=slot, mode=mode, incumbent_sha256=digest)
     src, t0 = sub_dir / "Kernel.lean", time.monotonic()
     wipe(LAYER)
     (LAYER / "upper").mkdir(parents=True)
@@ -341,17 +389,20 @@ def run_stages(src: Path, v: Verdict, stages: list) -> None:
 
 def main() -> int:
     # Gates each submission under one lock; exit 0 all accepted, 1 any rejected, 2 validator error.
-    argv = sys.argv[1:]
-    verdict_path = None
-    if "--verdict" in argv:
-        i = argv.index("--verdict")
-        verdict_path = Path(argv[i + 1]) if i + 1 < len(argv) else None
-        argv = argv[:i] + argv[i + 2 :]
+    argv, opts = sys.argv[1:], {}
+    for flag in ("--verdict", "--slot"):
+        if flag in argv:
+            i = argv.index(flag)
+            opts[flag] = argv[i + 1] if i + 1 < len(argv) else None
+            argv = argv[:i] + argv[i + 2 :]
+    verdict_path = Path(opts["--verdict"]) if opts.get("--verdict") else None
+    slot = opts.get("--slot", "add")
     args = [a for a in argv if a != "--bench"]
     mode = "bench" if "--bench" in argv else "gate"
-    if not args or ("--verdict" in sys.argv and (verdict_path is None or len(args) != 1)):
-        print("usage: gate.py [--bench] submissions/<name> [...]")
-        print("       gate.py <submission dir> --verdict <file.json>   (one submission)")
+    bad_verdict = "--verdict" in sys.argv and (verdict_path is None or len(args) != 1)
+    if not args or bad_verdict or slot not in SLOTS:
+        print("usage: gate.py [--bench] [--slot add|mul|fma] submissions/<name> [...]")
+        print("       gate.py <submission dir> [--slot add|mul|fma] --verdict <file.json>")
         return 2
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     logger.add(HERE / "logs" / f"gate-{stamp}.log", level="DEBUG")
@@ -361,18 +412,19 @@ def main() -> int:
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            digest = pin()
+            digest = pin(SLOTS[slot])
         except Exception:  # noqa: BLE001 - no pinned incumbent means nothing can be scored
             logger.exception("[pin] failed")
             return 2
         for arg in args:
-            v = gate(Path(arg).resolve(), digest, mode)
+            v = gate(Path(arg).resolve(), digest, mode, slot)
             out = results / f"{v.submission}-{mode}-{stamp}.json"
             out.write_text(json.dumps(asdict(v), indent=2))
             if verdict_path is not None:
                 verdict_path.write_text(json.dumps(asdict(v), indent=2))
             logger.info(
-                f"[{mode}] {v.submission} passed={v.passed} stage={v.stage} ratio={v.ratio}"
+                f"[{mode}] {v.submission} slot={slot} passed={v.passed} stage={v.stage} "
+                f"ratio={v.ratio}"
                 + (" (UNPROVED - bench only, not a verdict)" if mode == "bench" else "")
             )
             failed += not v.passed

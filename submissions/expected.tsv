@@ -1,20 +1,27 @@
-# submission	mode	passed	stage	ratio_min	ratio_max
+# submission	slot	mode	passed	stage	ratio_min	ratio_max
 # mode: gate = all stages; nopolicy = policy skipped, to test the stages behind it
-cheat	gate	false	policy	-	-
-direct	gate	true	score	0.70	0.90
-exploit-csimp	gate	false	policy	-	-
-exploit-eval	gate	false	policy	-	-
-exploit-forge	gate	false	policy	-	-
-exploit-publicimport	gate	false	policy	-	-
-exploit-skipkernel	gate	false	policy	-	-
-exploit-tactic	gate	false	policy	-	-
-exploit-tamper	gate	false	policy	-	-
-exploit-unsafeio	gate	false	policy	-	-
-fastlog	gate	true	score	0.45	0.62
-incumbent	gate	true	score	0.97	1.03
-mirror	gate	true	score	0.70	0.88
-textbook-unproved	gate	false	policy	-	-
-word	gate	true	score	0.97	1.03
-wrong	gate	false	statement	-	-
-exploit-forge	nopolicy	false	kernel	-	-
-exploit-tamper	nopolicy	false	statement	-	-
+cheat	add	gate	false	policy	-	-
+direct	add	gate	true	score	0.70	0.90
+exploit-csimp	add	gate	false	policy	-	-
+exploit-eval	add	gate	false	policy	-	-
+exploit-forge	add	gate	false	policy	-	-
+exploit-publicimport	add	gate	false	policy	-	-
+exploit-skipkernel	add	gate	false	policy	-	-
+exploit-tactic	add	gate	false	policy	-	-
+exploit-tamper	add	gate	false	policy	-	-
+exploit-unsafeio	add	gate	false	policy	-	-
+fastlog	add	gate	true	score	0.45	0.62
+incumbent	add	gate	true	score	0.97	1.03
+mirror	add	gate	true	score	0.70	0.88
+textbook-unproved	add	gate	false	policy	-	-
+tuned	add	gate	true	score	0.42	0.58
+word	add	gate	true	score	0.97	1.03
+wrong	add	gate	false	statement	-	-
+exploit-forge	add	nopolicy	false	kernel	-	-
+exploit-tamper	add	nopolicy	false	statement	-	-
+mul-incumbent	mul	gate	true	score	0.97	1.03
+mul-word	mul	gate	true	score	0.97	1.03
+mul-wrong	mul	gate	false	statement	-	-
+fma-incumbent	fma	gate	true	score	0.97	1.03
+fma-word	fma	gate	true	score	0.97	1.03
+fma-wrong	fma	gate	false	statement	-	-

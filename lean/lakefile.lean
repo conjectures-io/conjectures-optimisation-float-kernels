@@ -6,9 +6,10 @@ open Lake DSL
 
 FloatLib is a pinned dependency; nothing in it is edited. `Contract` is pinned by the operator,
 `Submission` is the miner's `Kernel.lean` copied in by `gate.py`, `Verify` is the three-line
-statement check. `BenchCore` is the shared timing core and `bench` runs it over
-`Submission.add`; the gate pins one `bench` built from the incumbent's own submission, so a
-miner's build never touches the binary it is compared against. `micro` is the cost breakdown.
+statement check (`VerifyMul`, `VerifyFma` for the other slots). `BenchCore` is the shared timing
+core; `bench`, `benchMul` and `benchFma` run it over `Submission.add`, `.mul`, `.fma`. The gate pins
+each slot's bench built from that slot's incumbent submission, so a miner's build never touches
+the binary it is compared against. `micro` is the cost breakdown.
 -/
 
 package competition where
@@ -36,6 +37,22 @@ lean_lib BenchCore where
 lean_exe bench where
   srcDir := "bench"
   root := `Main
+
+lean_lib VerifyMul where
+  srcDir := "verify"
+  roots := #[`VerifyMul]
+
+lean_exe benchMul where
+  srcDir := "bench"
+  root := `MainMul
+
+lean_lib VerifyFma where
+  srcDir := "verify"
+  roots := #[`VerifyFma]
+
+lean_exe benchFma where
+  srcDir := "bench"
+  root := `MainFma
 
 lean_exe micro where
   srcDir := "bench"

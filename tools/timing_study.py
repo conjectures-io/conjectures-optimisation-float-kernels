@@ -74,7 +74,7 @@ def main() -> int:
     started = time.monotonic()
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        digest = gate.pin()
+        digest = gate.pin(gate.SLOTS["add"])
         i = 0
         while time.monotonic() - started < _MINUTES * 60:
             name = SUBMISSIONS[i % len(SUBMISSIONS)]
