@@ -12,3 +12,6 @@ results/
 .venv/
 __pycache__/
 .ruff_cache/
+# Validator secrets and state
+.env
+validator/.work/

@@ -1,0 +1,62 @@
+# The validator's store, and nothing else. The gate does not run in Docker: it needs
+# bubblewrap and the Lean toolchain that ./setup.sh puts on the host. This file brings up
+# Postgres and applies the migrations; the API, the gate worker and the chain workers run
+# beside it under pm2 (pm2/service.config.js).
+#
+#   docker compose up -d db          postgres, healthy
+#   docker compose up migrate        alembic upgrade head
+name: conjectures-floatlib
+
+services:
+  db:
+    image: postgres:17
+    container_name: conjectures_floatlib_db
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-conjectures}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-conjectures}
+      POSTGRES_DB: ${POSTGRES_DB:-conjectures}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Mounted as single files, not directories: a bind that names a missing path
+      # creates an empty *directory*, which is exactly what makes `config_file=...`
+      # fail and the container come up unhealthy.
+      - ./deploy/db/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./deploy/db/00_init.sh:/docker-entrypoint-initdb.d/00_init.sh:ro
+    shm_size: "256mb"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+  # One-shot: waits for the database, applies every migration, exits. Re-running
+  # `docker compose up migrate` is safe and idempotent.
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/migrate/Dockerfile
+    container_name: conjectures_floatlib_migrate
+    env_file: .env
+    environment:
+      # Inside the compose network the host is the service name, never localhost.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-conjectures}:${POSTGRES_PASSWORD:-conjectures}@db:5432/${POSTGRES_DB:-conjectures}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  pgdata:
