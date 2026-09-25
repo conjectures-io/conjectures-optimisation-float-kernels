@@ -5,15 +5,15 @@
 - A proof-gated speed competition on [FloatLib](https://github.com/lean-dojo/FloatLib)'s verified floating-point kernels. A miner submits one Lean file: a binary32 addition `Submission.add` and a proof that it equals `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the Lean kernel, audits axioms, then times the kernel against the incumbent. Lower time wins.
 - The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `submissions/tuned`, runs at **0.50x** of its time (`fastlog` 0.53x); an unproved textbook adder reaches **0.40x**.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected. This README is the overview for operators and reviewers.
-- Three slots share one gate: binary32 `add` (the main one), `mul` and `fma`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma`). The validator service accepts `add` submissions only for now.
-- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 25 expected verdicts across the three slots (about 9 minutes).
+- Three slots share one gate: binary32 `add` (the main one; best proven 0.50x), `mul` (best proven `mul-fast`, 0.55x) and `fma`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma`). The validator service accepts all three; only the `add` board pays until the rewards split is decided.
+- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 26 expected verdicts across the three slots (about 9 minutes).
 - A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                        # 25/25 cases as expected = ready
+.venv/bin/python selftest.py                        # 26/26 cases as expected = ready
 .venv/bin/python gate.py submissions/fastlog        # intake, policy, statement, kernel, axioms, score
 .venv/bin/python gate.py --bench my-kernel          # time an unproved kernel; never a verdict
 .venv/bin/python gate.py --slot mul submissions/mul-incumbent   # the multiplication slot
@@ -118,7 +118,7 @@ Each process runs from `validator/` (`cd validator && python -m service.api`); p
 
 | process | what it does |
 |---|---|
-| `submission-api` (`python -m service.api`) | `POST /submit`, `GET /submissions/{id}`, `GET /leaderboard`, `GET /health`, `GET /ready` on `SERVICE_PORT` (9300) |
+| `submission-api` (`python -m service.api`) | `POST /submit` (optional `slot`: add, mul, fma), `GET /submissions/{id}`, `GET /leaderboard?slot=`, `GET /health`, `GET /ready` on `SERVICE_PORT` (9300) |
 | `gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, runs `gate.py <dir> --verdict`, stores the verdict; exit 2 or no verdict is a validator error, requeued uncharged |
 | `chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
 | `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the leaderboard's first qualifying hotkey (placeholder rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |

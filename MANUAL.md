@@ -4,15 +4,15 @@
 
 - You submit one Lean file, `Kernel.lean`: a binary32 addition `Submission.add` and a proof `Submission.add_spec` that it equals FloatLib's reference `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the kernel, audits axioms, then times your kernel against the incumbent. Lower time wins.
 - The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `submissions/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
-- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 25 expected verdicts in about 9 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
+- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 26 expected verdicts in about 9 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
 - The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror`, `fastlog` and `tuned` are four accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
-- Two more slots, binary32 `mul` and `fma`, run on the same gate with `--slot mul|fma` (section 13); their incumbents are FloatLib's own kernels and nothing faster is proven yet.
+- Two more slots, binary32 `mul` and `fma`, run on the same gate with `--slot mul|fma` (section 13). `submissions/mul-fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma` yet.
 - Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
 
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                                # 25/25 cases as expected = ready
+.venv/bin/python selftest.py                                # 26/26 cases as expected = ready
 cp -r submissions/textbook-unproved my-kernel               # the fast adder, one sorry left
 .venv/bin/python gate.py --bench my-kernel                  # speed only, proof not checked
 .venv/bin/python gate.py my-kernel                          # the real gate: all six stages
@@ -62,7 +62,7 @@ policy hold on their own. A healthy machine ends with:
 [selftest] ok   mul-incumbent          mul  gate
 ...
 [selftest] ok   fma-wrong              fma  gate
-[selftest] 25/25 cases as expected
+[selftest] 26/26 cases as expected
 ```
 
 Exit code 0 means the toolchain, the build, the sandbox, the kernel re-check and the timing all
@@ -347,28 +347,32 @@ announcement.
 ```bash
 .venv/bin/pip install -r requirements-service.txt      # once: the client's signing and HTTP libraries
 python miner/submit.py submit my-kernel --hotkey ~/.bittensor/wallets/<w>/hotkeys/<h> --url http://<validator>:9300
+#   (add --slot mul or --slot fma for the other slots; the default is add)
 #   submission 12 queued  digest f5e2f885...
 python miner/submit.py status 12 --url http://<validator>:9300
 #   submission 12  state accepted
 #   stage score
 #   time vs incumbent 0.5347x (lower is faster)
-python miner/submit.py leaderboard --url http://<validator>:9300
+python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul|fma for the others
 #   rank    ratio qualifies  hotkey
 #      1   0.5347       yes  5Grw...
 ```
 
 | endpoint | what it does |
 |---|---|
-| `POST /submit` | multipart `Kernel.lean` plus `hotkey`, `signature`, `timestamp`; the client signs `submit:<sha256(Kernel.lean)>:<hotkey>:<timestamp>` with sr25519 |
-| `GET /submissions/{id}` | state (`queued`, `verifying`, `accepted`, `rejected`), the stage reached, the gate's reason, the ratio and per-class timings |
-| `GET /leaderboard` | every hotkey's best accepted ratio against the current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar |
+| `POST /submit` | multipart `Kernel.lean` plus `hotkey`, `signature`, `timestamp` and an optional `slot` (`add`, `mul`, `fma`; default `add`); the client signs `submit:<sha256(Kernel.lean)>:<hotkey>:<timestamp>` for `add` and `submit:<slot>:<sha256>:<hotkey>:<timestamp>` for the others, with sr25519 |
+| `GET /submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`), the stage reached, the gate's reason, the ratio and per-class timings |
+| `GET /leaderboard?slot=add` | one slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar |
 | `GET /health` | liveness, queue length, the promotion bar |
 
 **What the service enforces:**
 - The signature must match the hotkey and this exact file, and its timestamp must be within 5 minutes of the validator's clock, so a captured upload cannot be replayed.
 - **One registration buys one accepted submission.** A rejection costs nothing: fix it and resubmit. An acceptance spends one registration; to submit again, register again.
 - At most 10 signed writes a minute per hotkey, and at most as many queued submissions as you have unspent registrations.
-- The same file from the same hotkey is the same submission: resubmitting it returns the same id.
+- The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
+- A signature is bound to its slot: one made for `add` does not verify for `mul`, and the other way round.
+- Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `add`, `mul` or `fma`.)
+- **Only the `add` board pays for now.** `mul` and `fma` are gated, ranked and shown, but the weight setter scores `add` until the rewards say how emission splits across slots.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
 
 **Round rules (proposed, not final):**
@@ -407,7 +411,15 @@ Each slot times its own operand classes, 500,000 calls each, summed:
 | `fma` | `cancel` | a negative addend the size of the product: cancellation |
 | `fma` | `wide` | an addend 20 to 40 binades from the product, either side |
 
-Where to look first: FloatLib's fma takes about 250 ns on the `wide` class against about 65 ns on
+**`mul-fast` (0.55x, accepted):** FloatLib's `mulFiniteImpl?` on bare words with `tuned`'s
+`roundP`. All three slots round through the same `roundProduct`, and its `UInt64.log2` bit loop runs
+up to 47 times on a 48-bit product, so the fast `log2` pays even more here than in `add`. The
+special test is simpler: multiplication falls back only on NaN and infinity (`a <<< 1 ≥ 0xff000000`,
+lemma `sm1_eq`), because the rounding step already signs a zero product. Its proof is `tuned`'s
+`log2` and rounding lemmas unchanged plus the `mul` versions of `word32`, `dec_word` and `impl_eq`:
+328 lines, no floating-point reasoning. The same `roundP` swap applies to `fma`'s word path.
+
+Where to look first in `fma`: FloatLib's fma takes about 250 ns on the `wide` class against about 65 ns on
 the other two, so the far-addend path is the obvious target. The summed score weights classes by
 the incumbent's time, so `wide` is about two thirds of the fma score.
 
