@@ -20,6 +20,7 @@ wrong	add	gate	false	statement	-	-
 exploit-forge	add	nopolicy	false	kernel	-	-
 exploit-tamper	add	nopolicy	false	statement	-	-
 mul-incumbent	mul	gate	true	score	0.97	1.03
+mul-fast	mul	gate	true	score	0.48	0.62
 mul-word	mul	gate	true	score	0.97	1.03
 mul-wrong	mul	gate	false	statement	-	-
 fma-incumbent	fma	gate	true	score	0.97	1.03
