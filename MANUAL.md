@@ -6,7 +6,7 @@
 - The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `submissions/fastlog`, runs at **0.53x** of its time; an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
 - Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 18 expected verdicts in about 4 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
 - The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror` and `fastlog` are three accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
-- Status: the gate, the bench and the rules below are real and tested; the submission service, the rewards and the exact promotion bar are proposed, not final (section 12).
+- Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
 
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
@@ -328,14 +328,40 @@ cp -r submissions/textbook-unproved my-kernel
 6. `.../Dispatch/Add/Runtime.lean` and `Proof.lean` - how specials reach `generic`, and `word_eq_spec`.
 7. `lean/bench/Bench.lean` - exactly what is timed.
 
-## 12. Submitting and rounds (proposed, not final)
+## 12. Submitting, and the round rules
 
-Today the gate runs locally; there is no submission service yet. The plan follows our DEFLATE
-competition, whose service and rules already run:
+**Submitting is live.** A validator runs the service in `validator/`, and `miner/submit.py` talks
+to it. You need a hotkey registered on the subnet, and the service's URL from the round
+announcement.
 
-- Submission is one signed upload of `Kernel.lean` against a registered hotkey; the validator runs this exact gate on a pinned machine and CPU, on a fresh seed per run.
-- **Promotion (proposed):** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent. Timing noise on the reference machine is under 1% at 25 rounds, so 3% leaves margin. Ties go to the earlier submission.
-- A rejection costs nothing; you can resubmit.
-- Later slots use the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.
+```bash
+.venv/bin/pip install -r requirements-service.txt      # once: the client's signing and HTTP libraries
+python miner/submit.py submit my-kernel --hotkey ~/.bittensor/wallets/<w>/hotkeys/<h> --url http://<validator>:9300
+#   submission 12 queued  digest f5e2f885...
+python miner/submit.py status 12 --url http://<validator>:9300
+#   submission 12  state accepted
+#   stage score
+#   time vs incumbent 0.5347x (lower is faster)
+python miner/submit.py leaderboard --url http://<validator>:9300
+#   rank    ratio qualifies  hotkey
+#      1   0.5347       yes  5Grw...
+```
 
-Rewards, the exact bar and the service address will be announced before the first round.
+| endpoint | what it does |
+|---|---|
+| `POST /submit` | multipart `Kernel.lean` plus `hotkey`, `signature`, `timestamp`; the client signs `submit:<sha256(Kernel.lean)>:<hotkey>:<timestamp>` with sr25519 |
+| `GET /submissions/{id}` | state (`queued`, `verifying`, `accepted`, `rejected`), the stage reached, the gate's reason, the ratio and per-class timings |
+| `GET /leaderboard` | every hotkey's best accepted ratio against the current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar |
+| `GET /health` | liveness, queue length, the promotion bar |
+
+**What the service enforces:**
+- The signature must match the hotkey and this exact file, and its timestamp must be within 5 minutes of the validator's clock, so a captured upload cannot be replayed.
+- **One registration buys one accepted submission.** A rejection costs nothing: fix it and resubmit. An acceptance spends one registration; to submit again, register again.
+- At most 10 signed writes a minute per hotkey, and at most as many queued submissions as you have unspent registrations.
+- The same file from the same hotkey is the same submission: resubmitting it returns the same id.
+- Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
+
+**Round rules (proposed, not final):**
+- **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin. Ties go to the earlier submission.
+- **Emission:** a placeholder until rewards are announced. The leaderboard's first qualifying hotkey receives the winner share and the rest burns.
+- **Later slots** use the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.

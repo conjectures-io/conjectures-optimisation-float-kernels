@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # One-command setup for the FloatLib kernel competition: Lean toolchain, FloatLib + Mathlib, build, gate venv.
-#   ./setup.sh           install what is missing, then build (about 15 minutes the first time)
-#   ./setup.sh --check   report what is installed, change nothing
+#   ./setup.sh             install what is missing, then build (about 15 minutes the first time)
+#   ./setup.sh --check     report what is installed, change nothing
+#   ./setup.sh --service   also the validator service: API, gate worker, store client, .env
+#   ./setup.sh --chain     also the bittensor SDK the chain watcher and weight setter need
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 lean="$here/lean"
@@ -10,13 +12,28 @@ log() { echo "[setup] $(date -u +%H:%M:%S) $*"; }
 missing=0
 have() { if command -v "$1" >/dev/null 2>&1; then log "ok       $1"; else log "MISSING  $1 - $2"; missing=1; fi; }
 
+check=0; service=0; chain=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) check=1 ;;
+    --service) service=1 ;;
+    --chain) service=1; chain=1 ;;
+    *) log "unknown option $arg"; exit 2 ;;
+  esac
+done
+
 have python3 "apt install python3 python3-venv"
 have curl "apt install curl"
 have git "apt install git"
 have bwrap "apt install bubblewrap, or run the gate with GATE_SANDBOX=0 (never on a validator)"
 have taskset "apt install util-linux, or run the gate with BENCH_CPU= (noisier timing)"
 have lake "installed below via elan"
-if [ "${1:-}" = "--check" ]; then exit "$missing"; fi
+# The service's Postgres runs under docker compose (skip with a managed DATABASE_URL); pm2 runs its processes.
+if [ "$service" = 1 ]; then
+  have docker "install Docker Engine with the compose plugin, or point DATABASE_URL at a managed Postgres"
+  have pm2 "npm install -g pm2"
+fi
+[ "$check" = 1 ] && exit "$missing"
 
 # Lean: elan installs the toolchain pinned in lean/lean-toolchain on first use.
 if ! command -v lake >/dev/null 2>&1; then
@@ -36,4 +53,13 @@ lake build Contract Verify bench 2>&1 | tail -3
 cd "$here"
 [ -x .venv/bin/python ] || python3 -m venv .venv
 .venv/bin/pip install -q -r requirements.txt
+if [ "$service" = 1 ]; then
+  log "installing the validator service"
+  .venv/bin/pip install -q -r requirements-service.txt
+  [ -f .env ] || { cp .env.example .env; log "wrote .env from .env.example - set POSTGRES_PASSWORD"; }
+fi
+if [ "$chain" = 1 ]; then
+  log "installing the bittensor SDK"
+  .venv/bin/pip install -q -r requirements-chain.txt
+fi
 log "done - test the environment: .venv/bin/python selftest.py (about 4 minutes)"

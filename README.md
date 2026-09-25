@@ -6,6 +6,7 @@
 - The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `submissions/fastlog`, runs at **0.53x** of its time; an unproved textbook adder reaches **0.40x**.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected. This README is the overview for operators and reviewers.
 - One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 18 expected verdicts (about 4 minutes).
+- A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
@@ -77,12 +78,64 @@ reads 0.997 to 1.006x over four runs; with 9 rounds it swung to 0.956x, and unpi
 about 3%. A 3% promotion bar needs the 25 rounds and the pinned CPU. Knobs: `BENCH_SEED`,
 `BENCH_ROUNDS`, `BENCH_PAIRS`, `BENCH_CPU`, `GATE_SANDBOX`.
 
+A one-hour study (`tools/timing_study.py`, 2026-09-24) alternated 86 full gate runs, each on a
+fresh seed:
+
+| submission | runs | mean | stdev | min | max | at or below 0.97 |
+|---|---:|---:|---:|---:|---:|---:|
+| `incumbent` against itself | 43 | 1.0005 | 0.0043 | 0.9932 | 1.0135 | 0 |
+| `fastlog` | 43 | 0.5340 | 0.0044 | 0.5244 | 0.5563 | 43 |
+
+No run of the incumbent against itself came near the 3% bar (closest 0.993, about 5 standard
+deviations away), and `fastlog` cleared it every time. Single classes vary more than the total
+(incumbent self-ratio per class 0.98 to 1.02), which is why the score sums all three.
+
 `lake build micro && lean/.lake/build/bin/micro` breaks one addition down on the same operands:
 
 | operands | loop only | host FPU (unchecked) | certified word kernel | `ExecFloat.add` | textbook adder |
 |---|---|---|---|---|---|
 | random bit patterns | 5.2 ns | 17.0 ns | 27.2 ns | 27.2 ns | 18.9 ns |
 | near one | 5.2 ns | 8.4 ns | 32.5 ns | 32.6 ns | 15.3 ns |
+
+## Running a validator
+
+The gate runs on the host (it needs bubblewrap and the Lean toolchain); Postgres runs in
+Docker; the API, the gate worker and the two chain workers run under pm2.
+
+```bash
+./setup.sh --chain                          # everything above, plus the service and the bittensor SDK
+$EDITOR .env                                # POSTGRES_PASSWORD, the validator wallet, NETUID, BENCH_CPU
+docker compose up -d db                     # Postgres 17 on POSTGRES_PORT (default 5433)
+docker compose up migrate                   # alembic upgrade head
+pm2 start pm2/service.config.js             # submission-api, gate-worker, chain-watcher, weight-setter
+curl http://127.0.0.1:9300/health           # {"ok":true,"queued":0,"promotion_bar":0.97}
+```
+
+Each process runs from `validator/` (`cd validator && python -m service.api`); pm2 sets that directory itself.
+
+| process | what it does |
+|---|---|
+| `submission-api` (`python -m service.api`) | `POST /submit`, `GET /submissions/{id}`, `GET /leaderboard`, `GET /health`, `GET /ready` on `SERVICE_PORT` (9300) |
+| `gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, runs `gate.py <dir> --verdict`, stores the verdict; exit 2 or no verdict is a validator error, requeued uncharged |
+| `chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
+| `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the leaderboard's first qualifying hotkey (placeholder rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
+
+**Promoting a winner** is an operator step: copy the winning `Kernel.lean` somewhere stable, set
+`GATE_INCUMBENT` to it in `.env`, and restart the gate worker. The gate rebuilds the pinned
+binary on its next run, and the leaderboard moves to the new incumbent's ratios.
+
+The service layer is ported from our DEFLATE competition (conjectures-miniz-oxide):
+registrations and entitlement claims, the Postgres rate limiter, signed timestamps, the
+queue with stale-claim recovery, and the weight-setting audit trail are unchanged. What is new is
+the single-file submission, the ratio-based leaderboard filtered to the current incumbent, and
+the king-of-the-hill placeholder scorer in `validator/scoring.py`.
+
+```bash
+# The service tests: a scratch database on the compose Postgres, a stub gate, one real-gate test.
+set -a; . ./.env; set +a
+.venv/bin/python -m pytest -q                  # 75 tests, about 2 minutes
+.venv/bin/python -m pytest -q -m "not slow"    # 74 tests, seconds
+```
 
 ## Layout
 
@@ -97,10 +150,19 @@ about 3%. A 3% promotion bar needs the 25 rounds and the pinned CPU. Knobs: `BEN
 | `selftest.py`, `submissions/expected.tsv` | the environment test: every fixture against its expected verdict |
 | `setup.sh` | one-command setup; `--check` reports only |
 | `submissions/` | the ladder above, the unproved target and the exploit fixtures |
+| `validator/service/` | the submission API and the gate worker |
+| `validator/db/` | the Postgres store: submissions, registrations, entitlement claims, rate limits, weight sets |
+| `validator/chain/`, `validator/workers/` | the chain watcher and the weight setter (bittensor SDK) |
+| `validator/scoring.py` | the king-of-the-hill placeholder scorer |
+| `validator/tests/` | the service, security, entitlement, schema, chain and weight-setter tests |
+| `deploy/`, `compose.yaml`, `pm2/` | Postgres, the Alembic migrations, the pm2 processes |
+| `miner/submit.py` | the miner client: submit, status, leaderboard |
+| `tools/evidence.py`, `evidence/EVIDENCE.md` | the generated evidence pack |
+| `tools/timing_study.py` | the timing study behind the promotion bar |
 | `MANUAL.md` | the miner manual |
 
 ## Status
 
-- Working: the gate, the timing, the self-test, the manual, and three proven faster kernels.
-- To decide: the round rules (a submission service, rewards, the proposed 3% promotion bar, tie-breaking) in `MANUAL.md` section 12, and whether `fastlog` becomes the incumbent.
+- Working: the gate, the timing, the self-test, the manual, three proven faster kernels, and the validator service (API, gate worker, store, chain workers), tested live end to end.
+- To decide: the rewards (the scorer is a king-of-the-hill placeholder), the proposed 3% promotion bar and tie-breaking in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
 - Next slots follow the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.
