@@ -1,0 +1,675 @@
+{
+  "generated": "2026-09-24 13:06 UTC",
+  "seconds": 306,
+  "environment": [
+    [
+      "CPU",
+      "AMD Ryzen 5 PRO 8540U w/ Radeon 740M Graphics, 12 threads"
+    ],
+    [
+      "OS",
+      "Linux-7.0.0-34-generic-x86_64-with-glibc2.43"
+    ],
+    [
+      "Lean",
+      "Lean (version 4.34.0, x86_64-unknown-linux-gnu, commit 293d5d0c0c3f3dded4688b3ccd6a33939ac5102b, Release)"
+    ],
+    [
+      "Lake",
+      "Lake version 5.0.0-src+293d5d0 (Lean version 4.34.0)"
+    ],
+    [
+      "FloatLib",
+      "0d91825727839f597fd06b22fdd038ea21480f0c"
+    ],
+    [
+      "Mathlib",
+      "5ed2965256430c3649e86755f9576b54eca72435"
+    ],
+    [
+      "bubblewrap",
+      "bubblewrap 0.11.1"
+    ],
+    [
+      "Python",
+      "3.14.4"
+    ],
+    [
+      "pinned incumbent sha256",
+      "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1"
+    ]
+  ],
+  "setup": "12m35.642s",
+  "rows": [
+    {
+      "case": {
+        "name": "cheat",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "cheat",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "import other than Contract: 'import FloatLib.Floats.Formats.BinaryInterchange.Configured.NativeFPU.Unchecked'",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "direct",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.7,
+        "ratio_max": 0.9
+      },
+      "verdict": {
+        "submission": "direct",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 2361336857,
+        "ratio": 0.7952953910994303,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 51.607142,
+            "submission_ns": 42.867966,
+            "ratio": 0.8306595625853491,
+            "spread_inc": 1.0788146725893095,
+            "spread_sub": 1.1393586530324298
+          },
+          "wide-gap": {
+            "incumbent_ns": 57.944706,
+            "submission_ns": 43.282102,
+            "ratio": 0.7469552438491965,
+            "spread_inc": 1.0667856007415069,
+            "spread_sub": 1.1142460687329834
+          },
+          "cancel": {
+            "incumbent_ns": 40.60227,
+            "submission_ns": 33.26681,
+            "ratio": 0.819333746610719,
+            "spread_inc": 1.1588851559284739,
+            "spread_sub": 1.145935242964384
+          }
+        },
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 46.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-csimp",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-csimp",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name 'csimp' at line 14",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-eval",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-eval",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name '#eval' at line 9",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-forge",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-forge",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name 'run_cmd' at line 10",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-publicimport",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-publicimport",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "import other than Contract: 'public import Contract'",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-skipkernel",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-skipkernel",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "set_option debug.skipKernelTC is not allowed",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-tactic",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-tactic",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "attribute 'command_elab Lean.Parser.Command.check' is not allowed",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-tamper",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-tamper",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name '#eval' at line 3",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-unsafeio",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-unsafeio",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name 'unsafe' at line 9",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "fastlog",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.45,
+        "ratio_max": 0.62
+      },
+      "verdict": {
+        "submission": "fastlog",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 4005073712,
+        "ratio": 0.5346315025106698,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 51.638202,
+            "submission_ns": 31.342556,
+            "ratio": 0.6069645104994167,
+            "spread_inc": 1.0512327675545325,
+            "spread_sub": 1.1667476002914376
+          },
+          "wide-gap": {
+            "incumbent_ns": 57.446552,
+            "submission_ns": 25.315134,
+            "ratio": 0.4406728187968531,
+            "spread_inc": 1.1103259252182793,
+            "spread_sub": 1.1181474291228322
+          },
+          "cancel": {
+            "incumbent_ns": 40.41081,
+            "submission_ns": 23.267348,
+            "ratio": 0.5757703941098928,
+            "spread_inc": 1.0906054097901032,
+            "spread_sub": 1.1037322345460256
+          }
+        },
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 43.9
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "incumbent",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.97,
+        "ratio_max": 1.03
+      },
+      "verdict": {
+        "submission": "incumbent",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 223362324,
+        "ratio": 1.0014682887911557,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 51.535848,
+            "submission_ns": 51.657234,
+            "ratio": 1.0023553701881456,
+            "spread_inc": 1.175657612153777,
+            "spread_sub": 1.2189468371457906
+          },
+          "wide-gap": {
+            "incumbent_ns": 57.992978,
+            "submission_ns": 58.120596,
+            "ratio": 1.0022005767663802,
+            "spread_inc": 1.1524416628509748,
+            "spread_sub": 1.0969826255739015
+          },
+          "cancel": {
+            "incumbent_ns": 40.63918,
+            "submission_ns": 40.610666,
+            "ratio": 0.9992983618271826,
+            "spread_inc": 1.171350898320291,
+            "spread_sub": 1.1308849256498281
+          }
+        },
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 42.2
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "mirror",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.7,
+        "ratio_max": 0.88
+      },
+      "verdict": {
+        "submission": "mirror",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 2149684287,
+        "ratio": 0.781936591245599,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 51.758588,
+            "submission_ns": 41.962826,
+            "ratio": 0.8107413208412872,
+            "spread_inc": 1.135229461823804,
+            "spread_sub": 1.302104867770345
+          },
+          "wide-gap": {
+            "incumbent_ns": 57.17412,
+            "submission_ns": 41.596818,
+            "ratio": 0.7275462744332576,
+            "spread_inc": 1.1450631859309772,
+            "spread_sub": 1.3199822159473833
+          },
+          "cancel": {
+            "incumbent_ns": 40.61251,
+            "submission_ns": 33.375234,
+            "ratio": 0.8217968798284075,
+            "spread_inc": 1.113813256063218,
+            "spread_sub": 1.305001666804793
+          }
+        },
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 47.4
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "textbook-unproved",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "textbook-unproved",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name 'sorry' at line 63",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "word",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.97,
+        "ratio_max": 1.03
+      },
+      "verdict": {
+        "submission": "word",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 2809637394,
+        "ratio": 0.9997442567681273,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 51.543422,
+            "submission_ns": 51.331966,
+            "ratio": 0.9958975172428404,
+            "spread_inc": 1.2037444467695606,
+            "spread_sub": 1.1071279444079738
+          },
+          "wide-gap": {
+            "incumbent_ns": 57.603566,
+            "submission_ns": 57.72822,
+            "ratio": 1.002163997971931,
+            "spread_inc": 1.2116744647371311,
+            "spread_sub": 1.099004195868156
+          },
+          "cancel": {
+            "incumbent_ns": 40.659518,
+            "submission_ns": 40.708008,
+            "ratio": 1.00119258669028,
+            "spread_inc": 1.134470605381992,
+            "spread_sub": 1.137919497313649
+          }
+        },
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 47.1
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "wrong",
+        "mode": "gate",
+        "passed": false,
+        "stage": "statement",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "wrong",
+        "mode": "gate",
+        "stage": "statement",
+        "passed": false,
+        "reason": "the obligation does not typecheck: error: work/Submission.lean:12:13: Type mismatch | error: build failed",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 4.2
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-forge",
+        "mode": "nopolicy",
+        "passed": false,
+        "stage": "kernel",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-forge",
+        "mode": "gate",
+        "stage": "kernel",
+        "passed": false,
+        "reason": "leanchecker rejects Submission: leanchecker found a problem in Submission\nuncaught exception: while replaying declaration 'Submission.add_spec':\n(kernel) declaration type mismatch, 'Submission.add_spec' has type\n  True\nbut it is expected to have type\n  Competition.Obligation Submission.add",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 17.6
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploit-tamper",
+        "mode": "nopolicy",
+        "passed": false,
+        "stage": "statement",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "exploit-tamper",
+        "mode": "gate",
+        "stage": "statement",
+        "passed": false,
+        "reason": "the build wrote outside the submission's modules: ['lib/lean/Contract.olean.hash']",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "seconds": 9.1
+      },
+      "as_expected": true,
+      "problem": null
+    }
+  ],
+  "containment": {
+    "host_file_before": false,
+    "host_file_after": false,
+    "verdict": {
+      "submission": "exploit-eval",
+      "mode": "gate",
+      "stage": "score",
+      "passed": true,
+      "reason": "",
+      "seed": 723013204,
+      "ratio": 1.00031083607472,
+      "classes": {
+        "near-one": {
+          "incumbent_ns": 51.511082,
+          "submission_ns": 51.507374,
+          "ratio": 0.9999280154899484,
+          "spread_inc": 1.2458279948380817,
+          "spread_sub": 1.0354841231082756
+        },
+        "wide-gap": {
+          "incumbent_ns": 57.538204,
+          "submission_ns": 57.379324,
+          "ratio": 0.9972387042181574,
+          "spread_inc": 1.1687800682829794,
+          "spread_sub": 1.0504219255005514
+        },
+        "cancel": {
+          "incumbent_ns": 40.302748,
+          "submission_ns": 40.51176,
+          "ratio": 1.0051860483558095,
+          "spread_inc": 1.2050491445397222,
+          "spread_sub": 1.0753429127739698
+        }
+      },
+      "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+      "seconds": 46.7
+    }
+  },
+  "timing_study": {
+    "incumbent": {
+      "runs": 43,
+      "accepted": 43,
+      "ratio_mean": 1.0005419196182408,
+      "ratio_stdev": 0.004282827817943438,
+      "ratio_min": 0.9931795945824129,
+      "ratio_max": 1.013530089822023,
+      "at_or_below_bar": 0,
+      "class_ratio_range": {
+        "near-one": [
+          0.9961827853956512,
+          1.0175937492460552
+        ],
+        "wide-gap": [
+          0.9818131354878505,
+          1.0166714643664059
+        ],
+        "cancel": [
+          0.9892825783376545,
+          1.013701343427317
+        ]
+      },
+      "seconds_mean": 40.62558139534884
+    },
+    "fastlog": {
+      "runs": 43,
+      "accepted": 43,
+      "ratio_mean": 0.5339730361013222,
+      "ratio_stdev": 0.004440109085589824,
+      "ratio_min": 0.5243749269552639,
+      "ratio_max": 0.5562594063500894,
+      "at_or_below_bar": 43,
+      "class_ratio_range": {
+        "near-one": [
+          0.5980268775138138,
+          0.6523333780407847
+        ],
+        "wide-gap": [
+          0.4306340778687198,
+          0.45468770879764325
+        ],
+        "cancel": [
+          0.5452976893962078,
+          0.5850173417081742
+        ]
+      },
+      "seconds_mean": 43.2906976744186
+    }
+  }
+}
