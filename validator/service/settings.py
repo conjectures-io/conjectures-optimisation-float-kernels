@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Age at which a claim counts as abandoned; must exceed the gate's timeout.
     stale_claim_seconds: float = Field(default=7200.0, gt=0)
 
+    # Gate crashes on one submission before it ends in `error`, uncharged, off the queue.
+    max_gate_errors: int = Field(default=3, ge=1)
+
     @field_validator("files")
     @classmethod
     def _absolute(cls, value: Path) -> Path:

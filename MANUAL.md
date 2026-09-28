@@ -84,7 +84,7 @@ run and rebuilds it whenever the bench, the contract, the lakefile or the toolch
 
 ## 2. What you submit
 
-One directory with exactly one file:
+One directory with exactly one file, UTF-8 text:
 
 ```
 my-kernel/
@@ -322,6 +322,7 @@ cp -r submissions/textbook-unproved my-kernel
 | symptom | cause and fix |
 |---|---|
 | `the obligation does not typecheck` | your theorem's statement differs from the obligation, or the proof has an error; the reason shows the first Lean errors, the full log is in `logs/` |
+| `not UTF-8: invalid byte at offset N` | save `Kernel.lean` as UTF-8; the service refuses such a file at upload |
 | `checksum mismatch on class X` | your kernel is wrong on some pair of class X; bisect with `BENCH_SEED` and a small `BENCH_PAIRS` |
 | `leanchecker rejects Submission` | a declaration does not replay in the kernel; only possible through something the policy should have caught, so report it |
 | `extra axioms [...]` | a tactic left an axiom; usually `native_decide` hidden in a Mathlib tactic, or `sorryAx` |
@@ -361,7 +362,7 @@ python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul
 | endpoint | what it does |
 |---|---|
 | `POST /submit` | multipart `Kernel.lean` plus `hotkey`, `signature`, `timestamp` and an optional `slot` (`add`, `mul`, `fma`; default `add`); the client signs `submit:<sha256(Kernel.lean)>:<hotkey>:<timestamp>` for `add` and `submit:<slot>:<sha256>:<hotkey>:<timestamp>` for the others, with sr25519 |
-| `GET /submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`), the stage reached, the gate's reason, the ratio and per-class timings |
+| `GET /submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings |
 | `GET /leaderboard?slot=add` | one slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar |
 | `GET /health` | liveness, queue length, the promotion bar |
 

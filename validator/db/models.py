@@ -91,6 +91,8 @@ class Submission(Base):
     claimed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     # A fresh token per claim, so a finish from a stale worker is refused.
     verification_attempt: Mapped[str | None] = mapped_column(Text)
+    # Gate runs that crashed on this submission; at the cap it ends in `error`, uncharged.
+    gate_errors: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
     claim: Mapped[EntitlementClaim | None] = relationship(back_populates="submission")

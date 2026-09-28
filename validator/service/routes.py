@@ -118,6 +118,10 @@ async def submit(
         raise refuse(413, f"Kernel.lean must be at most {MAX_FILE_BYTES} bytes")
     if not lean:
         raise refuse(400, "Kernel.lean must be non-empty")
+    try:
+        lean.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise refuse(400, "Kernel.lean must be UTF-8 text") from exc
 
     digest = sig.digest_of(lean)
     if not sig.verify(hotkey, sig.submit_message(digest, hotkey, timestamp, slot), signature):

@@ -221,11 +221,15 @@ def pin(slot: Slot) -> str:
 
 
 def intake(src: Path, v: Verdict) -> str | None:
-    # The submission is one Lean file of bounded size.
+    # The submission is one UTF-8 Lean file of bounded size; later stages read it as text.
     if not src.is_file():
         return f"{src} is missing"
     if src.stat().st_size > _MAX_BYTES:
         return f"{src.stat().st_size} bytes, over {_MAX_BYTES}"
+    try:
+        src.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return f"not UTF-8: invalid byte at offset {exc.start}"
     return None
 
 

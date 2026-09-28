@@ -117,6 +117,63 @@ def test_validator_error_stops_the_worker_and_blames_nobody(client, store, drain
     assert client.get(f"/submissions/{idb}").json()["state"] == "queued"
 
 
+def test_a_gate_crash_without_a_verdict_is_retried_without_limit(
+    client, store, settings, drain, tmp_path
+):
+    # No verdict means the gate failed before reaching the submission: never counted against it.
+    enrol(store, ALICE)
+    sid = post_submission(client, ALICE, kernel_file(tmp_path, "a", "MISCONFIGURED")).json()[
+        "submission"
+    ]
+    for _ in range(settings.max_gate_errors + 2):
+        assert drain() == 0
+    assert client.get(f"/submissions/{sid}").json()["state"] == "queued"
+    assert store.submissions.get(sid).gate_errors == 0
+
+
+def test_a_submission_that_keeps_crashing_the_gate_ends_in_error(
+    client, store, settings, drain, tmp_path
+):
+    # A stage that crashes on this file is counted; at the cap it leaves the queue, uncharged.
+    enrol(store, ALICE, slots=1)
+    sid = post_submission(client, ALICE, kernel_file(tmp_path, "a", "CRASH")).json()["submission"]
+    for attempt in range(1, settings.max_gate_errors):
+        assert drain() == 0
+        assert client.get(f"/submissions/{sid}").json()["state"] == "queued"
+        assert store.submissions.get(sid).gate_errors == attempt
+    assert drain() == 0
+    s = client.get(f"/submissions/{sid}").json()
+    assert s["state"] == "error" and s["stage"] == "policy" and s["reason"] == "gate error: boom"
+    assert s["exit_code"] == 2
+    assert client.get("/health").json()["queued"] == 0
+    # Never charged, and no longer pending: the registration buys the next submission.
+    assert store.registrations.available_slots(ALICE.ss58_address) == 1
+    r = post_submission(client, ALICE, kernel_file(tmp_path, "b", "RATIO=0.70"))
+    assert r.status_code == 200, r.text
+
+
+def test_a_submission_that_crashes_the_gate_does_not_hold_up_the_queue(
+    client, store, drain, tmp_path, clock
+):
+    # The crashing file was first, but after one crash everything else goes ahead of it.
+    enrol(store, ALICE, BOB)
+    bad = post_submission(client, ALICE, kernel_file(tmp_path, "a", "CRASH")).json()["submission"]
+    clock["tick"](60)
+    good = post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.60")).json()[
+        "submission"
+    ]
+    assert drain() == 0
+    assert drain() == 1
+    assert client.get(f"/submissions/{good}").json()["state"] == "accepted"
+    assert client.get(f"/submissions/{bad}").json()["state"] == "queued"
+
+
+def test_the_worker_backs_off_after_validator_errors():
+    assert worker.backoff(0) == worker.IDLE_SECONDS
+    assert worker.backoff(1) == 2 * worker.IDLE_SECONDS
+    assert worker.backoff(50) == worker.backoff(5000) == worker.MAX_BACKOFF_SECONDS
+
+
 def test_a_gate_that_never_finishes_is_a_rejection(client, store, drain, tmp_path, monkeypatch):
     enrol(store, ALICE)
     slow = tmp_path / "slow.py"

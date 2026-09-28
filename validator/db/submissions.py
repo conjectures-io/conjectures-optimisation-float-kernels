@@ -67,12 +67,17 @@ class SubmissionsDb:
             return int(existing), False
 
     def claim_next(self, worker_id: str) -> models.Submission | None:
-        # Claim the oldest queued submission; SKIP LOCKED lets several workers drain one queue.
+        # Claim the oldest queued submission, fewest gate crashes first, so one that crashes the
+        # gate cannot hold up the rest; SKIP LOCKED lets several workers drain one queue.
         with session_scope(self._sessions) as session:
             row = session.execute(
                 select(models.Submission)
                 .where(models.Submission.state == SubmissionState.QUEUED.value)
-                .order_by(models.Submission.submitted_at, models.Submission.id)
+                .order_by(
+                    models.Submission.gate_errors,
+                    models.Submission.submitted_at,
+                    models.Submission.id,
+                )
                 .limit(1)
                 .with_for_update(skip_locked=True)
             ).scalar_one_or_none()
@@ -142,6 +147,42 @@ class SubmissionsDb:
                     claimed_at=None,
                 )
             )
+
+    def gate_crashed(
+        self,
+        sub_id: int,
+        *,
+        max_errors: int,
+        expected_attempt: str | None = None,
+        **fields: object,
+    ) -> str:
+        # The gate crashed on this submission: requeue it, or at `max_errors` end it in `error`
+        # with the gate's verdict; either way uncharged. Returns the new state.
+        unknown = set(fields) - SCORE_FIELDS
+        if unknown:
+            raise ValueError(f"not submission columns: {sorted(unknown)}")
+        with session_scope(self._sessions) as session:
+            row = session.get(models.Submission, sub_id, with_for_update=True)
+            if row is None:
+                raise LookupError(f"no submission {sub_id}")
+            if expected_attempt is not None and row.verification_attempt != expected_attempt:
+                raise RuntimeError("stale worker claim")
+            row.gate_errors += 1
+            row.verification_attempt = None
+            row.worker_id = None
+            row.claimed_at = None
+            if row.gate_errors < max_errors:
+                row.state = SubmissionState.QUEUED.value
+                return row.state
+            for key, value in fields.items():
+                setattr(row, key, value)
+            row.finished_at = clock.now()
+            row.state = SubmissionState.ERROR.value
+            logger.warning(
+                f"[submissions] submission {sub_id} crashed the gate {row.gate_errors} times; "
+                "given up"
+            )
+            return row.state
 
     def requeue_stale(self, older_than_seconds: float) -> int:
         # Requeue work a dead worker left mid-gate; the age must exceed the gate's own timeout.

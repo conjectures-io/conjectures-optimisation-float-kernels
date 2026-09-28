@@ -119,7 +119,7 @@ Each process runs from `validator/` (`cd validator && python -m service.api`); p
 | process | what it does |
 |---|---|
 | `submission-api` (`python -m service.api`) | `POST /submit` (optional `slot`: add, mul, fma), `GET /submissions/{id}`, `GET /leaderboard?slot=`, `GET /health`, `GET /ready` on `SERVICE_PORT` (9300) |
-| `gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, runs `gate.py <dir> --verdict`, stores the verdict; exit 2 or no verdict is a validator error, requeued uncharged |
+| `gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, runs `gate.py <dir> --verdict`, stores the verdict; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; the worker backs off up to 5 minutes while errors repeat |
 | `chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
 | `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the leaderboard's first qualifying hotkey (placeholder rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
 
@@ -137,8 +137,8 @@ the king-of-the-hill placeholder scorer in `validator/scoring.py`.
 ```bash
 # The service tests: a scratch database on the compose Postgres, a stub gate, one real-gate test.
 set -a; . ./.env; set +a
-.venv/bin/python -m pytest -q                  # 75 tests, about 2 minutes
-.venv/bin/python -m pytest -q -m "not slow"    # 74 tests, seconds
+.venv/bin/python -m pytest -q                  # 83 tests, about 2 minutes
+.venv/bin/python -m pytest -q -m "not slow"    # 82 tests, seconds
 ```
 
 ## Layout

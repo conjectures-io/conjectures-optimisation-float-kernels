@@ -26,6 +26,8 @@ TOTAL_TIMEOUT = float(os.environ.get("VERIFY_TOTAL_TIMEOUT", "1800"))
 
 STATE_OF_EXIT = {0: SubmissionState.ACCEPTED, 1: SubmissionState.REJECTED}
 IDLE_SECONDS = 2.0
+# The longest pause after consecutive validator errors, so an outage does not spin the gate.
+MAX_BACKOFF_SECONDS = 300.0
 # How often to sweep stale claims and expired rate-limit windows, in idle turns.
 SWEEP_EVERY = 30
 
@@ -85,7 +87,8 @@ def run_gate(
 
 
 def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> str:
-    # Gate one claimed submission; an undefined exit or no verdict requeues it uncharged.
+    # Gate one claimed submission. No verdict (the gate failed before reaching it) requeues it
+    # uncharged; a verdict with an undefined exit (a stage crashed on it) counts toward the cap.
     logger.info(f"[worker] verifying submission {sub.id} slot={sub.slot} ({sub.hotkey[:8]}…)")
     with tempfile.TemporaryDirectory(prefix=f"gate-{sub.id}-") as tmp:
         verdict = Path(tmp) / "verdict.json"
@@ -98,7 +101,16 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             f"[worker] validator error on submission {sub.id} (exit {result.returncode}):\n"
             f"{result.stdout[-1500:]}\n{result.stderr[-1500:]}"
         )
-        store.submissions.requeue(sub.id, expected_attempt=sub.verification_attempt)
+        if not fields:
+            store.submissions.requeue(sub.id, expected_attempt=sub.verification_attempt)
+        else:
+            store.submissions.gate_crashed(
+                sub.id,
+                max_errors=settings.max_gate_errors,
+                expected_attempt=sub.verification_attempt,
+                exit_code=result.returncode,
+                **fields,
+            )
         return SubmissionState.ERROR.value
 
     final = store.submissions.finish(
@@ -116,12 +128,17 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
 
 def drain(store: db.Store, settings: Settings) -> int:
     # Verify every claimable submission in arrival order; stop on a validator error.
+    return _drain(store, settings)[0]
+
+
+def _drain(store: db.Store, settings: Settings) -> tuple[int, bool]:
+    # `drain`, also saying whether it stopped on a validator error.
     done = 0
     while (sub := store.submissions.claim_next(settings.worker_id)) is not None:
         if score_one(store, settings, sub) == SubmissionState.ERROR.value:
-            break
+            return done, True
         done += 1
-    return done
+    return done, False
 
 
 def sweep(store: db.Store, settings: Settings) -> None:
@@ -131,19 +148,26 @@ def sweep(store: db.Store, settings: Settings) -> None:
     store.rate.prune()
 
 
+def backoff(errors: int) -> float:
+    # The pause after `errors` consecutive validator errors: doubling from idle, capped.
+    # The exponent is capped too: a days-long outage must not overflow the float.
+    return min(IDLE_SECONDS * 2 ** min(errors, 16), MAX_BACKOFF_SECONDS)
+
+
 def run_forever(store: db.Store, settings: Settings) -> None:
-    # Sweep, drain, sleep when idle, and never die on one bad turn.
+    # Sweep, drain, sleep when idle (longer after validator errors), never die on one bad turn.
     logger.info(f"[worker] {settings.worker_id} draining the queue")
-    turn = 0
+    turn = errors = 0
     while True:
         try:
             if turn % SWEEP_EVERY == 0:
                 sweep(store, settings)
-            drain(store, settings)
+            _, errored = _drain(store, settings)
+            errors = errors + 1 if errored else 0
             turn += 1
         except Exception:  # noqa: BLE001 - a database or subprocess blip must not end the loop
             logger.exception("[worker] loop error")
-        time.sleep(IDLE_SECONDS)
+        time.sleep(backoff(errors))
 
 
 def main() -> None:

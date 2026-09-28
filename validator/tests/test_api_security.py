@@ -149,6 +149,17 @@ def test_an_empty_file_is_refused(client, store, tmp_path):
     assert r.status_code == 400 and "non-empty" in reason(r)
 
 
+def test_a_file_that_is_not_utf8_is_refused(client, store, tmp_path):
+    # The gate reads Kernel.lean as text; bytes it cannot decode never reach the queue.
+    register(store, ALICE.ss58_address)
+    d = tmp_path / "latin1"
+    d.mkdir()
+    (d / "Kernel.lean").write_bytes(b"import Contract\n-- caf\xe9\n")
+    r = post_submission(client, ALICE, d)
+    assert r.status_code == 400 and "UTF-8" in reason(r)
+    assert client.get("/health").json()["queued"] == 0
+
+
 def test_an_unknown_submission_is_a_404(client):
     assert client.get("/submissions/999999").status_code == 404
 

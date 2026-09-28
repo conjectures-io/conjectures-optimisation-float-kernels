@@ -131,6 +131,10 @@ if "MISCONFIGURED" in kernel:
     print("pin failed"); sys.exit(2)
 base = {"submission": Path(sys.argv[1]).name, "mode": "gate", "seed": 7,
         "incumbent_sha256": "a" * 64, "seconds": 1.5, "classes": {}}
+if "CRASH" in kernel:
+    verdict.write_text(json.dumps({**base, "stage": "policy", "passed": False,
+                                   "reason": "gate error: boom", "ratio": None}))
+    sys.exit(2)
 if "REJECT" in kernel:
     verdict.write_text(json.dumps({**base, "stage": "statement", "passed": False,
                                    "reason": "the obligation does not typecheck", "ratio": None}))
