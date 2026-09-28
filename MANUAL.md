@@ -294,6 +294,7 @@ The policy runs on the raw text, comments included, so keep these words out of y
 | no `sorry`, `admit`, `native_decide`, `axiom` | escape the proof |
 | no `unsafe...`, `Unchecked...`, `dbg...` (as prefixes: `unsafeBaseIO` counts) | escape purity or the certificates |
 | no `implemented_by`, `extern`, `export`, `csimp`, `init`, `initialize`, `builtin_initialize` | swap compiled code or run code at start-up |
+| no `include_str`, `include_bytes`, `includeStr` | read a file at build time; kernels need no file input |
 | no `#` commands (`#eval`, `#print`, `#exit`...), `run_cmd`, `run_elab`, `run_meta`, `macro`, `elab`, `syntax`, `attribute`, `IO` | run your code while the gate elaborates the file |
 | `set_option` only `maxHeartbeats`, `maxRecDepth`, `synthInstance.maxHeartbeats` | `debug.skipKernelTC` would switch off the kernel |
 | `@[...]` only `inline`, `noinline`, `always_inline`, `specialize`, `simp`, `reducible`, `irreducible` | `@[command_elab]` and friends register your own elaborator |

@@ -89,7 +89,24 @@ SLOTS = {
         ),
     ),
 }
-LAKE = str(Path.home() / ".elan" / "bin" / "lake")
+ELAN = Path.home() / ".elan"
+LAKE = str(ELAN / "bin" / "lake")
+
+# The only environment a sandboxed build or bench inherits: the toolchain and the locale, never
+# the validator's secrets (POSTGRES_PASSWORD, DATABASE_URL, wallet vars) or anything else it runs
+# with. The bench's BENCH_* are passed in on top as `env_extra`.
+_ENV_PASS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR")
+_ENV_PREFIX = ("ELAN", "LEAN", "LAKE")
+
+
+def sandbox_env(env_extra: dict | None = None) -> dict:
+    # A minimal environment: the toolchain and locale keys, the ELAN/LEAN/LAKE vars, then extras.
+    base = {k: os.environ[k] for k in _ENV_PASS if k in os.environ}
+    base |= {k: v for k, v in os.environ.items() if k.startswith(_ENV_PREFIX)}
+    if env_extra:
+        base |= env_extra
+    return base
+
 
 _PAIRS = int(os.environ.get("BENCH_PAIRS", "500000"))
 _ROUNDS = int(os.environ.get("BENCH_ROUNDS", "25"))
@@ -116,7 +133,7 @@ ATTRIBUTES = {
 BANNED = re.compile(
     r"\b(sorry|admit|native_decide|axiom|implemented_by|extern|export|csimp|init|initialize"
     r"|builtin_initialize|run_cmd|run_elab|run_meta|macro|macro_rules|elab|elab_rules|syntax"
-    r"|attribute|IO)\b|unsafe|Unchecked|dbg|#[a-z_]+"
+    r"|attribute|IO|include_str|include_bytes|includeStr)\b|unsafe|Unchecked|dbg|#[a-z_]+"
 )
 
 
@@ -139,9 +156,17 @@ class Verdict:
 # ── Process helpers ──────────────────────────────────────────
 
 
-def run(cmd: list[str], timeout: float, build: str = "", env: dict | None = None):
-    # Runs `cmd` in bwrap with no network and a throwaway Lake config; `build` sets the build mount.
+def run(cmd: list[str], timeout: float, build: str = "", env_extra: dict | None = None):
+    # Runs `cmd` in bwrap with no network, a throwaway Lake config and a minimal environment;
+    # `build` sets the build mount. The real HOME (the validator's wallet) and the repo root
+    # (its .env, its stored submissions) are hidden behind tmpfs; only the toolchain, the Lean
+    # workspace and the pinned incumbents are put back, read-only, so no build-time file read can
+    # reach a secret. `pinned` is absent until the first pin, hence the -try.
+    home, pinned = Path.home(), HERE / "pinned"
     box = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
+    box += ["--tmpfs", str(home), "--ro-bind", str(ELAN), str(ELAN)]
+    box += ["--tmpfs", str(HERE), "--ro-bind", str(LIB), str(LIB)]
+    box += ["--ro-bind-try", str(pinned), str(pinned)]
     box += ["--unshare-all", "--die-with-parent"]
     if build == "trusted":
         box += ["--bind", str(BUILD), str(BUILD)]
@@ -160,7 +185,7 @@ def run(cmd: list[str], timeout: float, build: str = "", env: dict | None = None
     with subprocess.Popen(
         argv,
         cwd=LIB,
-        env=env,
+        env=sandbox_env(env_extra),
         text=True,
         start_new_session=True,
         stdout=subprocess.PIPE,
@@ -293,9 +318,9 @@ def axioms(src: Path, v: Verdict) -> str | None:
 
 def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | str:
     # One bench process: class -> (best ns, checksum), or the failure text.
-    env = {**os.environ, "BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS)}
+    env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS)}
     pin_cpu = ["taskset", "-c", _BENCH_CPU] if _BENCH_CPU and shutil.which("taskset") else []
-    code, out = run(pin_cpu + [str(binary)], _BENCH_TIMEOUT, build=build, env=env)
+    code, out = run(pin_cpu + [str(binary)], _BENCH_TIMEOUT, build=build, env_extra=env_extra)
     if code != 0:
         return f"{binary.name} exit {code}: {out[-300:]}"
     rows = [ln.split() for ln in out.splitlines() if len(ln.split()) == 4]

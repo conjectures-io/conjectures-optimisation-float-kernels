@@ -6,14 +6,14 @@
 - The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `submissions/tuned`, runs at **0.50x** of its time (`fastlog` 0.53x); an unproved textbook adder reaches **0.40x**.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected. This README is the overview for operators and reviewers.
 - Three slots share one gate: binary32 `add` (the main one; best proven 0.50x), `mul` (best proven `mul-fast`, 0.55x) and `fma`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma`). The validator service accepts all three; only the `add` board pays until the rewards split is decided.
-- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 26 expected verdicts across the three slots (about 9 minutes).
+- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 27 expected verdicts across the three slots (about 9 minutes).
 - A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                        # 26/26 cases as expected = ready
+.venv/bin/python selftest.py                        # 27/27 cases as expected = ready
 .venv/bin/python gate.py submissions/fastlog        # intake, policy, statement, kernel, axioms, score
 .venv/bin/python gate.py --bench my-kernel          # time an unproved kernel; never a verdict
 .venv/bin/python gate.py --slot mul submissions/mul-incumbent   # the multiplication slot
@@ -65,11 +65,12 @@ beating it means proving a new rounding argument, FloatLib's own being 563 lines
 | `sorry`, `native_decide`, custom axioms | `#print axioms accepted` must list only Lean's three |
 | a forged compiled `.olean` whose proof never passed the kernel | `leanchecker` replays every declaration of `Submission` and `Verify` through the kernel |
 | miner code running during the build (`#eval`, `run_cmd`, macros, `@[command_elab]`, `initialize`) | policy bans them, and every build and bench runs in bwrap: read-only root, no network |
+| a build-time file read reaching a secret (`include_str`, and any read at all) | policy bans `include_str`; the sandbox hides the real HOME (the validator wallet) and the repo root (its `.env`, its stored submissions) behind tmpfs and restores only the toolchain and the Lean workspace read-only, and the build runs with a minimal environment, not the validator's |
 | a build overwriting trusted files | builds write into a throwaway overlay; any file there not stemmed `Submission`, `Verify`, `Main` or `bench` rejects; FloatLib and Mathlib sit read-only under `.lake/packages` |
 | slowing the incumbent (`csimp`, `@[export]`) | the incumbent is a separate binary built from `submissions/incumbent` and pinned, rebuilt only when its sources change |
 | tuning for known operands | a fresh seed per run; three timed classes (near-one, wide-gap, cancellation) plus raw bit patterns checksummed |
 
-`submissions/exploit-*` has one file per threat. All eight are rejected at policy, and the two
+`submissions/exploit-*` has one file per threat. All nine are rejected at policy, and the two
 that matter most are also rejected by the later stages when policy is skipped: `exploit-forge` at
 `kernel`, `exploit-tamper` at `statement`. `selftest.py` runs both checks.
 
