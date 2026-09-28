@@ -92,6 +92,20 @@ def test_no_faster_than_the_incumbent_pays_nothing(store):
     assert result.weights == {}
 
 
+def test_a_near_copy_of_the_incumbent_pays_nothing(store):
+    # Inside the timing noise, not past the promotion bar: the leaderboard says it does not
+    # qualify, so the weight setter must not pay it either.
+    accept(store, "hk", 0.99)
+    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    assert result.weights == {}
+
+
+def test_a_ratio_on_the_promotion_bar_pays(store):
+    accept(store, "hk", scoring.PROMOTION_BAR)
+    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    assert result.weights == {"hk": 1.0}
+
+
 def test_only_the_current_incumbent_counts(store, clock):
     # A ratio against an older incumbent is not comparable, so it cannot win.
     accept(store, "hk-old", 0.40, incumbent="b" * 64, uid=1)

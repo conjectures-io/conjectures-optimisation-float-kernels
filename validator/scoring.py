@@ -8,23 +8,24 @@ from collections.abc import Sequence
 
 from chain.types import MetagraphView, WeightPlan
 from db.scoring import ScoredSubmission
+from service.settings import PROMOTION_BAR
 
 
 @dc.dataclass(frozen=True, slots=True)
 class ScoringConfig:
     # The leader's share of emission; the rest burns.
     winner_share: float = 1.0
-    # Only a ratio at or below this pays: a kernel no faster than the incumbent earns nothing.
-    max_ratio: float = 1.0
+    # Only a ratio at or below this pays: the promotion bar, the same one the leaderboard's
+    # `qualifies` uses, so a noisy near-copy of the incumbent earns nothing.
+    max_ratio: float = PROMOTION_BAR
 
     @classmethod
     def from_env(cls) -> ScoringConfig:
-        # Reads WEIGHT_WINNER_SHARE and WEIGHT_MAX_RATIO, keeping the defaults otherwise.
-        d = cls()
-        share = float(os.environ.get("WEIGHT_WINNER_SHARE", str(d.winner_share)))
+        # Reads WEIGHT_WINNER_SHARE, keeping the default otherwise; the bar is PROMOTION_BAR.
+        share = float(os.environ.get("WEIGHT_WINNER_SHARE", str(cls().winner_share)))
         if not 0.0 <= share <= 1.0:
             raise ValueError("WEIGHT_WINNER_SHARE must be between 0 and 1")
-        return cls(share, float(os.environ.get("WEIGHT_MAX_RATIO", str(d.max_ratio))))
+        return cls(share)
 
 
 @dc.dataclass(frozen=True, slots=True)
