@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses as dc
 import datetime as dt
 
+import admission
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import models
@@ -35,6 +36,30 @@ class ScoringDb:
             # Only the add board pays until the rewards say how emission splits across slots.
             for r in self._submissions.leaderboard("add")
         ]
+
+    def admission(self, slot: str, bar: float) -> list[admission.Decision]:
+        # The statistical admission decisions over every comparable accepted submission.
+        evidence = [
+            admission.Evidence(
+                r.id,
+                r.hotkey,
+                float(r.ratio or 0.0),
+                r.submitted_at,
+                tuple((float(i), float(s)) for i, s in (r.rounds or [])),
+            )
+            for r in self._submissions.scorable(slot)
+        ]
+        return admission.decide(evidence, bar)
+
+    def leader(self, bar: float) -> ScoredSubmission | None:
+        # The add board's admitted leader, the one submission the weight setter pays.
+        lead = admission.leader(self.admission("add", bar))
+        if lead is None:
+            return None
+        row = self._submissions.get(lead)
+        if row is None:
+            return None
+        return ScoredSubmission(row.id, row.hotkey, float(row.ratio or 0.0), row.submitted_at)
 
     def record_weight_set(
         self,

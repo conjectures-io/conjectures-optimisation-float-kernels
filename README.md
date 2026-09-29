@@ -125,7 +125,7 @@ Each process runs from `validator/` (`cd validator && python -m service.api`); p
 | `submission-api` (`python -m service.api`) | `POST /submit` (optional `slot`: add, mul, fma), `GET /submissions/{id}`, `GET /leaderboard?slot=`, `GET /health`, `GET /ready` on `SERVICE_PORT` (9300) |
 | `gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, runs `gate.py <dir> --verdict`, stores the verdict; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; the worker backs off up to 5 minutes while errors repeat |
 | `chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
-| `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the leaderboard's first qualifying hotkey (placeholder rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
+| `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the admitted leader's hotkey (`validator/admission.py`: a bootstrap over the gate's paired rounds; placeholder reward rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
 
 **Changing the verifier** retires old verdicts. Every verdict carries the fingerprint of the
 verifier it came from (`identity.py`: a hash of `gate.py`, the contract, the Verify and bench
@@ -174,7 +174,7 @@ set -a; . ./.env; set +a
 | `validator/service/` | the submission API and the gate worker |
 | `validator/db/` | the Postgres store: submissions, registrations, entitlement claims, rate limits, weight sets |
 | `validator/chain/`, `validator/workers/` | the chain watcher and the weight setter (bittensor SDK) |
-| `validator/scoring.py` | the king-of-the-hill placeholder scorer |
+| `validator/scoring.py`, `validator/admission.py` | the king-of-the-hill placeholder scorer, and the statistical admission that picks who leads |
 | `validator/tests/` | the service, security, entitlement, schema, chain and weight-setter tests |
 | `deploy/`, `compose.yaml`, `pm2/` | Postgres, the Alembic migrations, the pm2 processes |
 | `miner/submit.py` | the miner client: submit, status, leaderboard |
@@ -185,5 +185,5 @@ set -a; . ./.env; set +a
 ## Status
 
 - Working: the gate, the timing, the self-test, the manual, three proven faster kernels, and the validator service (API, gate worker, store, chain workers), tested live end to end.
-- To decide: the rewards (the scorer is a king-of-the-hill placeholder), the proposed 3% promotion bar and tie-breaking in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
+- To decide: the rewards (the scorer is a king-of-the-hill placeholder), the proposed 3% promotion bar and the statistical admission rule in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
 - Next slots follow the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.

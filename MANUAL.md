@@ -357,15 +357,15 @@ python miner/submit.py status 12 --url http://<validator>:9300
 #   stage score
 #   time vs incumbent 0.5347x (lower is faster)
 python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul|fma for the others
-#   rank    ratio qualifies  hotkey
-#      1   0.5347       yes  5Grw...
+#   rank    ratio qualifies       admission  hotkey
+#      1   0.5347       yes          leader  5Grw...  <- paid
 ```
 
 | endpoint | what it does |
 |---|---|
 | `POST /submit` | multipart `Kernel.lean` plus `hotkey`, `signature`, `timestamp` and an optional `slot` (`add`, `mul`, `fma`; default `add`); the client signs `submit:<sha256(Kernel.lean)>:<hotkey>:<timestamp>` for `add` and `submit:<slot>:<sha256>:<hotkey>:<timestamp>` for the others, with sr25519 |
 | `GET /submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed) |
-| `GET /leaderboard?slot=add` | one slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar |
+| `GET /leaderboard?slot=add` | one slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), and `leader` the one submission paid |
 | `GET /health` | liveness, queue length, the promotion bar |
 
 **What the service enforces:**
@@ -380,8 +380,9 @@ python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul
 - **A verdict counts only under the verifier that gave it.** When the validator updates its gate, contract or bench, older accepted submissions leave the board until the operator re-verifies them, at no cost to you: a re-acceptance reuses the registration already spent.
 
 **Round rules (proposed, not final):**
-- **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin. Ties go to the earlier submission.
-- **Emission:** a placeholder until rewards are announced. The leaderboard's first qualifying hotkey receives the winner share and the rest burns.
+- **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin.
+- **Who leads: statistical admission.** The headline ratio ranks the board; the lead needs evidence as well. The gate records every round's paired incumbent and submission timings, and the validator bootstraps them (2000 draws, a seed derived from the timings themselves, so every validator agrees). A submission qualifies when its ratio is at or below the bar *and* its 5th-percentile gain over the incumbent is positive. Taken in submission order, a qualifying submission takes the lead only if its 5th-percentile gain over the current leader is positive too. So a later copy of the leader, or the same kernel with one lucky round, cannot take the lead; a genuinely faster kernel can. This is the rule the DEFLATE competition uses.
+- **Emission:** a placeholder until rewards are announced. The admitted leader's hotkey receives the winner share and the rest burns.
 - **Later slots** use the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.
 
 ## 13. The multiplication and fused multiply-add slots

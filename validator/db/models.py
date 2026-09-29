@@ -81,6 +81,8 @@ class Submission(Base):
     ratio: Mapped[float | None] = mapped_column(Float)
     # Per operand class: incumbent_ns, submission_ns, ratio, spreads.
     classes: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    # Per round, [incumbent ns, submission ns] over the timed classes: admission's evidence.
+    rounds: Mapped[list[list[float]] | None] = mapped_column(JSONB)
     seed: Mapped[int | None] = mapped_column(BigInteger)
     # The incumbent the ratio was measured against; ratios compare only within one incumbent.
     incumbent_sha256: Mapped[str | None] = mapped_column(Text)

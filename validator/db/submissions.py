@@ -25,6 +25,7 @@ SCORE_FIELDS = frozenset(
         "reason",
         "ratio",
         "classes",
+        "rounds",
         "seed",
         "incumbent_sha256",
         "verifier_fingerprint",
@@ -294,25 +295,50 @@ class SubmissionsDb:
                 .limit(1)
             ).scalar_one_or_none()
 
-    def leaderboard(self, slot: str = "add") -> list[models.Submission]:
-        # Each hotkey's best accepted ratio vs the slot's incumbent, fastest first, ties earlier.
-        # Only verdicts from the current verifier count; tools/reverify.py re-stamps older ones.
+    def _comparable(self, slot: str) -> list[Any] | None:
+        # What makes accepted ratios comparable: this slot, its current incumbent, and the current
+        # verifier (tools/reverify.py re-stamps older verdicts). None when nothing has been scored.
         incumbent = self.current_incumbent(slot)
         if incumbent is None:
+            return None
+        return [
+            models.Submission.slot == slot,
+            models.Submission.state == SubmissionState.ACCEPTED.value,
+            models.Submission.ratio.is_not(None),
+            models.Submission.incumbent_sha256 == incumbent,
+            models.Submission.verifier_fingerprint == required_fingerprint(),
+        ]
+
+    def scorable(self, slot: str = "add") -> list[models.Submission]:
+        # Every comparable accepted submission, in submission order: admission's input.
+        where = self._comparable(slot)
+        if where is None:
             return []
-        fingerprint = required_fingerprint()
+        with session_scope(self._sessions) as session:
+            rows = (
+                session.execute(
+                    select(models.Submission)
+                    .where(*where)
+                    .order_by(models.Submission.submitted_at, models.Submission.id)
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                session.expunge(row)
+            return list(rows)
+
+    def leaderboard(self, slot: str = "add") -> list[models.Submission]:
+        # Each hotkey's best comparable accepted ratio, fastest first, ties earlier.
+        where = self._comparable(slot)
+        if where is None:
+            return []
         with session_scope(self._sessions) as session:
             rows = (
                 session.execute(
                     select(models.Submission)
                     .distinct(models.Submission.hotkey)
-                    .where(
-                        models.Submission.slot == slot,
-                        models.Submission.state == SubmissionState.ACCEPTED.value,
-                        models.Submission.ratio.is_not(None),
-                        models.Submission.incumbent_sha256 == incumbent,
-                        models.Submission.verifier_fingerprint == fingerprint,
-                    )
+                    .where(*where)
                     .order_by(
                         models.Submission.hotkey,
                         models.Submission.ratio,

@@ -57,6 +57,9 @@ class Ranking(BaseModel):
     hotkey: str
     ratio: float
     qualifies: bool
+    # This submission's statistical admission outcome (admission.py): leader, not-significant,
+    # above-bar or no-evidence; only the current leader is paid.
+    admission: str | None = None
     submitted_at: str
 
 
@@ -66,4 +69,6 @@ class Leaderboard(BaseModel):
     incumbent_sha256: str | None = None
     verifier_fingerprint: str
     promotion_bar: float
+    # The admitted leader's submission id, the one the weight setter pays; null when none leads.
+    leader: int | None = None
     ranking: list[Ranking]

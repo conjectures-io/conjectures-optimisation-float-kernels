@@ -163,6 +163,9 @@ class Verdict:
     seed: int = 0
     ratio: float | None = None
     classes: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Per round, [incumbent ns, submission ns] summed over the timed classes: the paired evidence
+    # statistical admission resamples (validator/admission.py).
+    rounds: list[list[int]] = field(default_factory=list)
     incumbent_sha256: str = ""
     # The verifier this verdict came from (identity.py); scoring counts only the current one's.
     verifier_fingerprint: str = ""
@@ -430,6 +433,11 @@ def score(src: Path, v: Verdict) -> str | None:
         )
         total_inc, total_sub = total_inc + best_i, total_sub + best_s
     v.ratio = total_sub / total_inc
+    timed = list(v.classes)
+    v.rounds = [
+        [sum(i[name][0] for name in timed), sum(s[name][0] for name in timed)]
+        for i, s in zip(inc, sub)
+    ]
     logger.info(f"[score] ratio {v.ratio:.3f} of the incumbent over all timed classes")
     return None
 

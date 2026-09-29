@@ -153,8 +153,10 @@ if "REJECT" in kernel:
     sys.exit(1)
 ratio = float(kernel.split("RATIO=")[1].split()[0]) if "RATIO=" in kernel else 0.9
 classes = {"near-one": {"incumbent_ns": 30.0, "submission_ns": 30.0 * ratio, "ratio": ratio}}
+jitter = [1 + ((i * 7919) % 11 - 5) / 1000 for i in range(25)]
+rounds = [[3e7 * j, 3e7 * ratio / j] for j in jitter]
 verdict.write_text(json.dumps({**base, "stage": "score", "passed": True, "reason": "",
-                               "ratio": ratio, "classes": classes}))
+                               "ratio": ratio, "classes": classes, "rounds": rounds}))
 sys.exit(0)
 """
 

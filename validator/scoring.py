@@ -67,16 +67,26 @@ class Scoring:
         return f"competitors={len(self.scores)} leader={leader}"
 
 
-def score(best_per_hotkey: Sequence[ScoredSubmission], config: ScoringConfig) -> Scoring:
-    # The leader takes the winner share; `best_per_hotkey` arrives fastest first, ties earlier.
+def score(
+    best_per_hotkey: Sequence[ScoredSubmission],
+    config: ScoringConfig,
+    leader: ScoredSubmission | None,
+) -> Scoring:
+    # The admitted leader's hotkey takes the winner share (see admission.py): the fastest headline
+    # ratio alone does not pay, so a lucky copy cannot unseat the submission it copied. Its line
+    # names the leading submission; every other hotkey's names its best, fastest first.
     scores = []
-    for i, row in enumerate(best_per_hotkey):
-        paid = i == 0 and row.ratio <= config.max_ratio
+    for row in best_per_hotkey:
+        paid = (
+            leader is not None and row.hotkey == leader.hotkey and leader.ratio <= config.max_ratio
+        )
+        shown = leader if paid and leader is not None else row
         scores.append(
             HotkeyScore(
-                row.hotkey, row.submission_id, row.ratio, config.winner_share if paid else 0.0
+                shown.hotkey, shown.submission_id, shown.ratio, config.winner_share if paid else 0.0
             )
         )
+    scores.sort(key=lambda s: s.weight == 0)
     return Scoring(tuple(scores))
 
 

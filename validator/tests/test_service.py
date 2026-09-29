@@ -77,9 +77,13 @@ def test_leaderboard_keeps_each_hotkeys_best_and_ties_go_to_the_earlier(
     # Alice ties Bob, later: Bob keeps the rank.
     post_submission(client, ALICE, kernel_file(tmp_path, "a2", "RATIO=0.60"))
     drain()
-    ranking = client.get("/leaderboard").json()["ranking"]
+    board = client.get("/leaderboard").json()
+    ranking = board["ranking"]
     assert [x["hotkey"] for x in ranking] == [BOB.ss58_address, ALICE.ss58_address]
     assert [x["ratio"] for x in ranking] == [0.60, 0.60]
+    # Bob's run was significantly faster than Alice's first; her later tie is not, so Bob leads.
+    assert [x["admission"] for x in ranking] == ["leader", "not-significant"]
+    assert board["leader"] == ranking[0]["submission"]
 
 
 def test_a_verdict_from_another_verifier_is_not_ranked(client, store, drain, tmp_path):

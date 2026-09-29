@@ -41,9 +41,12 @@ class StatusResult(TypedDict):
 class LeaderboardEntry(TypedDict):
     # One ranked hotkey.
     rank: int
+    submission: int
     ratio: float
     qualifies: bool
     hotkey: str
+    # Statistical admission's outcome; absent from pre-admission services, so read with .get().
+    admission: NotRequired[str | None]
 
 
 class LeaderboardResult(TypedDict):
@@ -51,6 +54,8 @@ class LeaderboardResult(TypedDict):
     incumbent_sha256: str | None
     promotion_bar: float
     ranking: list[LeaderboardEntry]
+    # The admitted leader, the submission that is paid; absent from pre-admission services.
+    leader: NotRequired[int | None]
 
 
 def kernel_of(d: Path) -> bytes:
@@ -126,11 +131,14 @@ def cmd_leaderboard(args: argparse.Namespace) -> None:
     if not b["ranking"]:
         print("leaderboard: empty")
         return
-    print(f"{'rank':>4} {'ratio':>8} {'qualifies':>9}  hotkey")
+    leader = b.get("leader")
+    print(f"{'rank':>4} {'ratio':>8} {'qualifies':>9} {'admission':>15}  hotkey")
     for x in b["ranking"]:
+        mark = "  <- paid" if leader is not None and x["submission"] == leader else ""
         print(
             f"{x['rank']:>4} {x['ratio']:>8.4f} "
-            f"{'yes' if x['qualifies'] else 'no':>9}  {x['hotkey']}"
+            f"{'yes' if x['qualifies'] else 'no':>9} {x.get('admission') or '-':>15}  "
+            f"{x['hotkey']}{mark}"
         )
 
 
