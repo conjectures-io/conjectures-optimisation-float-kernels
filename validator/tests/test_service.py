@@ -7,12 +7,15 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import kernel_file, post_submission, register
+import sqlalchemy as sa
+from conftest import FINGERPRINT, OLD_FINGERPRINT, kernel_file, post_submission, register
 
 VALIDATOR = Path(__file__).resolve().parent.parent
 REPO = VALIDATOR.parent
 sys.path.insert(0, str(VALIDATOR))
 
+import db as store_pkg  # noqa: E402
+from db import models  # noqa: E402
 from service import sig, worker  # noqa: E402
 
 ALICE = sig.load_keypair("//Alice")
@@ -74,9 +77,54 @@ def test_leaderboard_keeps_each_hotkeys_best_and_ties_go_to_the_earlier(
     # Alice ties Bob, later: Bob keeps the rank.
     post_submission(client, ALICE, kernel_file(tmp_path, "a2", "RATIO=0.60"))
     drain()
-    ranking = client.get("/leaderboard").json()["ranking"]
+    board = client.get("/leaderboard").json()
+    ranking = board["ranking"]
     assert [x["hotkey"] for x in ranking] == [BOB.ss58_address, ALICE.ss58_address]
     assert [x["ratio"] for x in ranking] == [0.60, 0.60]
+    # Bob's run was significantly faster than Alice's first; her later tie is not, so Bob leads.
+    assert [x["admission"] for x in ranking] == ["leader", "not-significant"]
+    assert board["leader"] == ranking[0]["submission"]
+
+
+def test_a_verdict_from_another_verifier_is_not_ranked(client, store, drain, tmp_path):
+    # Accepted, but by an older gate: it shows as not current and stays off the board.
+    enrol(store, ALICE)
+    sid = post_submission(client, ALICE, kernel_file(tmp_path, "alice", "STALE RATIO=0.80")).json()[
+        "submission"
+    ]
+    drain()
+    s = client.get(f"/submissions/{sid}").json()
+    assert s["state"] == "accepted" and s["verifier_fingerprint"] == OLD_FINGERPRINT
+    assert s["verification_current"] is False
+    board = client.get("/leaderboard").json()
+    assert board["ranking"] == [] and board["verifier_fingerprint"] == FINGERPRINT
+
+
+def test_reverify_restores_the_ranking_without_charging_again(
+    client, store, drain, tmp_path, monkeypatch
+):
+    # One registration, one acceptance; a verifier change retires it, re-verification restores
+    # it, and the second acceptance reuses the registration instead of failing for want of one.
+    enrol(store, ALICE, slots=1)
+    sid = post_submission(client, ALICE, kernel_file(tmp_path, "alice", "RATIO=0.80")).json()[
+        "submission"
+    ]
+    drain()
+    assert [x["submission"] for x in client.get("/leaderboard").json()["ranking"]] == [sid]
+
+    monkeypatch.setenv("GATE_REQUIRED_FINGERPRINT", "d" * 64)
+    assert client.get("/leaderboard").json()["ranking"] == []
+    assert [r.id for r in store.submissions.stale("d" * 64)] == [sid]
+
+    assert store.submissions.reverify("d" * 64) == [sid]
+    assert client.get(f"/submissions/{sid}").json()["state"] == "queued"
+    assert drain() == 1
+    s = client.get(f"/submissions/{sid}").json()
+    assert s["state"] == "accepted" and s["verification_current"] is True
+    assert [x["submission"] for x in client.get("/leaderboard").json()["ranking"]] == [sid]
+    with store_pkg.session_scope(store.sessions) as session:
+        claims = session.execute(sa.select(models.EntitlementClaim)).scalars().all()
+        assert [c.submission_id for c in claims] == [sid]
 
 
 def test_same_file_again_returns_the_same_submission(client, store, drain, tmp_path):
@@ -245,6 +293,8 @@ def test_the_real_gate_ranks_real_kernels(client, store, settings, monkeypatch):
     enrol(store, ALICE, BOB, CHARLIE)
     monkeypatch.setattr(worker, "GATE", REPO / "gate.py")
     monkeypatch.setattr(worker, "TOTAL_TIMEOUT", 1800.0)
+    # The real gate stamps this checkout's verifier, so score against it, not the suite's pin.
+    monkeypatch.delenv("GATE_REQUIRED_FINGERPRINT")
     subs = REPO / "submissions"
     for kp, name in [(ALICE, "fastlog"), (BOB, "incumbent"), (CHARLIE, "wrong")]:
         assert post_submission(client, kp, subs / name).status_code == 200

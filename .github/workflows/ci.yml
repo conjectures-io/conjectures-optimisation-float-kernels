@@ -1,0 +1,79 @@
+# The competition's own checks. `fast` on every push and pull request: lint and every test that
+# needs no Lean, against a Postgres service container. `gate` nightly and on demand: the whole
+# setup.sh from a bare runner, the one real-gate test, and the self-test's 28 expected verdicts.
+name: ci
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: conjectures
+          POSTGRES_PASSWORD: conjectures
+          POSTGRES_DB: floatlib
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U conjectures" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_USER: conjectures
+      POSTGRES_PASSWORD: conjectures
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r requirements-service.txt ruff==0.16.9
+      - run: ruff check .
+      - run: ruff format --check .
+      # -rs lists why the db suite skipped, if it did: a silent skip would pass the job.
+      - run: python -m pytest -q -m "not slow" -rs
+
+  gate:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces via AppArmor; bwrap needs this.
+      - run: sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Restore the toolchain and Mathlib build
+        id: toolchain
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.elan
+            lean/.lake
+          key: lean-${{ hashFiles('lean/lake-manifest.json', 'lean/lean-toolchain') }}
+      - run: ./setup.sh && .venv/bin/pip install -q -r requirements-service.txt
+      - name: Save the toolchain and Mathlib build
+        if: always() && steps.toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.elan
+            lean/.lake
+          key: ${{ steps.toolchain.outputs.cache-primary-key }}
+      # A hosted runner has no user systemd session, so the gate's memory caps are lifted here;
+      # tests/test_gate_intake and the self-test still exercise every other stage.
+      - run: .venv/bin/python -m pytest -q -m slow -rs
+        env:
+          GATE_BUILD_MEMORY_MB: "0"
+          GATE_BENCH_MEMORY_MB: "0"
+      - run: .venv/bin/python selftest.py
+        env:
+          GATE_BUILD_MEMORY_MB: "0"
+          GATE_BENCH_MEMORY_MB: "0"
+          BENCH_CPU: ""

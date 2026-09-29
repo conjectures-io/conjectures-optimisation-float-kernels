@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import random
 import sys
 from pathlib import Path
 
 import sqlalchemy as sa
-from conftest import register
+from conftest import FINGERPRINT, register
 
 VALIDATOR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(VALIDATOR))
@@ -55,16 +56,48 @@ def at_epoch_boundary(tempo: int = 100, netuid: int = NETUID, margin: int = 12) 
     raise AssertionError("no block inside the margin")
 
 
-def accept(store, hotkey: str, ratio: float, *, incumbent: str = INCUMBENT, uid: int = 1) -> int:
-    # One accepted submission through the store, so the scorer reads real rows.
+def paired(true_ratio: float, seed: str, rounds: int = 25) -> list[list[float]]:
+    # The gate's per-round evidence around `true_ratio`, each run jittered by about half a percent.
+    rng = random.Random(seed)
+    return [
+        [3e7 * (1 + rng.gauss(0, 0.005)), 3e7 * true_ratio * (1 + rng.gauss(0, 0.005))]
+        for _ in range(rounds)
+    ]
+
+
+def accept(
+    store,
+    hotkey: str,
+    ratio: float,
+    *,
+    incumbent: str = INCUMBENT,
+    uid: int = 1,
+    true_ratio: float | None = None,
+) -> int:
+    # One accepted submission through the store, so the scorer reads real rows; its rounds sit
+    # at `true_ratio`, the headline `ratio` unless a lucky run is being simulated.
     register(store, hotkey, uid=uid, block=1000 + uid)
     digest = hashlib.sha256(f"{hotkey}{ratio}{incumbent}".encode()).hexdigest()
     sub_id, _ = store.submissions.add(hotkey, digest)
     store.submissions.claim_next("w")
     store.submissions.finish(
-        sub_id, SubmissionState.ACCEPTED, ratio=ratio, stage="score", incumbent_sha256=incumbent
+        sub_id,
+        SubmissionState.ACCEPTED,
+        ratio=ratio,
+        stage="score",
+        incumbent_sha256=incumbent,
+        verifier_fingerprint=FINGERPRINT,
+        rounds=paired(ratio if true_ratio is None else true_ratio, hotkey),
     )
     return sub_id
+
+
+def pay(store) -> scoring.Scoring:
+    # What the weight setter would pay: the admitted leader of the add board.
+    config = scoring.ScoringConfig()
+    return scoring.score(
+        store.scoring.best_per_hotkey(), config, store.scoring.leader(config.max_ratio)
+    )
 
 
 # ── The scorer ────────────────────────────────────────────────────────────
@@ -74,7 +107,7 @@ def test_the_fastest_hotkey_takes_the_whole_share(store, clock):
     accept(store, "hk-slow", 0.80, uid=1)
     clock["tick"](10)
     accept(store, "hk-fast", 0.53, uid=2)
-    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    result = pay(store)
     assert result.weights == {"hk-fast": 1.0}
 
 
@@ -82,13 +115,23 @@ def test_a_tie_goes_to_the_earlier_submission(store, clock):
     accept(store, "hk-first", 0.60, uid=1)
     clock["tick"](10)
     accept(store, "hk-second", 0.60, uid=2)
-    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    result = pay(store)
     assert result.weights == {"hk-first": 1.0}
+
+
+def test_a_lucky_later_copy_does_not_take_the_share(store, clock):
+    # Same kernel, one lucky round: it ranks first on the headline ratio, but its rounds are no
+    # faster than the leader's, so admission keeps the earlier submission paid.
+    accept(store, "hk-first", 0.60, uid=1)
+    clock["tick"](10)
+    accept(store, "hk-copy", 0.58, uid=2, true_ratio=0.60)
+    assert [r.hotkey for r in store.scoring.best_per_hotkey()] == ["hk-copy", "hk-first"]
+    assert pay(store).weights == {"hk-first": 1.0}
 
 
 def test_no_faster_than_the_incumbent_pays_nothing(store):
     accept(store, "hk", 1.01)
-    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    result = pay(store)
     assert result.weights == {}
 
 
@@ -96,13 +139,13 @@ def test_a_near_copy_of_the_incumbent_pays_nothing(store):
     # Inside the timing noise, not past the promotion bar: the leaderboard says it does not
     # qualify, so the weight setter must not pay it either.
     accept(store, "hk", 0.99)
-    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    result = pay(store)
     assert result.weights == {}
 
 
 def test_a_ratio_on_the_promotion_bar_pays(store):
     accept(store, "hk", scoring.PROMOTION_BAR)
-    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    result = pay(store)
     assert result.weights == {"hk": 1.0}
 
 
@@ -111,7 +154,7 @@ def test_only_the_current_incumbent_counts(store, clock):
     accept(store, "hk-old", 0.40, incumbent="b" * 64, uid=1)
     clock["tick"](10)
     accept(store, "hk-new", 0.90, incumbent="c" * 64, uid=2)
-    result = scoring.score(store.scoring.best_per_hotkey(), scoring.ScoringConfig())
+    result = pay(store)
     assert result.weights == {"hk-new": 1.0}
 
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import cast
 
+import admission
 import db
-from db import iso, models
+from db import SubmissionState, iso, models
+from db.verifier import required_fingerprint
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from loguru import logger
 
@@ -60,6 +62,12 @@ def submission_view(row: models.Submission) -> schemas.SubmissionView:
         classes=row.classes,
         seed=row.seed,
         incumbent_sha256=row.incumbent_sha256,
+        verifier_fingerprint=row.verifier_fingerprint,
+        verification_current=(
+            row.verifier_fingerprint == required_fingerprint()
+            if row.state == SubmissionState.ACCEPTED.value
+            else None
+        ),
     )
 
 
@@ -170,10 +178,14 @@ def leaderboard(request: Request, slot: str = "add") -> schemas.Leaderboard:
         raise refuse(400, str(exc)) from exc
     store = _store(request)
     rows = store.submissions.leaderboard(slot)
+    decisions = store.scoring.admission(slot, PROMOTION_BAR)
+    outcome = {d.submission_id: d.outcome for d in decisions}
     return schemas.Leaderboard(
         slot=slot,
         incumbent_sha256=store.submissions.current_incumbent(slot),
+        verifier_fingerprint=required_fingerprint(),
         promotion_bar=PROMOTION_BAR,
+        leader=admission.leader(decisions),
         ranking=[
             schemas.Ranking(
                 rank=i + 1,
@@ -182,6 +194,7 @@ def leaderboard(request: Request, slot: str = "add") -> schemas.Leaderboard:
                 # leaderboard() selects only accepted rows with a ratio.
                 ratio=row.ratio or 0.0,
                 qualifies=(row.ratio or 1.0) <= PROMOTION_BAR,
+                admission=outcome.get(row.id),
                 submitted_at=iso(row.submitted_at),
             )
             for i, row in enumerate(rows)

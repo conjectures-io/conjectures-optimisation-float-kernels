@@ -96,7 +96,11 @@ def plan_for(
     # The weight vector to set: all to the burn uid in burn mode, else from the scoring.
     if config.burn_mode:
         return scoring.to_vector({}, meta, burn_uid=config.burn_uid), None
-    result = scoring.score(store.scoring.best_per_hotkey(), scoring_config)
+    result = scoring.score(
+        store.scoring.best_per_hotkey(),
+        scoring_config,
+        store.scoring.leader(scoring_config.max_ratio),
+    )
     return scoring.to_vector(result.weights, meta, burn_uid=config.burn_uid), result
 
 

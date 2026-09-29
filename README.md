@@ -6,14 +6,14 @@
 - The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `submissions/tuned`, runs at **0.50x** of its time (`fastlog` 0.53x); an unproved textbook adder reaches **0.40x**.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected. This README is the overview for operators and reviewers.
 - Three slots share one gate: binary32 `add` (the main one; best proven 0.50x), `mul` (best proven `mul-fast`, 0.55x) and `fma`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma`). The validator service accepts all three; only the `add` board pays until the rewards split is decided.
-- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 27 expected verdicts across the three slots (about 9 minutes).
+- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 28 expected verdicts across the three slots (about 9 minutes).
 - A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                        # 27/27 cases as expected = ready
+.venv/bin/python selftest.py                        # 28/28 cases as expected = ready
 .venv/bin/python gate.py submissions/fastlog        # intake, policy, statement, kernel, axioms, score
 .venv/bin/python gate.py --bench my-kernel          # time an unproved kernel; never a verdict
 .venv/bin/python gate.py --slot mul submissions/mul-incumbent   # the multiplication slot
@@ -66,13 +66,15 @@ beating it means proving a new rounding argument, FloatLib's own being 563 lines
 | a forged compiled `.olean` whose proof never passed the kernel | `leanchecker` replays every declaration of `Submission` and `Verify` through the kernel |
 | miner code running during the build (`#eval`, `run_cmd`, macros, `@[command_elab]`, `initialize`) | policy bans them, and every build and bench runs in bwrap: read-only root, no network |
 | a build-time file read reaching a secret (`include_str`, and any read at all) | policy bans `include_str`; the sandbox hides the real HOME (the validator wallet) and the repo root (its `.env`, its stored submissions) behind tmpfs and restores only the toolchain and the Lean workspace read-only, and the build runs with a minimal environment, not the validator's |
+| a build or bench exhausting the validator's memory or process table | every sandboxed command runs in a systemd scope: 4096 MB for builds and kernel checks, 512 MB for benches, no swap, 256 tasks; the OOM kill rejects the submission, and a host that cannot apply the caps fails the gate as a validator error |
 | a build overwriting trusted files | builds write into a throwaway overlay; any file there not stemmed `Submission`, `Verify`, `Main` or `bench` rejects; FloatLib and Mathlib sit read-only under `.lake/packages` |
 | slowing the incumbent (`csimp`, `@[export]`) | the incumbent is a separate binary built from `submissions/incumbent` and pinned, rebuilt only when its sources change |
 | tuning for known operands | a fresh seed per run; three timed classes (near-one, wide-gap, cancellation) plus raw bit patterns checksummed |
 
-`submissions/exploit-*` has one file per threat. All nine are rejected at policy, and the two
-that matter most are also rejected by the later stages when policy is skipped: `exploit-forge` at
-`kernel`, `exploit-tamper` at `statement`. `selftest.py` runs both checks.
+`submissions/exploit-*` has one file per threat. Nine are rejected at policy, and the two that
+matter most are also rejected by the later stages when policy is skipped: `exploit-forge` at
+`kernel`, `exploit-tamper` at `statement`. `exploit-membomb` is proved and correct but allocates
+gigabytes per call; the bench memory cap rejects it at `score`. `selftest.py` runs all of these.
 
 ## Timing
 
@@ -80,7 +82,8 @@ Incumbent and submission run as separate processes, alternating over 25 rounds, 
 fastest of 3 in-process sweeps, pinned to one CPU with `taskset`. The incumbent against itself
 reads 0.997 to 1.006x over four runs; with 9 rounds it swung to 0.956x, and unpinned it drifts by
 about 3%. A 3% promotion bar needs the 25 rounds and the pinned CPU. Knobs: `BENCH_SEED`,
-`BENCH_ROUNDS`, `BENCH_PAIRS`, `BENCH_CPU`, `GATE_SANDBOX`.
+`BENCH_ROUNDS`, `BENCH_PAIRS`, `BENCH_CPU`, `GATE_SANDBOX`, `GATE_BUILD_MEMORY_MB`,
+`GATE_BENCH_MEMORY_MB`, `GATE_TASKS_MAX`.
 
 A one-hour study (`tools/timing_study.py`, 2026-09-24) alternated 86 full gate runs, each on a
 fresh seed:
@@ -122,7 +125,19 @@ Each process runs from `validator/` (`cd validator && python -m service.api`); p
 | `submission-api` (`python -m service.api`) | `POST /submit` (optional `slot`: add, mul, fma), `GET /submissions/{id}`, `GET /leaderboard?slot=`, `GET /health`, `GET /ready` on `SERVICE_PORT` (9300) |
 | `gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, runs `gate.py <dir> --verdict`, stores the verdict; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; the worker backs off up to 5 minutes while errors repeat |
 | `chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
-| `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the leaderboard's first qualifying hotkey (placeholder rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
+| `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the admitted leader's hotkey (`validator/admission.py`: a bootstrap over the gate's paired rounds; placeholder reward rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
+
+**Changing the verifier** retires old verdicts. Every verdict carries the fingerprint of the
+verifier it came from (`identity.py`: a hash of `gate.py`, the contract, the Verify and bench
+modules, the lakefile, manifest and toolchain, and the ratio-defining `BENCH_*` knobs), and only
+the current fingerprint's accepted submissions rank or get paid. After an update, send the old
+ones back through the gate; each keeps the registration it already spent:
+
+```bash
+.venv/bin/python identity.py                   # the current fingerprint
+.venv/bin/python tools/reverify.py             # accepted submissions from another verifier
+.venv/bin/python tools/reverify.py --apply     # requeue them for the gate worker
+```
 
 **Promoting a winner** is an operator step: copy the winning `Kernel.lean` somewhere stable, set
 `GATE_INCUMBENT` to it in `.env` (`GATE_INCUMBENT_MUL`, `GATE_INCUMBENT_FMA` for the other slots),
@@ -138,9 +153,14 @@ the king-of-the-hill placeholder scorer in `validator/scoring.py`.
 ```bash
 # The service tests: a scratch database on the compose Postgres, a stub gate, one real-gate test.
 set -a; . ./.env; set +a
-.venv/bin/python -m pytest -q                  # 83 tests, about 2 minutes
-.venv/bin/python -m pytest -q -m "not slow"    # 82 tests, seconds
+.venv/bin/python -m pytest -q                  # 94 tests, about 2 minutes
+.venv/bin/python -m pytest -q -m "not slow"    # 93 tests, seconds
 ```
+
+CI (`.github/workflows/ci.yml`) runs ruff and the fast tests against a Postgres service container
+on every push and pull request, and nightly (or on demand) the whole `setup.sh`, the real-gate
+test and the self-test. A hosted runner has no user systemd session, so that job lifts the gate's
+memory caps; everything else runs as on a validator.
 
 ## Layout
 
@@ -152,22 +172,24 @@ set -a; . ./.env; set +a
 | `lean/bench/Bench.lean`, `Main.lean` | the shared timing core and the `bench` binary |
 | `lean/bench/Micro.lean` | the cost breakdown above |
 | `gate.py` | the stages, the sandbox, the lock, the logs and the JSON verdict; `--bench` for unproved kernels |
+| `identity.py`, `tools/reverify.py` | the verifier fingerprint stamped on every verdict, and the re-verification of older ones |
 | `selftest.py`, `submissions/expected.tsv` | the environment test: every fixture against its expected verdict |
 | `setup.sh` | one-command setup; `--check` reports only |
 | `submissions/` | the ladder above, the unproved target and the exploit fixtures |
 | `validator/service/` | the submission API and the gate worker |
 | `validator/db/` | the Postgres store: submissions, registrations, entitlement claims, rate limits, weight sets |
 | `validator/chain/`, `validator/workers/` | the chain watcher and the weight setter (bittensor SDK) |
-| `validator/scoring.py` | the king-of-the-hill placeholder scorer |
+| `validator/scoring.py`, `validator/admission.py` | the king-of-the-hill placeholder scorer, and the statistical admission that picks who leads |
 | `validator/tests/` | the service, security, entitlement, schema, chain and weight-setter tests |
 | `deploy/`, `compose.yaml`, `pm2/` | Postgres, the Alembic migrations, the pm2 processes |
 | `miner/submit.py` | the miner client: submit, status, leaderboard |
 | `tools/evidence.py`, `evidence/EVIDENCE.md` | the generated evidence pack |
 | `tools/timing_study.py` | the timing study behind the promotion bar |
+| `.github/workflows/ci.yml` | lint and fast tests on every push; the full setup, real-gate test and self-test nightly |
 | `MANUAL.md` | the miner manual |
 
 ## Status
 
 - Working: the gate, the timing, the self-test, the manual, three proven faster kernels, and the validator service (API, gate worker, store, chain workers), tested live end to end.
-- To decide: the rewards (the scorer is a king-of-the-hill placeholder), the proposed 3% promotion bar and tie-breaking in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
+- To decide: the rewards (the scorer is a king-of-the-hill placeholder), the proposed 3% promotion bar and the statistical admission rule in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
 - Next slots follow the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.

@@ -134,6 +134,15 @@ class RegistrationsDb:
 
     def claim_slot(self, session: Session, hotkey: str, submission_id: int) -> int:
         # Spend the oldest free registration in the caller's transaction; SKIP LOCKED stops races.
+        # A submission that already holds one keeps it: re-verifying an accepted submission
+        # (tools/reverify.py) must not charge its hotkey twice.
+        held = session.execute(
+            select(models.EntitlementClaim.registration_id).where(
+                models.EntitlementClaim.submission_id == submission_id
+            )
+        ).scalar_one_or_none()
+        if held is not None:
+            return int(held)
         claimed = select(models.EntitlementClaim.registration_id)
         row = session.execute(
             select(models.Registration.id)

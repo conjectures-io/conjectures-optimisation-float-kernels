@@ -81,9 +81,13 @@ class Submission(Base):
     ratio: Mapped[float | None] = mapped_column(Float)
     # Per operand class: incumbent_ns, submission_ns, ratio, spreads.
     classes: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    # Per round, [incumbent ns, submission ns] over the timed classes: admission's evidence.
+    rounds: Mapped[list[list[float]] | None] = mapped_column(JSONB)
     seed: Mapped[int | None] = mapped_column(BigInteger)
     # The incumbent the ratio was measured against; ratios compare only within one incumbent.
     incumbent_sha256: Mapped[str | None] = mapped_column(Text)
+    # The verifier the verdict came from (identity.py); only the current one's verdicts score.
+    verifier_fingerprint: Mapped[str | None] = mapped_column(Text)
     gate_seconds: Mapped[float | None] = mapped_column(Float)
 
     # --- queue bookkeeping -------------------------------------------------------
@@ -104,6 +108,10 @@ class Submission(Base):
         CheckConstraint(
             "incumbent_sha256 IS NULL OR incumbent_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_submissions_incumbent_sha256",
+        ),
+        CheckConstraint(
+            "verifier_fingerprint IS NULL OR verifier_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="ck_submissions_verifier_fingerprint",
         ),
         CheckConstraint("ratio IS NULL OR ratio > 0", name="ck_submissions_ratio"),
         CheckConstraint(f"state IN ({_in_list(STATE_VALUES)})", name="ck_submissions_state"),
