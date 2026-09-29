@@ -99,9 +99,14 @@ _ENV_PASS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "T
 _ENV_PREFIX = ("ELAN", "LEAN", "LAKE")
 
 
+# What `systemd-run --user` needs to reach the user's systemd; bwrap unsets both again, so the
+# sandboxed command never sees them.
+_ENV_SCOPE = ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
+
+
 def sandbox_env(env_extra: dict | None = None) -> dict:
     # A minimal environment: the toolchain and locale keys, the ELAN/LEAN/LAKE vars, then extras.
-    base = {k: os.environ[k] for k in _ENV_PASS if k in os.environ}
+    base = {k: os.environ[k] for k in _ENV_PASS + _ENV_SCOPE if k in os.environ}
     base |= {k: v for k, v in os.environ.items() if k.startswith(_ENV_PREFIX)}
     if env_extra:
         base |= env_extra
@@ -117,6 +122,13 @@ _BENCH_CPU = os.environ.get("BENCH_CPU", "3")
 _BUILD_TIMEOUT = 1800
 _BENCH_TIMEOUT = 300
 _MAX_BYTES = 256_000
+# Memory caps, in MB, for the systemd scope every sandboxed command runs in: builds and kernel
+# checks (measured peak ~1 GB) and bench processes (~20 MB). Swap is capped at zero too, or a
+# runaway process would spill into swap instead of being killed. 0 lifts both caps.
+_BUILD_MEMORY_MB = int(os.environ.get("GATE_BUILD_MEMORY_MB", "4096"))
+_BENCH_MEMORY_MB = int(os.environ.get("GATE_BENCH_MEMORY_MB", "512"))
+# Processes per scope; Lean spawns a handful, a fork bomb far more.
+_TASKS_MAX = int(os.environ.get("GATE_TASKS_MAX", "256"))
 
 AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
 OPTIONS = {"maxHeartbeats", "maxRecDepth", "synthInstance.maxHeartbeats"}
@@ -156,17 +168,56 @@ class Verdict:
 # ── Process helpers ──────────────────────────────────────────
 
 
-def run(cmd: list[str], timeout: float, build: str = "", env_extra: dict | None = None):
-    # Runs `cmd` in bwrap with no network, a throwaway Lake config and a minimal environment;
-    # `build` sets the build mount. The real HOME (the validator's wallet) and the repo root
-    # (its .env, its stored submissions) are hidden behind tmpfs; only the toolchain, the Lean
-    # workspace and the pinned incumbents are put back, read-only, so no build-time file read can
-    # reach a secret. `pinned` is absent until the first pin, hence the -try.
+def limits(memory_mb: int) -> list[str]:
+    # The systemd scope that caps a command's memory, swap and process count; empty when lifted.
+    if memory_mb <= 0:
+        return []
+    props = [f"MemoryMax={memory_mb}M", "MemorySwapMax=0", f"TasksMax={_TASKS_MAX}"]
+    return ["systemd-run", "--user", "--scope", "--quiet"] + [a for p in props for a in ("-p", p)]
+
+
+def check_limits() -> None:
+    # Refuses to gate when the caps are asked for but the host cannot apply them: without this, a
+    # missing user systemd would surface as every submission's build failing.
+    for memory_mb in {_BUILD_MEMORY_MB, _BENCH_MEMORY_MB}:
+        if not (wrap := limits(memory_mb)):
+            continue
+        if not shutil.which("systemd-run"):
+            raise RuntimeError("systemd-run is required for GATE_*_MEMORY_MB; 0 lifts the caps")
+        probe = subprocess.run(
+            wrap + ["true"], env=sandbox_env(), capture_output=True, text=True, timeout=30
+        )
+        if probe.returncode != 0:
+            raise RuntimeError(f"systemd resource limits are unavailable: {probe.stderr.strip()}")
+
+
+def killed(code: int) -> bool:
+    # SIGKILL, as a negative Popen code or a shell's 128+9: the memory cap's OOM kill.
+    return code in (-signal.SIGKILL, 128 + signal.SIGKILL)
+
+
+def run(
+    cmd: list[str],
+    timeout: float,
+    build: str = "",
+    env_extra: dict | None = None,
+    memory_mb: int = _BUILD_MEMORY_MB,
+):
+    # Runs `cmd` in bwrap with no network, a throwaway Lake config and a minimal environment,
+    # inside a systemd scope capped at `memory_mb`; `build` sets the build mount. The real HOME
+    # (the validator's wallet) and the repo root (its .env, its stored submissions) are hidden
+    # behind tmpfs; only the toolchain, the Lean workspace and the pinned incumbents are put back,
+    # read-only, so no build-time file read can reach a secret. `pinned` is absent until the first
+    # pin, hence the -try.
     home, pinned = Path.home(), HERE / "pinned"
     box = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     box += ["--tmpfs", str(home), "--ro-bind", str(ELAN), str(ELAN)]
     box += ["--tmpfs", str(HERE), "--ro-bind", str(LIB), str(LIB)]
     box += ["--ro-bind-try", str(pinned), str(pinned)]
+    # The user's runtime dir holds its D-Bus and systemd sockets.
+    if (runtime := os.environ.get("XDG_RUNTIME_DIR")) and Path(runtime).is_dir():
+        box += ["--tmpfs", runtime]
+    box += [a for k in _ENV_SCOPE for a in ("--unsetenv", k)]
     box += ["--unshare-all", "--die-with-parent"]
     if build == "trusted":
         box += ["--bind", str(BUILD), str(BUILD)]
@@ -180,7 +231,7 @@ def run(cmd: list[str], timeout: float, build: str = "", env_extra: dict | None 
         shutil.rmtree(SCRATCH, ignore_errors=True)
         shutil.copytree(CONFIG, SCRATCH, symlinks=True)
         box += ["--bind", str(SCRATCH), str(CONFIG)]
-    argv = (box + ["--"] if _SANDBOX else []) + cmd
+    argv = limits(memory_mb) + (box + ["--"] if _SANDBOX else []) + cmd
     t0 = time.monotonic()
     with subprocess.Popen(
         argv,
@@ -217,8 +268,10 @@ def foreign(upper: Path) -> list[str]:
     return sorted(str(p.relative_to(upper)) for p in files if p.name.split(".")[0] not in OWN_STEMS)
 
 
-def errors(out: str) -> str:
+def errors(out: str, code: int = 1) -> str:
     # The first few error lines of a Lean or Lake log, for the verdict reason.
+    if killed(code):
+        return f"killed: over the {_BUILD_MEMORY_MB} MB build memory cap"
     return " | ".join(ln.strip() for ln in out.splitlines() if "error" in ln)[:600]
 
 
@@ -284,10 +337,10 @@ def statement(src: Path, v: Verdict) -> str | None:
     shutil.copy2(src, WORK)
     code, out = run([LAKE, "build", slot.verify], _BUILD_TIMEOUT, build="write")
     if code != 0:
-        return f"the obligation does not typecheck: {errors(out)}"
+        return f"the obligation does not typecheck: {errors(out, code)}"
     code, out = run([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="write")
     if code != 0:
-        return f"the bench binary does not build: {errors(out)}"
+        return f"the bench binary does not build: {errors(out, code)}"
     if bad := foreign(LAYER / "upper"):
         return f"the build wrote outside the submission's modules: {bad[:5]}"
     logger.debug(f"[statement] layer holds {sum(1 for _ in (LAYER / 'upper').rglob('*'))} entries")
@@ -299,7 +352,8 @@ def kernel(src: Path, v: Verdict) -> str | None:
     for module in ("Submission", SLOTS[v.slot].verify):
         code, out = run([LAKE, "env", "leanchecker", module], _BUILD_TIMEOUT, build="read")
         if code != 0:
-            return f"leanchecker rejects {module}: {out.strip()[-300:]}"
+            detail = errors(out, code) if killed(code) else out.strip()[-300:]
+            return f"leanchecker rejects {module}: {detail}"
         logger.info(f"[kernel] {module} replays cleanly")
     return None
 
@@ -310,7 +364,7 @@ def axioms(src: Path, v: Verdict) -> str | None:
     code, out = run([LAKE, "env", "lean", gate_file], _BUILD_TIMEOUT, build="read")
     m = re.search(r"depends on axioms: \[([^\]]*)\]", out.replace("\n", " "))
     if code != 0 or not m:
-        return f"no axiom report: {errors(out) or out[-300:]}"
+        return f"no axiom report: {errors(out, code) or out[-300:]}"
     found = {a.strip() for a in m.group(1).split(",") if a.strip()}
     logger.info(f"[axioms] {sorted(found)}")
     return f"extra axioms {sorted(found - AXIOMS)}" if found - AXIOMS else None
@@ -320,7 +374,15 @@ def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | s
     # One bench process: class -> (best ns, checksum), or the failure text.
     env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS)}
     pin_cpu = ["taskset", "-c", _BENCH_CPU] if _BENCH_CPU and shutil.which("taskset") else []
-    code, out = run(pin_cpu + [str(binary)], _BENCH_TIMEOUT, build=build, env_extra=env_extra)
+    code, out = run(
+        pin_cpu + [str(binary)],
+        _BENCH_TIMEOUT,
+        build=build,
+        env_extra=env_extra,
+        memory_mb=_BENCH_MEMORY_MB,
+    )
+    if killed(code):
+        return f"{binary.name} killed: over the {_BENCH_MEMORY_MB} MB bench memory cap"
     if code != 0:
         return f"{binary.name} exit {code}: {out[-300:]}"
     rows = [ln.split() for ln in out.splitlines() if len(ln.split()) == 4]
@@ -441,8 +503,9 @@ def main() -> int:
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
+            check_limits()
             digest = pin(SLOTS[slot])
-        except Exception:  # noqa: BLE001 - no pinned incumbent means nothing can be scored
+        except Exception:  # noqa: BLE001 - no limits or no pinned incumbent: nothing can be scored
             logger.exception("[pin] failed")
             return 2
         for arg in args:

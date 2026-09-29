@@ -75,6 +75,7 @@ and rerun.
 | situation | what to do | effect |
 |---|---|---|
 | bubblewrap missing, or every build fails with a `bwrap` permission error | on Ubuntu 24.04+: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`; otherwise `GATE_SANDBOX=0` | the sysctl lets bwrap create its sandbox; `GATE_SANDBOX=0` runs builds unconfined, fine on your own machine, never on a validator |
+| the gate exits 2 with `systemd resource limits are unavailable` | `loginctl enable-linger $USER` (a user systemd outside a login session); on your own machine `GATE_BUILD_MEMORY_MB=0 GATE_BENCH_MEMORY_MB=0` | the gate caps each build and bench in a user systemd scope and refuses to run uncapped by accident |
 | no `taskset` | `BENCH_CPU=` | runs unpinned; timing noise grows from under 1% to about 3% |
 | a busy core 3 | `BENCH_CPU=5` (any idle core) | same pinning on another core |
 

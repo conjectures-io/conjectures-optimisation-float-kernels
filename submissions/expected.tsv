@@ -5,6 +5,7 @@ direct	add	gate	true	score	0.70	0.90
 exploit-csimp	add	gate	false	policy	-	-
 exploit-eval	add	gate	false	policy	-	-
 exploit-includestr	add	gate	false	policy	-	-
+exploit-membomb	add	gate	false	score	-	-
 exploit-forge	add	gate	false	policy	-	-
 exploit-publicimport	add	gate	false	policy	-	-
 exploit-skipkernel	add	gate	false	policy	-	-
