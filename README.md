@@ -153,9 +153,14 @@ the king-of-the-hill placeholder scorer in `validator/scoring.py`.
 ```bash
 # The service tests: a scratch database on the compose Postgres, a stub gate, one real-gate test.
 set -a; . ./.env; set +a
-.venv/bin/python -m pytest -q                  # 83 tests, about 2 minutes
-.venv/bin/python -m pytest -q -m "not slow"    # 82 tests, seconds
+.venv/bin/python -m pytest -q                  # 94 tests, about 2 minutes
+.venv/bin/python -m pytest -q -m "not slow"    # 93 tests, seconds
 ```
+
+CI (`.github/workflows/ci.yml`) runs ruff and the fast tests against a Postgres service container
+on every push and pull request, and nightly (or on demand) the whole `setup.sh`, the real-gate
+test and the self-test. A hosted runner has no user systemd session, so that job lifts the gate's
+memory caps; everything else runs as on a validator.
 
 ## Layout
 
@@ -180,6 +185,7 @@ set -a; . ./.env; set +a
 | `miner/submit.py` | the miner client: submit, status, leaderboard |
 | `tools/evidence.py`, `evidence/EVIDENCE.md` | the generated evidence pack |
 | `tools/timing_study.py` | the timing study behind the promotion bar |
+| `.github/workflows/ci.yml` | lint and fast tests on every push; the full setup, real-gate test and self-test nightly |
 | `MANUAL.md` | the miner manual |
 
 ## Status
