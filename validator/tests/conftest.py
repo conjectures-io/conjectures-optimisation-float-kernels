@@ -22,6 +22,16 @@ import db as store_pkg  # noqa: E402
 from db import models  # noqa: E402
 
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+# The verifier fingerprint the suite runs under, and one from an older verifier.
+FINGERPRINT = "f" * 64
+OLD_FINGERPRINT = "e" * 64
+
+
+@pytest.fixture(autouse=True)
+def current_verifier(monkeypatch: pytest.MonkeyPatch) -> str:
+    # Pin the current verifier, so scoring does not depend on this checkout's gate.py hash.
+    monkeypatch.setenv("GATE_REQUIRED_FINGERPRINT", FINGERPRINT)
+    return FINGERPRINT
 
 
 def _admin_url() -> str:
@@ -123,14 +133,16 @@ def register(store, hotkey: str, *, uid: int = 0, block: int = 1000) -> int:
 
 # Stands in for gate.py (same args, verdict JSON, exit codes); markers pick the outcome.
 STUB_GATE = """
-import json, sys
+import json, os, sys
 from pathlib import Path
 kernel = (Path(sys.argv[1]) / "Kernel.lean").read_text()
 verdict = Path(sys.argv[sys.argv.index("--verdict") + 1])
 if "MISCONFIGURED" in kernel:
     print("pin failed"); sys.exit(2)
 base = {"submission": Path(sys.argv[1]).name, "mode": "gate", "seed": 7,
-        "incumbent_sha256": "a" * 64, "seconds": 1.5, "classes": {}}
+        "incumbent_sha256": "a" * 64, "seconds": 1.5, "classes": {},
+        "verifier_fingerprint": "e" * 64 if "STALE" in kernel
+        else os.environ.get("GATE_REQUIRED_FINGERPRINT", "f" * 64)}
 if "CRASH" in kernel:
     verdict.write_text(json.dumps({**base, "stage": "policy", "passed": False,
                                    "reason": "gate error: boom", "ratio": None}))

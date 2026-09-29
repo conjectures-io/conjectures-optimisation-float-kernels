@@ -127,6 +127,18 @@ Each process runs from `validator/` (`cd validator && python -m service.api`); p
 | `chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
 | `weight-setter` (`python -m workers.weight_setter`) | once an epoch, pays the leaderboard's first qualifying hotkey (placeholder rule) and records the vector and its reasons; `WEIGHT_DRY_RUN=1` records without submitting |
 
+**Changing the verifier** retires old verdicts. Every verdict carries the fingerprint of the
+verifier it came from (`identity.py`: a hash of `gate.py`, the contract, the Verify and bench
+modules, the lakefile, manifest and toolchain, and the ratio-defining `BENCH_*` knobs), and only
+the current fingerprint's accepted submissions rank or get paid. After an update, send the old
+ones back through the gate; each keeps the registration it already spent:
+
+```bash
+.venv/bin/python identity.py                   # the current fingerprint
+.venv/bin/python tools/reverify.py             # accepted submissions from another verifier
+.venv/bin/python tools/reverify.py --apply     # requeue them for the gate worker
+```
+
 **Promoting a winner** is an operator step: copy the winning `Kernel.lean` somewhere stable, set
 `GATE_INCUMBENT` to it in `.env` (`GATE_INCUMBENT_MUL`, `GATE_INCUMBENT_FMA` for the other slots),
 and restart the gate worker. The gate rebuilds that slot's pinned binary under `pinned/<slot>/`
@@ -155,6 +167,7 @@ set -a; . ./.env; set +a
 | `lean/bench/Bench.lean`, `Main.lean` | the shared timing core and the `bench` binary |
 | `lean/bench/Micro.lean` | the cost breakdown above |
 | `gate.py` | the stages, the sandbox, the lock, the logs and the JSON verdict; `--bench` for unproved kernels |
+| `identity.py`, `tools/reverify.py` | the verifier fingerprint stamped on every verdict, and the re-verification of older ones |
 | `selftest.py`, `submissions/expected.tsv` | the environment test: every fixture against its expected verdict |
 | `setup.sh` | one-command setup; `--check` reports only |
 | `submissions/` | the ladder above, the unproved target and the exploit fixtures |

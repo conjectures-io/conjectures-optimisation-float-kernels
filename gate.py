@@ -19,6 +19,8 @@ from pathlib import Path
 
 from loguru import logger
 
+import identity
+
 HERE = Path(__file__).resolve().parent
 LIB = HERE / "lean"
 BUILD = LIB / ".lake" / "build"
@@ -162,6 +164,8 @@ class Verdict:
     ratio: float | None = None
     classes: dict[str, dict[str, float]] = field(default_factory=dict)
     incumbent_sha256: str = ""
+    # The verifier this verdict came from (identity.py); scoring counts only the current one's.
+    verifier_fingerprint: str = ""
     seconds: float = 0.0
 
 
@@ -446,8 +450,16 @@ BENCH_STAGES = [("intake", intake), ("statement", statement), ("score", score)]
 
 
 def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> Verdict:
-    # Gates one submission on a fresh build layer, which is dropped afterwards.
-    v = Verdict(submission=sub_dir.name, slot=slot, mode=mode, incumbent_sha256=digest)
+    # Gates one submission on a fresh build layer, which is dropped afterwards. A verifier edited
+    # mid-run makes the verdict nobody's: a validator error, not a rejection.
+    fingerprint = identity.fingerprint()
+    v = Verdict(
+        submission=sub_dir.name,
+        slot=slot,
+        mode=mode,
+        incumbent_sha256=digest,
+        verifier_fingerprint=fingerprint,
+    )
     src, t0 = sub_dir / "Kernel.lean", time.monotonic()
     wipe(LAYER)
     (LAYER / "upper").mkdir(parents=True)
@@ -456,6 +468,9 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
         run_stages(src, v, BENCH_STAGES if mode == "bench" else STAGES)
     finally:
         wipe(LAYER)
+    if identity.fingerprint() != fingerprint:
+        v.passed = False
+        v.reason = "gate error: the verifier changed during the run"
     v.seconds = round(time.monotonic() - t0, 1)
     return v
 

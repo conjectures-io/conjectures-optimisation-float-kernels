@@ -364,7 +364,7 @@ python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul
 | endpoint | what it does |
 |---|---|
 | `POST /submit` | multipart `Kernel.lean` plus `hotkey`, `signature`, `timestamp` and an optional `slot` (`add`, `mul`, `fma`; default `add`); the client signs `submit:<sha256(Kernel.lean)>:<hotkey>:<timestamp>` for `add` and `submit:<slot>:<sha256>:<hotkey>:<timestamp>` for the others, with sr25519 |
-| `GET /submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings |
+| `GET /submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed) |
 | `GET /leaderboard?slot=add` | one slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar |
 | `GET /health` | liveness, queue length, the promotion bar |
 
@@ -377,6 +377,7 @@ python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul
 - Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `add`, `mul` or `fma`.)
 - **Only the `add` board pays for now.** `mul` and `fma` are gated, ranked and shown, but the weight setter scores `add` until the rewards say how emission splits across slots.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
+- **A verdict counts only under the verifier that gave it.** When the validator updates its gate, contract or bench, older accepted submissions leave the board until the operator re-verifies them, at no cost to you: a re-acceptance reuses the registration already spent.
 
 **Round rules (proposed, not final):**
 - **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin. Ties go to the earlier submission.

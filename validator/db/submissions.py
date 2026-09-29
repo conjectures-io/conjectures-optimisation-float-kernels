@@ -15,6 +15,7 @@ from . import clock, models
 from .engine import session_scope
 from .registrations import NoSlot, RegistrationsDb, _available_slots
 from .status import PENDING, SubmissionState
+from .verifier import required_fingerprint
 
 # The columns the gate fills in; finish() refuses any other field instead of dropping it.
 SCORE_FIELDS = frozenset(
@@ -26,6 +27,7 @@ SCORE_FIELDS = frozenset(
         "classes",
         "seed",
         "incumbent_sha256",
+        "verifier_fingerprint",
         "gate_seconds",
     }
 )
@@ -203,6 +205,46 @@ class SubmissionsDb:
             )
             return int(cast("CursorResult[Any]", result).rowcount or 0)
 
+    def reverify(self, fingerprint: str) -> list[int]:
+        # Send every accepted verdict from another verifier back through the gate; it keeps the
+        # registration it spent (claim_slot is idempotent), so a re-acceptance costs nothing.
+        with session_scope(self._sessions) as session:
+            ids = session.execute(
+                update(models.Submission)
+                .where(
+                    models.Submission.state == SubmissionState.ACCEPTED.value,
+                    models.Submission.verifier_fingerprint.is_distinct_from(fingerprint),
+                )
+                .values(
+                    state=SubmissionState.QUEUED.value,
+                    verification_attempt=None,
+                    worker_id=None,
+                    claimed_at=None,
+                    gate_errors=0,
+                )
+                .returning(models.Submission.id)
+            )
+            return sorted(int(i) for i in ids.scalars())
+
+    def stale(self, fingerprint: str) -> list[models.Submission]:
+        # Accepted submissions whose verdict came from another verifier, oldest first.
+        with session_scope(self._sessions) as session:
+            rows = (
+                session.execute(
+                    select(models.Submission)
+                    .where(
+                        models.Submission.state == SubmissionState.ACCEPTED.value,
+                        models.Submission.verifier_fingerprint.is_distinct_from(fingerprint),
+                    )
+                    .order_by(models.Submission.submitted_at, models.Submission.id)
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                session.expunge(row)
+            return list(rows)
+
     # --- reading --------------------------------------------------------------
     def get(self, sub_id: int) -> models.Submission | None:
         # One submission, detached so it stays readable after the session.
@@ -254,9 +296,11 @@ class SubmissionsDb:
 
     def leaderboard(self, slot: str = "add") -> list[models.Submission]:
         # Each hotkey's best accepted ratio vs the slot's incumbent, fastest first, ties earlier.
+        # Only verdicts from the current verifier count; tools/reverify.py re-stamps older ones.
         incumbent = self.current_incumbent(slot)
         if incumbent is None:
             return []
+        fingerprint = required_fingerprint()
         with session_scope(self._sessions) as session:
             rows = (
                 session.execute(
@@ -267,6 +311,7 @@ class SubmissionsDb:
                         models.Submission.state == SubmissionState.ACCEPTED.value,
                         models.Submission.ratio.is_not(None),
                         models.Submission.incumbent_sha256 == incumbent,
+                        models.Submission.verifier_fingerprint == fingerprint,
                     )
                     .order_by(
                         models.Submission.hotkey,

@@ -45,6 +45,7 @@ def recorded(verdict: Path) -> dict[str, object]:
         "classes": v.get("classes") or None,
         "seed": v.get("seed") or None,
         "incumbent_sha256": v.get("incumbent_sha256") or None,
+        "verifier_fingerprint": v.get("verifier_fingerprint") or None,
         "gate_seconds": v.get("seconds"),
     }
 

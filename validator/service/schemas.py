@@ -45,6 +45,9 @@ class SubmissionView(BaseModel):
     classes: dict[str, object] | None = None
     seed: int | None = None
     incumbent_sha256: str | None = None
+    # The verifier the verdict came from; an accepted one counts only while it is current.
+    verifier_fingerprint: str | None = None
+    verification_current: bool | None = None
 
 
 class Ranking(BaseModel):
@@ -61,5 +64,6 @@ class Leaderboard(BaseModel):
     # One slot's board, fastest first; `qualifies` marks ratios at or below the promotion bar.
     slot: str
     incumbent_sha256: str | None = None
+    verifier_fingerprint: str
     promotion_bar: float
     ranking: list[Ranking]

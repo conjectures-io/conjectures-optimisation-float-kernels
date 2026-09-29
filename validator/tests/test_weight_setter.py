@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import sqlalchemy as sa
-from conftest import register
+from conftest import FINGERPRINT, register
 
 VALIDATOR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(VALIDATOR))
@@ -62,7 +62,12 @@ def accept(store, hotkey: str, ratio: float, *, incumbent: str = INCUMBENT, uid:
     sub_id, _ = store.submissions.add(hotkey, digest)
     store.submissions.claim_next("w")
     store.submissions.finish(
-        sub_id, SubmissionState.ACCEPTED, ratio=ratio, stage="score", incumbent_sha256=incumbent
+        sub_id,
+        SubmissionState.ACCEPTED,
+        ratio=ratio,
+        stage="score",
+        incumbent_sha256=incumbent,
+        verifier_fingerprint=FINGERPRINT,
     )
     return sub_id
 

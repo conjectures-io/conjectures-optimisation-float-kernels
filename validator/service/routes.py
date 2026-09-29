@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import cast
 
 import db
-from db import iso, models
+from db import SubmissionState, iso, models
+from db.verifier import required_fingerprint
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from loguru import logger
 
@@ -60,6 +61,12 @@ def submission_view(row: models.Submission) -> schemas.SubmissionView:
         classes=row.classes,
         seed=row.seed,
         incumbent_sha256=row.incumbent_sha256,
+        verifier_fingerprint=row.verifier_fingerprint,
+        verification_current=(
+            row.verifier_fingerprint == required_fingerprint()
+            if row.state == SubmissionState.ACCEPTED.value
+            else None
+        ),
     )
 
 
@@ -173,6 +180,7 @@ def leaderboard(request: Request, slot: str = "add") -> schemas.Leaderboard:
     return schemas.Leaderboard(
         slot=slot,
         incumbent_sha256=store.submissions.current_incumbent(slot),
+        verifier_fingerprint=required_fingerprint(),
         promotion_bar=PROMOTION_BAR,
         ranking=[
             schemas.Ranking(
