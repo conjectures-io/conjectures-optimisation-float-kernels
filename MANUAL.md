@@ -1,19 +1,19 @@
-# Mining the FloatLib binary32 addition slot - the manual
+# Mining the FloatLib binary32 slots (add, mul, fma) - the manual
 
 ## Quick Summary
 
 - You submit one Lean file, `Kernel.lean`: a binary32 addition `Submission.add` and a proof `Submission.add_spec` that it equals FloatLib's reference `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the kernel, audits axioms, then times your kernel against the incumbent. Lower time wins.
-- The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `submissions/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
-- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 26 expected verdicts in about 9 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
+- The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
+- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 28 expected verdicts in about 9 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
 - The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror`, `fastlog` and `tuned` are four accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
-- Two more slots, binary32 `mul` and `fma`, run on the same gate with `--slot mul|fma` (section 13). `submissions/mul-fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma` yet.
+- Two more slots, binary32 `mul` and `fma`, run on the same gate with `--slot mul|fma` (section 13). `kernels/mul/fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma` yet.
 - Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
 
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                                # 26/26 cases as expected = ready
-cp -r submissions/textbook-unproved my-kernel               # the fast adder, one sorry left
+.venv/bin/python selftest.py                                # 28/28 cases as expected = ready
+cp -r kernels/add/textbook-unproved my-kernel               # the fast adder, one sorry left
 .venv/bin/python gate.py --bench my-kernel                  # speed only, proof not checked
 .venv/bin/python gate.py my-kernel                          # the real gate: all six stages
 ```
@@ -27,12 +27,13 @@ cp -r submissions/textbook-unproved my-kernel               # the fast adder, on
 | OS | Linux x86_64; tested on Ubuntu 26.04 (12 cores, 60 GB RAM) |
 | disk | about 14 GB: 11 GB under `lean/.lake` once built (Mathlib 8 GB, FloatLib build 2.6 GB), 2.9 GB for the Lean toolchain in `~/.elan` |
 | packages | `sudo apt install python3 python3-venv curl git bubblewrap util-linux` |
-| network | only during setup: elan, the toolchain, FloatLib and Mathlib from GitHub, and the Mathlib cache; the gate itself runs offline |
+| network | only during setup: elan, the toolchain, FloatLib, Mathlib and TorchLean from GitHub, and the Mathlib cache; the gate itself runs offline |
 | time | about 15 minutes for a first setup (3 for the Mathlib cache, 12 for the build); seconds afterwards |
 
 The repository holds only the competition: `lean/` is a small Lean workspace whose `lakefile.lean`
 pins FloatLib at commit `0d91825` as a dependency. `setup.sh` fetches FloatLib and Mathlib into
-`lean/.lake/packages`; nothing in FloatLib is edited.
+`lean/.lake/packages`; nothing in FloatLib is edited. It also fetches TorchLean (about 160 MB of
+sources) for the stage-2 draft in `lean/stage2/`; the gate never builds it.
 
 ### Install
 
@@ -51,18 +52,18 @@ export PATH=$HOME/.elan/bin:$PATH
 .venv/bin/python selftest.py     # about 9 minutes
 ```
 
-The self-test gates every fixture in `submissions/` and compares each verdict with
-`submissions/expected.tsv`: the stage it must stop at, and for accepted kernels a ratio range.
-It also reruns `exploit-forge` and `exploit-tamper` with policy skipped, to show the stages behind
+The self-test gates every kernel in `kernels/` and compares each verdict with
+`kernels/expected.tsv`: the stage it must stop at, and for accepted kernels a ratio range.
+It also reruns `exploits/forge` and `exploits/tamper` with policy skipped, to show the stages behind
 policy hold on their own. A healthy machine ends with:
 
 ```
-[selftest] ok   exploit-forge          add  nopolicy
-[selftest] ok   exploit-tamper         add  nopolicy
-[selftest] ok   mul-incumbent          mul  gate
+[selftest] ok   exploits/forge          add  nopolicy
+[selftest] ok   exploits/tamper         add  nopolicy
+[selftest] ok   mul/incumbent          mul  gate
 ...
-[selftest] ok   fma-wrong              fma  gate
-[selftest] 26/26 cases as expected
+[selftest] ok   fma/wrong              fma  gate
+[selftest] 28/28 cases as expected
 ```
 
 Exit code 0 means the toolchain, the build, the sandbox, the kernel re-check and the timing all
@@ -92,7 +93,7 @@ my-kernel/
   Kernel.lean    def Submission.add, theorem Submission.add_spec
 ```
 
-The minimum passing file is the incumbent itself (`submissions/incumbent/Kernel.lean`):
+The minimum passing file is the incumbent itself (`kernels/add/incumbent/Kernel.lean`):
 
 ```lean
 import Contract
@@ -236,7 +237,7 @@ structure does not need them: reuse the whole theorem. A kernel with a different
 as the textbook adder, re-proves its own versions; that is the two-to-four-week job.
 
 **Route 1: reuse the word kernel's theorem.** This is how all three accepted faster kernels work,
-and the plumbing is written, in `submissions/direct`, `mirror` and `fastlog`:
+and the plumbing is written, in `kernels/add/direct`, `mirror` and `fastlog`:
 
 ```lean
 abbrev Fmt := ExecFloat.Binary.format (exponentBits := 8) (fractionBits := 23)
@@ -300,14 +301,14 @@ The policy runs on the raw text, comments included, so keep these words out of y
 | `set_option` only `maxHeartbeats`, `maxRecDepth`, `synthInstance.maxHeartbeats` | `debug.skipKernelTC` would switch off the kernel |
 | `@[...]` only `inline`, `noinline`, `always_inline`, `specialize`, `simp`, `reducible`, `irreducible` | `@[command_elab]` and friends register your own elaborator |
 
-`submissions/exploit-*` has one file per rule, each rejected; the two that matter most
-(`exploit-forge`, `exploit-tamper`) are also rejected by the later stages when policy is skipped.
+`kernels/exploits/*` has one file per rule, each rejected; the two that matter most
+(`exploits/forge`, `exploits/tamper`) are also rejected by the later stages when policy is skipped.
 
 ## 9. A worked example
 
 ```bash
 # output abridged to the key lines
-cp -r submissions/textbook-unproved my-kernel
+cp -r kernels/add/textbook-unproved my-kernel
 .venv/bin/python gate.py --bench my-kernel
 #   [bench] my-kernel passed=True stage=score ratio=0.397 (UNPROVED - bench only, not a verdict)
 .venv/bin/python gate.py my-kernel
@@ -333,9 +334,9 @@ cp -r submissions/textbook-unproved my-kernel
 
 ## 11. Read in this order
 
-1. `lean/contract/Contract.lean` - the obligation, 23 lines.
-2. `submissions/incumbent/Kernel.lean`, then `submissions/fastlog/Kernel.lean` and `submissions/tuned/Kernel.lean` - the start and the best proven kernels, with every proof pattern of section 7.
-3. `submissions/textbook-unproved/Kernel.lean` - the unproved target at 0.40x.
+1. `lean/contract/Contract.lean` - the obligations, 31 lines.
+2. `kernels/add/incumbent/Kernel.lean`, then `kernels/add/fastlog/Kernel.lean` and `kernels/add/tuned/Kernel.lean` - the start and the best proven kernels, with every proof pattern of section 7.
+3. `kernels/add/textbook-unproved/Kernel.lean` - the unproved target at 0.40x.
 4. `lean/.lake/packages/floatlib/FloatLib/Floats/ExecFloat/Backends/Word/Narrow/Addition/Runtime.lean` - the incumbent's kernel, 80 lines.
 5. `.../Word/Narrow/Addition/Proof.lean` - its proof, 563 lines: the argument you will adapt.
 6. `.../Dispatch/Add/Runtime.lean` and `Proof.lean` - how specials reach `generic`, and `word_eq_spec`.
@@ -345,27 +346,33 @@ cp -r submissions/textbook-unproved my-kernel
 
 **Submitting is live.** A validator runs the service in `validator/`, and `miner/submit.py` talks
 to it. You need a hotkey registered on the subnet, and the service's URL from the round
-announcement.
+announcement. The API is laid out like the conjectures platform's, and the client signs the
+platform's message, so the same client will work against conjectures.io once it serves FloatLib.
 
 ```bash
-.venv/bin/pip install -r requirements-service.txt      # once: the client's signing and HTTP libraries
+.venv/bin/pip install -r requirements/miner.txt         # once: the client's signing and HTTP libraries
 python miner/submit.py submit my-kernel --hotkey ~/.bittensor/wallets/<w>/hotkeys/<h> --url http://<validator>:9300
 #   (add --slot mul or --slot fma for the other slots; the default is add)
-#   submission 12 queued  digest f5e2f885...
+#   submission 12 (add) queued  digest f5e2f885...
 python miner/submit.py status 12 --url http://<validator>:9300
-#   submission 12  state accepted
+#   submission 12 (add)  state accepted
 #   stage score
 #   time vs incumbent 0.5347x (lower is faster)
+python miner/submit.py report 12 --url http://<validator>:9300    # the gate's full verdict
 python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul|fma for the others
 #   rank    ratio qualifies       admission  hotkey
 #      1   0.5347       yes          leader  5Grw...  <- paid
 ```
 
+Each slot is its own competition slug: `floatlib` is the add board, `floatlib-mul` and
+`floatlib-fma` the others. Every endpoint below sits under `/v1/competitions/<slug>`.
+
 | endpoint | what it does |
 |---|---|
-| `POST /submit` | multipart `Kernel.lean` plus `hotkey`, `signature`, `timestamp` and an optional `slot` (`add`, `mul`, `fma`; default `add`); the client signs `submit:<sha256(Kernel.lean)>:<hotkey>:<timestamp>` for `add` and `submit:<slot>:<sha256>:<hotkey>:<timestamp>` for the others, with sr25519 |
-| `GET /submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed) |
-| `GET /leaderboard?slot=add` | one slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), and `leader` the one submission paid |
+| `POST …/submissions` | one multipart part, `Kernel.lean`, and three headers: `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp` (unix seconds) and `X-Conjectures-Signature`, an sr25519 signature over the five lines `conjectures-competition-submit-v1` / `competition: <slug>` / `digest: <sha256(Kernel.lean)>` / `hotkey: <ss58>` / `timestamp: <seconds>` (`miner/sig.py`) |
+| `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed) |
+| `GET …/submissions/{id}/report` | the gate's full verdict JSON: every stage it reached and why it stopped |
+| `GET …/leaderboard` | the slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), and `leader` the one submission paid |
 | `GET /health` | liveness, queue length, the promotion bar |
 
 **What the service enforces:**
@@ -373,7 +380,7 @@ python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul
 - **One registration buys one accepted submission.** A rejection costs nothing: fix it and resubmit. An acceptance spends one registration; to submit again, register again.
 - At most 10 signed writes a minute per hotkey, and at most as many queued submissions as you have unspent registrations.
 - The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
-- A signature is bound to its slot: one made for `add` does not verify for `mul`, and the other way round.
+- A signature is bound to its slot's slug: one made for `floatlib` (add) does not verify for `floatlib-mul`, and the other way round, nor for any other competition on the platform.
 - Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `add`, `mul` or `fma`.)
 - **Only the `add` board pays for now.** `mul` and `fma` are gated, ranked and shown, but the weight setter scores `add` until the rewards say how emission splits across slots.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
@@ -382,8 +389,8 @@ python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul
 **Round rules (proposed, not final):**
 - **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin.
 - **Who leads: statistical admission.** The headline ratio ranks the board; the lead needs evidence as well. The gate records every round's paired incumbent and submission timings, and the validator bootstraps them (2000 draws, a seed derived from the timings themselves, so every validator agrees). A submission qualifies when its ratio is at or below the bar *and* its 5th-percentile gain over the incumbent is positive. Taken in submission order, a qualifying submission takes the lead only if its 5th-percentile gain over the current leader is positive too. So a later copy of the leader, or the same kernel with one lucky round, cannot take the lead; a genuinely faster kernel can. This is the rule the DEFLATE competition uses.
-- **Emission:** a placeholder until rewards are announced. The admitted leader's hotkey receives the winner share and the rest burns.
-- **Later slots** use the same shape, one obligation per operation and format: `Spec.mul`, `Spec.div`, `Spec.sqrt`, `Spec.fma`, and binary64.
+- **Emission:** a placeholder until rewards are announced. As in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; within the competition's share the admitted leader's hotkey receives the winner share, and whatever no miner earns goes to the treasury.
+- **Later slots** use the same shape, one obligation per operation and format: `Spec.div`, `Spec.sqrt`, and binary64.
 
 ## 13. The multiplication and fused multiply-add slots
 
@@ -397,11 +404,11 @@ Everything above applies, with these names swapped in. Pass `--slot` to the gate
 
 ```bash
 .venv/bin/python gate.py --slot mul --bench my-mul          # time an unproved multiplication
-.venv/bin/python gate.py --slot fma submissions/fma-word     # the full gate on the fma slot
+.venv/bin/python gate.py --slot fma kernels/fma/word         # the full gate on the fma slot
 ```
 
 `ExecFloat.Spec.fma` rounds once: `x * y + z` computed exactly, then rounded. Multiplying,
-rounding and adding is a different function, and `submissions/fma-wrong` shows it fails to prove.
+rounding and adding is a different function, and `kernels/fma/wrong` shows it fails to prove.
 FloatLib's word kernels `Configured.Backend.wordMul` and `wordFma`, with `wordMul_eq_spec` and
 `wordFma_eq_spec`, play the role `wordAdd` plays in section 7.
 
@@ -416,7 +423,7 @@ Each slot times its own operand classes, 500,000 calls each, summed:
 | `fma` | `cancel` | a negative addend the size of the product: cancellation |
 | `fma` | `wide` | an addend 20 to 40 binades from the product, either side |
 
-**`mul-fast` (0.55x, accepted):** FloatLib's `mulFiniteImpl?` on bare words with `tuned`'s
+**`mul/fast` (0.55x, accepted):** FloatLib's `mulFiniteImpl?` on bare words with `tuned`'s
 `roundP`. All three slots round through the same `roundProduct`, and its `UInt64.log2` bit loop runs
 up to 47 times on a 48-bit product, so the fast `log2` pays even more here than in `add`. The
 special test is simpler: multiplication falls back only on NaN and infinity (`a <<< 1 ≥ 0xff000000`,
