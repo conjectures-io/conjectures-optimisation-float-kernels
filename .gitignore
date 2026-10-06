@@ -15,5 +15,3 @@ __pycache__/
 # Validator secrets and state
 .env
 validator/.work/
-# Stage-2 spike workspace: Lean build output and fetched dependencies (TorchLean, Mathlib)
-stage2/.lake/

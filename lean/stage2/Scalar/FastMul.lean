@@ -1,4 +1,4 @@
-import Scalar.Contract
+import Contract
 
 /-!
 FloatLib's binary32 word multiplication on raw bits, with tuned's rounding step.

@@ -1,0 +1,30 @@
+# submission	slot	mode	passed	stage	ratio_min	ratio_max
+# mode: gate = all stages; nopolicy = policy skipped, to test the stages behind it
+add/cheat	add	gate	false	policy	-	-
+add/direct	add	gate	true	score	0.70	0.90
+exploits/csimp	add	gate	false	policy	-	-
+exploits/eval	add	gate	false	policy	-	-
+exploits/includestr	add	gate	false	policy	-	-
+exploits/membomb	add	gate	false	score	-	-
+exploits/forge	add	gate	false	policy	-	-
+exploits/publicimport	add	gate	false	policy	-	-
+exploits/skipkernel	add	gate	false	policy	-	-
+exploits/tactic	add	gate	false	policy	-	-
+exploits/tamper	add	gate	false	policy	-	-
+exploits/unsafeio	add	gate	false	policy	-	-
+add/fastlog	add	gate	true	score	0.45	0.62
+add/incumbent	add	gate	true	score	0.97	1.03
+add/mirror	add	gate	true	score	0.70	0.88
+add/textbook-unproved	add	gate	false	policy	-	-
+add/tuned	add	gate	true	score	0.42	0.58
+add/word	add	gate	true	score	0.97	1.03
+add/wrong	add	gate	false	statement	-	-
+exploits/forge	add	nopolicy	false	kernel	-	-
+exploits/tamper	add	nopolicy	false	statement	-	-
+mul/incumbent	mul	gate	true	score	0.97	1.03
+mul/fast	mul	gate	true	score	0.48	0.62
+mul/word	mul	gate	true	score	0.97	1.03
+mul/wrong	mul	gate	false	statement	-	-
+fma/incumbent	fma	gate	true	score	0.97	1.03
+fma/word	fma	gate	true	score	0.97	1.03
+fma/wrong	fma	gate	false	statement	-	-

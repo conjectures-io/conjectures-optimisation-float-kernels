@@ -7,9 +7,8 @@ pydantic-settings==2.15.0
 SQLAlchemy==2.0.54
 psycopg[binary]==3.3.6
 alembic==1.20.0
-# Not substrate-interface: its scalecodec clashes with cyscale, which the bittensor SDK needs.
-bittensor-wallet==4.1.1
-requests==2.34.2
+# The signing and HTTP libraries, shared with the miner client.
+-r miner.txt
 # Tests only.
 pytest==9.1.1
 httpx==0.28.1

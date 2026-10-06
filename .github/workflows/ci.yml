@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt -r requirements-service.txt ruff==0.16.9
+      - run: pip install -r requirements/gate.txt -r requirements/service.txt ruff==0.16.9
       - run: ruff check .
       - run: ruff format --check .
       # -rs lists why the db suite skipped, if it did: a silent skip would pass the job.
@@ -57,7 +57,7 @@ jobs:
             ~/.elan
             lean/.lake
           key: lean-${{ hashFiles('lean/lake-manifest.json', 'lean/lean-toolchain') }}
-      - run: ./setup.sh && .venv/bin/pip install -q -r requirements-service.txt
+      - run: ./setup.sh && .venv/bin/pip install -q -r requirements/service.txt
       - name: Save the toolchain and Mathlib build
         if: always() && steps.toolchain.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

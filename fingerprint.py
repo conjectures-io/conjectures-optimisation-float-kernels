@@ -1,4 +1,4 @@
-"""The verifier's identity: a hash of everything that decides a verdict, stamped on each one.
+"""The verifier fingerprint: a hash of everything that decides a verdict, stamped on each one.
 
 An accepted submission counts only while its verdict carries the current fingerprint. Change the
 gate, the contract, a Verify module, the bench or the Lean toolchain, and every older verdict drops
@@ -6,7 +6,7 @@ off the leaderboard until `tools/reverify.py` sends it through the new verifier.
 not part of it: a promotion is tracked per slot by `incumbent_sha256`, so it leaves the other slots'
 boards alone.
 
-    python identity.py        prints the current fingerprint
+    python fingerprint.py     prints the current fingerprint
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ LIB = HERE / "lean"
 PINNED = sorted(
     [
         "gate.py",
-        "identity.py",
+        "fingerprint.py",
         "lean/lakefile.lean",
         "lean/lake-manifest.json",
         "lean/lean-toolchain",
@@ -40,7 +40,7 @@ PINNED = sorted(
 KNOBS = {"BENCH_PAIRS": "500000", "BENCH_ROUNDS": "25", "BENCH_INNER": "3"}
 
 
-def fingerprint() -> str:
+def current() -> str:
     # The pinned files' hashes and the ratio-defining knobs, hashed together.
     parts: dict[str, str] = {
         name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in PINNED
@@ -49,15 +49,15 @@ def fingerprint() -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
 
 
-def required_fingerprint() -> str:
+def required() -> str:
     # What scoring accepts: this checkout's, or an operator-published one for a scorer elsewhere.
     value = os.environ.get("GATE_REQUIRED_FINGERPRINT")
     if value is None:
-        return fingerprint()
+        return current()
     if len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
         raise ValueError("GATE_REQUIRED_FINGERPRINT must be a sha256 hex digest")
     return value
 
 
 if __name__ == "__main__":
-    print(fingerprint())
+    print(current())

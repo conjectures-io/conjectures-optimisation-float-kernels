@@ -1,0 +1,4 @@
+# The miner client, miner/submit.py: sign with the hotkey, send over HTTP.
+# Not substrate-interface: its scalecodec clashes with cyscale, which the bittensor SDK needs.
+bittensor-wallet==4.1.1
+requests==2.34.2

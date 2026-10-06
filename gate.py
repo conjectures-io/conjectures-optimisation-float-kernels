@@ -19,7 +19,7 @@ from pathlib import Path
 
 from loguru import logger
 
-import identity
+import fingerprint as verifier
 
 HERE = Path(__file__).resolve().parent
 LIB = HERE / "lean"
@@ -59,37 +59,20 @@ class Slot:
         return [self.incumbent, LIB / "bench" / self.main] + SHARED_INPUTS
 
 
-# Each slot's incumbent; point GATE_INCUMBENT[_MUL|_FMA] at a winner to promote it (repins).
+KERNELS = HERE / "kernels"
+
+
+def incumbent(slot: str) -> Path:
+    # A slot's incumbent: kernels/<slot>/incumbent, or the winner an operator promoted (repins)
+    # with GATE_INCUMBENT for add, GATE_INCUMBENT_MUL and GATE_INCUMBENT_FMA for the others.
+    env = "GATE_INCUMBENT" if slot == "add" else f"GATE_INCUMBENT_{slot.upper()}"
+    return Path(os.environ.get(env, KERNELS / slot / "incumbent" / "Kernel.lean"))
+
+
 SLOTS = {
-    "add": Slot(
-        "add",
-        "Verify",
-        "bench",
-        "Main.lean",
-        Path(os.environ.get("GATE_INCUMBENT", HERE / "submissions" / "incumbent" / "Kernel.lean")),
-    ),
-    "mul": Slot(
-        "mul",
-        "VerifyMul",
-        "benchMul",
-        "MainMul.lean",
-        Path(
-            os.environ.get(
-                "GATE_INCUMBENT_MUL", HERE / "submissions" / "mul-incumbent" / "Kernel.lean"
-            )
-        ),
-    ),
-    "fma": Slot(
-        "fma",
-        "VerifyFma",
-        "benchFma",
-        "MainFma.lean",
-        Path(
-            os.environ.get(
-                "GATE_INCUMBENT_FMA", HERE / "submissions" / "fma-incumbent" / "Kernel.lean"
-            )
-        ),
-    ),
+    "add": Slot("add", "Verify", "bench", "Main.lean", incumbent("add")),
+    "mul": Slot("mul", "VerifyMul", "benchMul", "MainMul.lean", incumbent("mul")),
+    "fma": Slot("fma", "VerifyFma", "benchFma", "MainFma.lean", incumbent("fma")),
 }
 ELAN = Path.home() / ".elan"
 LAKE = str(ELAN / "bin" / "lake")
@@ -167,7 +150,7 @@ class Verdict:
     # statistical admission resamples (validator/admission.py).
     rounds: list[list[int]] = field(default_factory=list)
     incumbent_sha256: str = ""
-    # The verifier this verdict came from (identity.py); scoring counts only the current one's.
+    # The verifier this verdict came from (fingerprint.py); scoring counts only the current one's.
     verifier_fingerprint: str = ""
     seconds: float = 0.0
 
@@ -460,7 +443,7 @@ BENCH_STAGES = [("intake", intake), ("statement", statement), ("score", score)]
 def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> Verdict:
     # Gates one submission on a fresh build layer, which is dropped afterwards. A verifier edited
     # mid-run makes the verdict nobody's: a validator error, not a rejection.
-    fingerprint = identity.fingerprint()
+    fingerprint = verifier.current()
     v = Verdict(
         submission=sub_dir.name,
         slot=slot,
@@ -476,7 +459,7 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
         run_stages(src, v, BENCH_STAGES if mode == "bench" else STAGES)
     finally:
         wipe(LAYER)
-    if identity.fingerprint() != fingerprint:
+    if verifier.current() != fingerprint:
         v.passed = False
         v.reason = "gate error: the verifier changed during the run"
     v.seconds = round(time.monotonic() - t0, 1)
@@ -501,6 +484,13 @@ def run_stages(src: Path, v: Verdict, stages: list) -> None:
         v.passed = True
 
 
+def log_to(name: str, stamp: str) -> None:
+    # The console at LOG_LEVEL (INFO unless set), and every line, DEBUG included, in logs/.
+    logger.remove()
+    logger.add(sys.stderr, level=os.environ.get("LOG_LEVEL", "INFO"))
+    logger.add(HERE / "logs" / f"{name}-{stamp}.log", level="DEBUG")
+
+
 def main() -> int:
     # Gates each submission under one lock; exit 0 all accepted, 1 any rejected, 2 validator error.
     argv, opts = sys.argv[1:], {}
@@ -515,11 +505,14 @@ def main() -> int:
     mode = "bench" if "--bench" in argv else "gate"
     bad_verdict = "--verdict" in sys.argv and (verdict_path is None or len(args) != 1)
     if not args or bad_verdict or slot not in SLOTS:
-        print("usage: gate.py [--bench] [--slot add|mul|fma] submissions/<name> [...]")
-        print("       gate.py <submission dir> [--slot add|mul|fma] --verdict <file.json>")
+        print("usage: gate.py [--bench] [--slot add|mul|fma] <kernel dir> [...]", file=sys.stderr)
+        print(
+            "       gate.py <submission dir> [--slot add|mul|fma] --verdict <file.json>",
+            file=sys.stderr,
+        )
         return 2
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    logger.add(HERE / "logs" / f"gate-{stamp}.log", level="DEBUG")
+    log_to("gate", stamp)
     results = HERE / "results"
     results.mkdir(exist_ok=True)
     failed, broken = 0, False
@@ -533,7 +526,7 @@ def main() -> int:
             return 2
         for arg in args:
             v = gate(Path(arg).resolve(), digest, mode, slot)
-            out = results / f"{v.submission}-{mode}-{stamp}.json"
+            out = results / f"{v.slot}-{v.submission}-{mode}-{stamp}.json"
             out.write_text(json.dumps(asdict(v), indent=2))
             if verdict_path is not None:
                 verdict_path.write_text(json.dumps(asdict(v), indent=2))

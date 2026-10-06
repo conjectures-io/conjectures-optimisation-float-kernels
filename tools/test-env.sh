@@ -28,8 +28,8 @@ install() {
   fi
   [ -x "$venv/bin/python" ] || { log "creating $venv (Python 3.12)"; uv venv -q -p 3.12 "$venv"; }
   log "installing the pinned requirements into $venv"
-  uv pip install -q -p "$venv/bin/python" -r "$here/requirements.txt" \
-    -r "$here/requirements-service.txt" ruff pip   # pip: setup.sh installs with it
+  uv pip install -q -p "$venv/bin/python" -r "$here/requirements/gate.txt" \
+    -r "$here/requirements/service.txt" ruff pip   # pip: setup.sh installs with it
   if [ ! -x "$pg/dist/bin/postgres" ]; then
     log "downloading Postgres $pg_version into $pg/dist"
     mkdir -p "$pg/dist"

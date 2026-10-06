@@ -1,4 +1,4 @@
-import Scalar.Contract
+import Contract
 
 /-!
 `fastlog` with two cheap-tier changes, and the proof that they change nothing.

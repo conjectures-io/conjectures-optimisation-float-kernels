@@ -42,24 +42,24 @@ if ! command -v lake >/dev/null 2>&1; then
 fi
 cd "$lean"
 log "toolchain $(cat lean-toolchain)"
-log "fetching FloatLib (pinned in lakefile.lean) and the Mathlib build cache"
+log "fetching FloatLib and TorchLean (pinned in lakefile.lean) and the Mathlib build cache"
 lake exe cache get
 log "building FloatLib, the contract and the bench against the incumbent"
 mkdir -p work
-cp "$here/submissions/incumbent/Kernel.lean" work/Submission.lean
+cp "$here/kernels/add/incumbent/Kernel.lean" work/Submission.lean
 lake build Contract Verify bench 2>&1 | tail -3
 
-# The gate's Python environment, pinned in requirements.txt.
+# The gate's Python environment, pinned in requirements/gate.txt.
 cd "$here"
 [ -x .venv/bin/python ] || python3 -m venv .venv
-.venv/bin/pip install -q -r requirements.txt
+.venv/bin/pip install -q -r requirements/gate.txt
 if [ "$service" = 1 ]; then
   log "installing the validator service"
-  .venv/bin/pip install -q -r requirements-service.txt
+  .venv/bin/pip install -q -r requirements/service.txt
   [ -f .env ] || { cp .env.example .env; log "wrote .env from .env.example - set POSTGRES_PASSWORD"; }
 fi
 if [ "$chain" = 1 ]; then
   log "installing the bittensor SDK"
-  .venv/bin/pip install -q -r requirements-chain.txt
+  .venv/bin/pip install -q -r requirements/chain.txt
 fi
 log "done - test the environment: .venv/bin/python selftest.py (about 9 minutes)"

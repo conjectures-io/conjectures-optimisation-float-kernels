@@ -5,7 +5,7 @@ import Scalar.FastMul
 # Stage-2 spike kernels: TorchLean's accumulation order over stage 1's scalar winners
 
 Same fold order as the specs, with `ExecFloat.add`/`mul` swapped for the best proven stage-1
-kernels (`tuned` add, `mul-fast` mul). Imports FloatLib only, so a bench links without TorchLean.
+kernels (`tuned` add, `mul/fast` mul). Imports FloatLib only, so a bench links without TorchLean.
 Two variants of each, the reference ops and the fast ones, to see what composition alone buys.
 -/
 

@@ -13,7 +13,7 @@ from loguru import logger
 import gate
 
 HERE = Path(__file__).resolve().parent
-EXPECTED = HERE / "submissions" / "expected.tsv"
+EXPECTED = gate.KERNELS / "expected.tsv"
 
 
 @dataclass
@@ -46,7 +46,7 @@ def run_case(case: Case, digest: str) -> gate.Verdict:
     if case.mode == "nopolicy":
         gate.STAGES = [s for s in stages if s[0] != "policy"]
     try:
-        return gate.gate(HERE / "submissions" / case.name, digest, slot=case.slot)
+        return gate.gate(gate.KERNELS / case.name, digest, slot=case.slot)
     finally:
         gate.STAGES = stages
 
@@ -63,7 +63,7 @@ def check(case: Case, v: gate.Verdict) -> str | None:
 def main() -> int:
     # Runs every case under the gate's lock and exits 1 if any verdict is not the expected one.
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    logger.add(HERE / "logs" / f"selftest-{stamp}.log", level="DEBUG")
+    gate.log_to("selftest", stamp)
     cases = load()
     failures = []
     with open(HERE / "gate.lock", "w") as lock:

@@ -19,6 +19,7 @@ sys.path.insert(0, str(HERE))
 import gate  # noqa: E402 - the gate lives at the repository root, one level up
 
 _MINUTES = float(os.environ.get("STUDY_MINUTES", "60"))
+# Both add-slot kernels, under kernels/add/.
 SUBMISSIONS = ["incumbent", "fastlog"]
 # A kernel at or below this ratio would be promoted under the proposed 3% rule.
 PROMOTION_BAR = 0.97
@@ -67,7 +68,7 @@ def markdown(summary: dict, minutes: float) -> str:
 def main() -> int:
     # Alternates the submissions until the deadline, saving every verdict as it lands.
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    logger.add(HERE / "logs" / f"timing-study-{stamp}.log", level="DEBUG")
+    gate.log_to("timing-study", stamp)
     out = HERE / "results" / f"timing-study-{stamp}.json"
     out.parent.mkdir(exist_ok=True)
     runs: dict[str, list[dict]] = {n: [] for n in SUBMISSIONS}
@@ -78,7 +79,7 @@ def main() -> int:
         i = 0
         while time.monotonic() - started < _MINUTES * 60:
             name = SUBMISSIONS[i % len(SUBMISSIONS)]
-            v = asdict(gate.gate(HERE / "submissions" / name, digest))
+            v = asdict(gate.gate(gate.KERNELS / "add" / name, digest))
             v["load1"] = os.getloadavg()[0]
             runs[name].append(v)
             logger.info(
