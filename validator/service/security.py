@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 import time
 
-from db import SLOTS
-
 # Shape only (base58, 42-prefix length); whether the key is real is the signature's job.
 SS58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{46,49}$")
 # sr25519 signatures are 64 bytes; accept them with or without the 0x prefix.
@@ -16,13 +14,6 @@ SIGNATURE = re.compile(r"^(0x)?[0-9a-fA-F]{128}$")
 class Invalid(ValueError):
     # A write that is malformed, stale or unsigned. Carries the miner-facing reason.
     pass
-
-
-def check_slot(slot: str) -> str:
-    # Refuse a slot the gate does not know.
-    if slot not in SLOTS:
-        raise Invalid(f"slot must be one of {', '.join(SLOTS)}")
-    return slot
 
 
 def check_hotkey(hotkey: str) -> str:

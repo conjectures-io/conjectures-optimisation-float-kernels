@@ -13,6 +13,8 @@ from loguru import logger
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import db  # noqa: E402
+import log  # noqa: E402
+from axiom import config_error, init  # noqa: E402
 from chain.types import ARCHIVE, FINNEY, NETUID, POLL_INTERVAL_SECONDS  # noqa: E402
 from chain.watcher import run  # noqa: E402
 
@@ -42,8 +44,17 @@ def main() -> None:
     # Poll the chain and record registration changes until interrupted.
     from chain.finney import BittensorChainSource
 
-    config = ChainWatcherConfig.from_env()
+    log.setup()
+    events = init("competition-chain-watcher")
+    try:
+        config = ChainWatcherConfig.from_env()
+    except Exception as exc:
+        events.error("service_misconfigured", error=config_error(exc))
+        raise
+    events.bind(netuid=config.netuid, network=config.network)
     store = db.connect()
+    events.info("service_started", poll_interval_seconds=config.poll_interval)
+    reason = "crashed"
     try:
         source = BittensorChainSource(
             network=config.network, archive_network=config.archive_network
@@ -57,7 +68,9 @@ def main() -> None:
             f"netuid={config.netuid} poll={config.poll_interval:.1f}s"
         )
         run(source, publish, netuid=config.netuid, poll_interval=config.poll_interval)
+        reason = "interrupted"
     finally:
+        events.info("service_stopped", reason=reason)
         store.close()
 
 

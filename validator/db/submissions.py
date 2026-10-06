@@ -30,8 +30,11 @@ SCORE_FIELDS = frozenset(
         "incumbent_sha256",
         "verifier_fingerprint",
         "gate_seconds",
+        "report",
     }
 )
+# The one file a submission is; its name in submission_files.
+KERNEL = "Kernel.lean"
 
 
 class SubmissionsDb:
@@ -42,8 +45,11 @@ class SubmissionsDb:
         self._registrations = RegistrationsDb(sessions)
 
     # --- writing --------------------------------------------------------------
-    def add(self, hotkey: str, digest: str, slot: str = "add") -> tuple[int, bool]:
-        # Queue a submission; returns (id, fresh), and a resubmitted file keeps its id.
+    def add(
+        self, hotkey: str, digest: str, slot: str = "add", kernel: bytes | None = None
+    ) -> tuple[int, bool]:
+        # Queue a submission and its Kernel.lean in one transaction; returns (id, fresh), and a
+        # resubmitted file keeps its id.
         with session_scope(self._sessions) as session:
             stmt = (
                 insert(models.Submission)
@@ -59,6 +65,10 @@ class SubmissionsDb:
             )
             fresh_id = session.execute(stmt).scalar_one_or_none()
             if fresh_id is not None:
+                if kernel is not None:
+                    session.add(
+                        models.SubmissionFile(submission_id=fresh_id, name=KERNEL, content=kernel)
+                    )
                 return int(fresh_id), True
             existing = session.execute(
                 select(models.Submission.id).where(
@@ -186,6 +196,36 @@ class SubmissionsDb:
                 "given up"
             )
             return row.state
+
+    def kernel(self, sub_id: int) -> bytes | None:
+        # The submission's Kernel.lean from the store; None for one queued before it kept files.
+        with session_scope(self._sessions) as session:
+            content = session.execute(
+                select(models.SubmissionFile.content).where(
+                    models.SubmissionFile.submission_id == sub_id,
+                    models.SubmissionFile.name == KERNEL,
+                )
+            ).scalar_one_or_none()
+            return bytes(content) if content is not None else None
+
+    def requeue_interrupted(self, worker_id: str) -> int:
+        # At startup: this worker's own claims died with its last process, so requeue them now
+        # rather than waiting out the stale-claim timeout. Uncharged, like any validator error.
+        with session_scope(self._sessions) as session:
+            result = session.execute(
+                update(models.Submission)
+                .where(
+                    models.Submission.state == SubmissionState.VERIFYING.value,
+                    models.Submission.worker_id == worker_id,
+                )
+                .values(
+                    verification_attempt=None,
+                    state=SubmissionState.QUEUED.value,
+                    worker_id=None,
+                    claimed_at=None,
+                )
+            )
+            return int(cast("CursorResult[Any]", result).rowcount or 0)
 
     def requeue_stale(self, older_than_seconds: float) -> int:
         # Requeue work a dead worker left mid-gate; the age must exceed the gate's own timeout.

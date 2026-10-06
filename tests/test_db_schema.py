@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import uuid
 from pathlib import Path
 
@@ -15,12 +14,10 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy.exc import IntegrityError
 
-VALIDATOR = Path(__file__).resolve().parent.parent
-REPO = VALIDATOR.parent
-sys.path.insert(0, str(VALIDATOR))
+from db import models
+from db.status import STATE_VALUES, SubmissionState
 
-from db import models  # noqa: E402
-from db.status import STATE_VALUES, SubmissionState  # noqa: E402
+REPO = Path(__file__).resolve().parents[1]
 
 ALEMBIC = REPO / "deploy/migrate"
 

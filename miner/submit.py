@@ -1,37 +1,53 @@
-"""Miner client: submit a Kernel.lean, read its verdict and the leaderboard (usage in MANUAL.md)."""
+"""Miner client: submit a Kernel.lean, read its verdict and report, read the leaderboard.
+
+Talks to any API laid out like the conjectures platform's competition surface,
+`/v1/competitions/<slug>/...`: a FloatLib validator, or conjectures.io once it serves FloatLib.
+Each slot is its own slug (`floatlib` is add, `floatlib-mul`, `floatlib-fma`). Needs only
+requirements/miner.txt. Usage in MANUAL.md, section 12:
+
+python miner/submit.py submit my-kernel --hotkey <file> --url <api> [--slot add|mul|fma]
+python miner/submit.py status <submission id> --url <api> [--slot ...]
+python miner/submit.py report <submission id> --url <api> [--slot ...]
+python miner/submit.py leaderboard --url <api> [--slot ...]
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import TypedDict, cast
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "validator"))
-from service import sig  # noqa: E402 - shared with the service so both hash and sign identically
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sig  # noqa: E402 - the miner's copy of the signing contract, pinned by test_miner_sig.py
 
 TIMEOUT = 60
+SLOTS = ("add", "mul", "fma")
 
 
 class SubmitResult(TypedDict):
-    # The service's reply to an accepted POST /submit.
+    # The reply to an accepted submission.
+    competition: str
     submission: int
+    slot: str
     state: str
     digest: str
-    # Unclaimed registrations left; absent from pre-entitlement services, so read with .get().
-    slots_remaining: NotRequired[int]
+    # False when this exact file was already queued: the retry got the same submission.
+    created: bool
+    # Unclaimed registrations left; only an accepted submission spends one.
+    slots_remaining: int
 
 
 class StatusResult(TypedDict):
-    # One submission as GET /submissions/{id} returns it.
+    # One submission as GET .../submissions/{id} returns it.
     id: int
+    slot: str
     state: str
     submitted_at: str
-    # The competition slot; absent from pre-slot services, so read with .get().
-    slot: NotRequired[str]
     stage: str | None
     reason: str | None
     ratio: float | None
@@ -45,17 +61,36 @@ class LeaderboardEntry(TypedDict):
     ratio: float
     qualifies: bool
     hotkey: str
-    # Statistical admission's outcome; absent from pre-admission services, so read with .get().
-    admission: NotRequired[str | None]
+    # Statistical admission's outcome for this submission.
+    admission: str | None
 
 
 class LeaderboardResult(TypedDict):
-    # GET /leaderboard?slot=...
+    # GET .../leaderboard
     incumbent_sha256: str | None
     promotion_bar: float
     ranking: list[LeaderboardEntry]
-    # The admitted leader, the submission that is paid; absent from pre-admission services.
-    leader: NotRequired[int | None]
+    # The admitted leader, the submission that is paid.
+    leader: int | None
+
+
+def base(url: str, slot: str) -> str:
+    # Every endpoint of one slot.
+    return f"{url.rstrip('/')}/v1/competitions/{sig.slug_of(slot)}"
+
+
+def refused(what: str, r: requests.Response) -> str:
+    # One line a miner can act on, from either refusal shape: a FloatLib validator's
+    # {"detail": {"reason": ...}}, or the platform's problem body {reason_code, detail}.
+    content_type = r.headers.get("content-type", "")
+    if content_type.startswith(("application/json", "application/problem+json")):
+        body = cast("dict[str, object]", r.json())
+        code, detail = body.get("reason_code"), body.get("detail")
+        if isinstance(detail, dict):
+            detail = cast("dict[str, object]", detail).get("reason", detail)
+        if code or detail:
+            return f"{what} refused ({r.status_code}{f' {code}' if code else ''}): {detail}"
+    return f"{what} refused ({r.status_code}): {r.text[:300]}"
 
 
 def kernel_of(d: Path) -> bytes:
@@ -66,51 +101,56 @@ def kernel_of(d: Path) -> bytes:
     return kernel.read_bytes()
 
 
+def signed_headers(kp: sig.Keypair, *, competition: str, digest: str, timestamp: int) -> dict:
+    # The three headers that authorise one submission. Headers, not form fields: a request
+    # carrying them is not one a browser sends cross-site, so no page can replay a signature.
+    message = sig.submit_message(
+        competition=competition, digest=digest, hotkey=kp.ss58_address, timestamp=timestamp
+    )
+    return {
+        "X-Conjectures-Hotkey": kp.ss58_address,
+        "X-Conjectures-Timestamp": str(timestamp),
+        "X-Conjectures-Signature": sig.sign(kp, message),
+    }
+
+
 def cmd_submit(args: argparse.Namespace) -> None:
-    # Hash the file, sign (slot, hash, hotkey, now), upload; print the submission id.
+    # Hash the file, sign (slug, hash, hotkey, now), upload; print the submission id.
     d, hotkey, url = cast(str, args.dir), cast(str, args.hotkey), cast(str, args.url)
     slot = cast(str, args.slot)
     lean = kernel_of(Path(d))
     kp = sig.load_keypair(hotkey)
     digest = sig.digest_of(lean)
-    # Signed, and refused outside a few minutes of the service's clock, so it can't be replayed.
+    # Signed, and refused outside a few minutes of the receiver's clock, so it can't be replayed.
     timestamp = int(time.time())
     r = requests.post(
-        f"{url}/submit",
-        data={
-            "hotkey": kp.ss58_address,
-            "signature": sig.sign(kp, sig.submit_message(digest, kp.ss58_address, timestamp, slot)),
-            "timestamp": timestamp,
-            "slot": slot,
-        },
+        f"{base(url, slot)}/submissions",
+        headers=signed_headers(
+            kp, competition=sig.slug_of(slot), digest=digest, timestamp=timestamp
+        ),
         files={"Kernel.lean": ("Kernel.lean", lean)},
         timeout=TIMEOUT,
     )
-    if r.status_code != 200:
-        detail: object = r.text
-        if r.headers.get("content-type", "").startswith("application/json"):
-            detail = cast("dict[str, object]", r.json()).get("detail", r.text)
-        reason: object = detail
-        if isinstance(detail, dict):
-            nested = cast("dict[str, object]", detail)
-            reason = nested.get("reason", nested)
-        sys.exit(f"submit refused ({r.status_code}): {reason}")
+    if r.status_code not in (200, 201):
+        sys.exit(refused("submit", r))
     s = cast(SubmitResult, r.json())
-    print(f"submission {s['submission']} ({slot}) {s['state']}  digest {digest}")
-    if (left := s.get("slots_remaining")) is not None:
-        print(f"{left} registration slot(s) left; one registration buys one accepted submission")
-    print(f"check with: submit.py status {s['submission']} --url {url}")
+    again = "" if s["created"] else " (already queued: same file, same submission)"
+    print(f"submission {s['submission']} ({slot}) {s['state']}{again}  digest {digest}")
+    print(
+        f"{s['slots_remaining']} registration slot(s) left; "
+        "one registration buys one accepted submission"
+    )
+    print(f"check with: submit.py status {s['submission']} --slot {slot} --url {url}")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
     # Print a submission's state, and its verdict once gated.
-    sub_id, url = cast(int, args.id), cast(str, args.url)
-    r = requests.get(f"{url}/submissions/{sub_id}", timeout=TIMEOUT)
+    sub_id, url, slot = cast(int, args.id), cast(str, args.url), cast(str, args.slot)
+    r = requests.get(f"{base(url, slot)}/submissions/{sub_id}", timeout=TIMEOUT)
     if r.status_code != 200:
-        sys.exit(f"{r.status_code}: {r.text}")
+        sys.exit(refused("status", r))
     s = cast(StatusResult, r.json())
-    slot = s.get("slot", "add")
-    print(f"submission {s['id']} ({slot})  state {s['state']}  submitted {s['submitted_at']}")
+    print(f"submission {s['id']} ({s['slot']})  state {s['state']}  submitted {s['submitted_at']}")
     if s["stage"]:
         print(f"stage {s['stage']}" + (f": {s['reason']}" if s["reason"] else ""))
     if s["ratio"] is not None:
@@ -119,47 +159,72 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"  {name:9} {c['submission_ns']:7.2f} ns vs {c['incumbent_ns']:7.2f} ns")
 
 
+def cmd_report(args: argparse.Namespace) -> None:
+    # Print the gate's full verdict, which says exactly which stage refused and why.
+    sub_id, url, slot = cast(int, args.id), cast(str, args.url), cast(str, args.slot)
+    r = requests.get(f"{base(url, slot)}/submissions/{sub_id}/report", timeout=TIMEOUT)
+    if r.status_code != 200:
+        sys.exit(refused("report", r))
+    report = cast("dict[str, str | None]", r.json())["report"]
+    if report is None:
+        print("no report yet: the gate has not run on this submission")
+        return
+    try:
+        print(json.dumps(json.loads(report), indent=2))
+    except ValueError:
+        print(report)
+
+
 def cmd_leaderboard(args: argparse.Namespace) -> None:
     # Print one slot's ranking.
     url, slot = cast(str, args.url), cast(str, args.slot)
-    r = requests.get(f"{url}/leaderboard", params={"slot": slot}, timeout=TIMEOUT)
+    r = requests.get(f"{base(url, slot)}/leaderboard", timeout=TIMEOUT)
     if r.status_code != 200:
-        sys.exit(f"{r.status_code}: {r.text}")
+        sys.exit(refused("leaderboard", r))
     b = cast(LeaderboardResult, r.json())
     inc = (b["incumbent_sha256"] or "-")[:16]
     print(f"slot {slot}; incumbent {inc}; promotion bar {b['promotion_bar']}x")
     if not b["ranking"]:
         print("leaderboard: empty")
         return
-    leader = b.get("leader")
+    leader = b["leader"]
     print(f"{'rank':>4} {'ratio':>8} {'qualifies':>9} {'admission':>15}  hotkey")
     for x in b["ranking"]:
         mark = "  <- paid" if leader is not None and x["submission"] == leader else ""
         print(
             f"{x['rank']:>4} {x['ratio']:>8.4f} "
-            f"{'yes' if x['qualifies'] else 'no':>9} {x.get('admission') or '-':>15}  "
+            f"{'yes' if x['qualifies'] else 'no':>9} {x['admission'] or '-':>15}  "
             f"{x['hotkey']}{mark}"
         )
 
 
-CMDS = {"submit": cmd_submit, "status": cmd_status, "leaderboard": cmd_leaderboard}
+CMDS = {
+    "submit": cmd_submit,
+    "status": cmd_status,
+    "report": cmd_report,
+    "leaderboard": cmd_leaderboard,
+}
 
 
 def main() -> None:
     # Dispatch a subcommand.
     ap = argparse.ArgumentParser(prog="submit.py", description=(__doc__ or "").split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def common(p: argparse.ArgumentParser) -> None:
+        # The options every subcommand takes: where the API is, and which slot.
+        p.add_argument("--url", required=True, help="API origin, e.g. http://host:9300")
+        p.add_argument("--slot", default="add", choices=SLOTS, help="default add")
+
     p = sub.add_parser("submit")
     p.add_argument("dir", help="submission directory with Kernel.lean")
     p.add_argument("--hotkey", required=True, help="Bittensor hotkey file (or //Alice for tests)")
-    p.add_argument("--url", required=True, help="service URL, e.g. http://host:9300")
-    p.add_argument("--slot", default="add", choices=["add", "mul", "fma"], help="default add")
-    st = sub.add_parser("status")
-    st.add_argument("id", type=int)
-    st.add_argument("--url", required=True)
-    lb = sub.add_parser("leaderboard")
-    lb.add_argument("--url", required=True)
-    lb.add_argument("--slot", default="add", choices=["add", "mul", "fma"])
+    common(p)
+    for name in ("status", "report"):
+        sp = sub.add_parser(name)
+        sp.add_argument("id", type=int)
+        common(sp)
+    common(sub.add_parser("leaderboard"))
     args = ap.parse_args()
     CMDS[cast(str, args.cmd)](args)
 

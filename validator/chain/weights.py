@@ -16,8 +16,12 @@ class WeightChain(Protocol):
         # Our uid plus the subnet's tempo and rate limit. Raises if not registered.
         ...
 
+    def current_block(self) -> int:
+        # The chain's tip.
+        ...
+
     def poll(self, netuid: int, uid: int) -> PollState:
-        # The tip, and blocks since our uid last set weights.
+        # The tip, blocks since our uid last set weights, and the last epoch's block.
         ...
 
     def metagraph(self, netuid: int) -> MetagraphView:

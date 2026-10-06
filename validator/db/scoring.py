@@ -5,8 +5,9 @@ from __future__ import annotations
 import dataclasses as dc
 import datetime as dt
 
-import admission
 from sqlalchemy.orm import Session, sessionmaker
+
+import admission
 
 from . import models
 from .engine import session_scope
@@ -73,8 +74,10 @@ class ScoringDb:
         dry_run: bool = False,
         error: str | None = None,
         snapshots: list[dict[str, object]] | None = None,
+        api_snapshot: dict[str, object] | None = None,
     ) -> int:
-        # One weight vector and the per-hotkey reasoning behind it, in one transaction.
+        # One weight vector, the per-hotkey reasoning behind it and its published scoring, in one
+        # transaction.
         with session_scope(self._sessions) as session:
             row = models.WeightSet(
                 netuid=netuid,
@@ -85,9 +88,19 @@ class ScoringDb:
                 accepted=accepted,
                 dry_run=dry_run,
                 error=error,
+                api_snapshot=api_snapshot,
             )
             session.add(row)
             session.flush()
             for snap in snapshots or []:
                 session.add(models.ScoreSnapshot(weight_set_id=row.id, **snap))
             return int(row.id)
+
+    def weight_set_outcome(self, weight_set_id: int, *, accepted: bool, error: str | None) -> None:
+        # The chain's answer for a weight set already recorded; its scoring stays as recorded.
+        with session_scope(self._sessions) as session:
+            row = session.get(models.WeightSet, weight_set_id)
+            if row is None:
+                raise LookupError(f"no weight set {weight_set_id}")
+            row.accepted = accepted
+            row.error = error

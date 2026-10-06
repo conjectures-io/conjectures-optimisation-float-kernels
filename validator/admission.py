@@ -67,10 +67,12 @@ def _quantile(xs: list[float], p: float) -> float:
 
 
 def _ratios(e: Evidence) -> list[float]:
+    # Each round's submission time over the incumbent's; a zero incumbent time is skipped.
     return [sub / inc for inc, sub in e.rounds if inc > 0]
 
 
 def _resampled_median(rng: random.Random, xs: list[float]) -> float:
+    # One bootstrap draw: the median of len(xs) values sampled from xs with replacement.
     return median(rng.choice(xs) for _ in xs)
 
 

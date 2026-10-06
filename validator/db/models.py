@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Text,
     UniqueConstraint,
     func,
@@ -86,9 +87,13 @@ class Submission(Base):
     seed: Mapped[int | None] = mapped_column(BigInteger)
     # The incumbent the ratio was measured against; ratios compare only within one incumbent.
     incumbent_sha256: Mapped[str | None] = mapped_column(Text)
-    # The verifier the verdict came from (identity.py); only the current one's verdicts score.
+    # The verifier the verdict came from (fingerprint.py); only the current one's verdicts score.
     verifier_fingerprint: Mapped[str | None] = mapped_column(Text)
     gate_seconds: Mapped[float | None] = mapped_column(Float)
+    # The gate's verdict JSON in full: what a miner reads to see why, and what the platform serves.
+    report: Mapped[str | None] = mapped_column(Text)
+    # The conjectures platform account the submission came through; NULL from this API.
+    account_id: Mapped[str | None] = mapped_column(Text)
 
     # --- queue bookkeeping -------------------------------------------------------
     worker_id: Mapped[str | None] = mapped_column(Text)
@@ -100,6 +105,9 @@ class Submission(Base):
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
     claim: Mapped[EntitlementClaim | None] = relationship(back_populates="submission")
+    files: Mapped[list[SubmissionFile]] = relationship(
+        back_populates="submission", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     __table_args__ = (
         UniqueConstraint("hotkey", "slot", "digest", name="uq_submissions_hotkey_slot_digest"),
@@ -119,6 +127,24 @@ class Submission(Base):
         # The queue scan: oldest queued first, arrival order.
         Index("ix_submissions_state_submitted_at", "state", "submitted_at", "id"),
     )
+
+
+class SubmissionFile(Base):
+    # A submission's Kernel.lean, kept in the store so whoever queued it needs no shared disk.
+    __tablename__ = "submission_files"
+
+    submission_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("submissions.id", ondelete="CASCADE"), primary_key=True
+    )
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    submission: Mapped[Submission] = relationship(back_populates="files")
+
+    __table_args__ = (CheckConstraint("name = 'Kernel.lean'", name="ck_submission_files_name"),)
 
 
 class EntitlementClaim(Base):
@@ -155,6 +181,8 @@ class WeightSet(Base):
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # The scoring this vector was computed from, as the platform publishes it (reward.py).
+    api_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

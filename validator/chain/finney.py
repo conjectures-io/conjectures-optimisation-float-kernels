@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
+from typing import Protocol, SupportsInt, cast
 
 from loguru import logger
 
@@ -14,7 +15,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - depends on how the venv
     raise ModuleNotFoundError(
         "the bittensor SDK is not installed. It is needed only by the chain watcher and "
         "the weight setter; install it with `./setup.sh --chain` (or "
-        "`pip install -r requirements-chain.txt`)."
+        "`pip install -r requirements/chain.txt`)."
     ) from exc
 
 from .types import (
@@ -102,6 +103,11 @@ class BittensorChainSource:
         return to_snapshot(netuid, meta, self._query_block_time(self._subtensor, meta.block.item()))
 
 
+class _HasScaleValue(Protocol):
+    # A decoded SCALE query result.
+    value: object
+
+
 class BittensorWeightChain:
     # Sets weights with the validator's wallet, and reads the timing that governs when.
 
@@ -137,13 +143,26 @@ class BittensorWeightChain:
             weights_rate_limit=int(rate_limit) if rate_limit is not None else 0,
         )
 
+    def current_block(self) -> int:
+        # The chain's tip.
+        return int(self._subtensor.get_current_block())
+
     def poll(self, netuid: int, uid: int) -> PollState:
-        # The tip, and how long since our uid last set weights.
-        block = int(self._subtensor.get_current_block())
+        # The tip, how long since our uid last set weights, and the last epoch's block, all at
+        # one block; LastMechansimStepBlock is the pallet's own spelling.
+        block = self.current_block()
         since = self._subtensor.blocks_since_last_update(netuid, uid, block=block)
+        epoch = self._storage("LastMechansimStepBlock", netuid, block)
         return PollState(
-            current_block=block, blocks_since_last_update=int(since) if since is not None else 0
+            current_block=block,
+            blocks_since_last_update=int(since) if since is not None else 0,
+            last_epoch_block=int(cast(SupportsInt, epoch)),
         )
+
+    def _storage(self, name: str, netuid: int, block: int) -> object:
+        # One subtensor storage item for the subnet; `.value` is the decoded SCALE value.
+        query = self._subtensor.query_subtensor(name, block=block, params=[netuid])
+        return cast(_HasScaleValue, query).value
 
     def metagraph(self, netuid: int) -> MetagraphView:
         # The subnet's uids and the hotkey -> uid map scoring needs.

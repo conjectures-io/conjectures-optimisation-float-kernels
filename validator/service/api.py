@@ -7,7 +7,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
 
-import db
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
@@ -15,6 +14,10 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from loguru import logger
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+import db
+import log
+from axiom import config_error, init
 
 from . import routes
 from .middleware import BodyLimit, RequestContext
@@ -89,7 +92,13 @@ def main() -> None:
     # Serve the API with uvicorn on the configured host and port.
     import uvicorn
 
-    settings = load()
+    log.setup()
+    events = init("competition-submission-api")
+    try:
+        settings = load()
+    except Exception as exc:
+        events.error("service_misconfigured", error=config_error(exc))
+        raise
     uvicorn.run(
         create_app(settings),
         host=settings.host,

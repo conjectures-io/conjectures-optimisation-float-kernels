@@ -11,6 +11,8 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
+from axiom import get_events
+
 from . import models
 from .engine import session_scope
 
@@ -98,7 +100,14 @@ class RegistrationsDb:
                 f"[registrations] block {metagraph.block}: recorded {len(rows)} registration "
                 f"change(s) [{scope}] for uid(s) {uids}"
             )
-            return len(rows)
+        get_events().info(
+            "registrations_recorded",
+            count=len(rows),
+            initial_load=not latest,
+            block=metagraph.block,
+            uids=uids,
+        )
+        return len(rows)
 
     @staticmethod
     def _latest_keys(session: Session) -> dict[int, tuple[str, str]]:

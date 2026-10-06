@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-import sys
 import threading
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
-from conftest import kernel_file, post_submission, register
 from sqlalchemy.exc import IntegrityError
 
-VALIDATOR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(VALIDATOR))
-
-import db as store_pkg  # noqa: E402
-from db import SubmissionState, models  # noqa: E402
-from db.registrations import NoSlot  # noqa: E402
-from service import sig  # noqa: E402
+import db as store_pkg
+from conftest import api, kernel_file, post_submission, register
+from db import SubmissionState, models
+from db.registrations import NoSlot
+from service import sig
 
 ALICE = sig.load_keypair("//Alice")
 BOB = sig.load_keypair("//Bob")
@@ -55,7 +50,9 @@ def test_a_second_registration_buys_a_second_submission(client, store, drain, tm
     a1 = post_submission(client, ALICE, kernel_file(tmp_path, "a1", "RATIO=0.92"))
     assert a1.status_code == 200
     assert drain() == 1
-    assert client.get(f"/submissions/{a1.json()['submission']}").json()["state"] == "accepted"
+    assert (
+        client.get(f"{api()}/submissions/{a1.json()['submission']}").json()["state"] == "accepted"
+    )
     # Spent. The next one needs another registration.
     assert post_submission(client, ALICE, kernel_file(tmp_path, "a2")).status_code == 402
     register(store, ALICE.ss58_address, block=1100)

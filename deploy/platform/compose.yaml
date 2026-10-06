@@ -1,0 +1,25 @@
+# Opt-in, for a host that also runs the conjectures platform's API stack: attach this database
+# to that stack's network, so its API container reaches it as conjectures_floatlib_db:5432
+# (README, "Serving through the conjectures platform"). Enable it in .env, which
+# `docker compose` reads:
+#
+#   COMPOSE_FILE=compose.yaml:deploy/platform/compose.yaml
+#
+# The host port stays bound to loopback only: Docker-published ports bypass ufw, and the pm2
+# workers reach the database on 127.0.0.1 anyway. `!override` replaces the base file's ports
+# list instead of appending to it.
+#
+# The network belongs to the platform's compose project, so bring that stack up first.
+# PLATFORM_NETWORK names it when the project is not called conjectures-api.
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    networks:
+      - default
+      - platform
+
+networks:
+  platform:
+    name: ${PLATFORM_NETWORK:-conjectures-api_default}
+    external: true

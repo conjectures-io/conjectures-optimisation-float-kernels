@@ -1,19 +1,27 @@
-"""Leaderboard -> weight vector: king of the hill, a placeholder until rewards are set."""
+"""Leaderboard -> the competition's weights: king of the hill, a placeholder until rewards are set.
+
+The weights here are fractions of the competition's budget; treasury.py turns them into the
+validator's vector. `publication` is what each weight set publishes for the platform to serve.
+"""
 
 from __future__ import annotations
 
 import dataclasses as dc
+import datetime as dt
 import os
 from collections.abc import Sequence
 
-from chain.types import MetagraphView, WeightPlan
+import admission
 from db.scoring import ScoredSubmission
 from service.settings import PROMOTION_BAR
+
+# The scoring rule a published snapshot was computed under; bump it when the rule changes.
+POLICY_VERSION = "king-of-the-hill-v1"
 
 
 @dc.dataclass(frozen=True, slots=True)
 class ScoringConfig:
-    # The leader's share of emission; the rest burns.
+    # The leader's share of the competition's budget; the treasury takes the rest.
     winner_share: float = 1.0
     # Only a ratio at or below this pays: the promotion bar, the same one the leaderboard's
     # `qualifies` uses, so a noisy near-copy of the incumbent earns nothing.
@@ -90,32 +98,44 @@ def score(
     return Scoring(tuple(scores))
 
 
-def to_vector(weights: dict[str, float], meta: MetagraphView, *, burn_uid: int = 0) -> WeightPlan:
-    # Map per-hotkey weights onto uids; a deregistered hotkey's share and the rest burn.
-    if not meta.uids:
-        return WeightPlan((), (), False, "no neurons in the metagraph", "")
-
-    by_uid = {uid: 0.0 for uid in meta.uids}
-    paid: dict[int, float] = {}
-    unpaid = 0.0
-    for hotkey, weight in weights.items():
-        uid = meta.uid_by_hotkey.get(hotkey)
-        if uid is None or uid not in by_uid or uid == burn_uid:
-            unpaid += weight
-            continue
-        by_uid[uid] += weight
-        paid[uid] = paid.get(uid, 0.0) + weight
-
-    burn = max(0.0, 1.0 - sum(paid.values()))
-    if burn > 0 and burn_uid not in by_uid:
-        return WeightPlan((), (), False, f"burn uid {burn_uid} absent from the metagraph", "")
-    if burn > 0:
-        by_uid[burn_uid] += burn
-
-    uids = tuple(meta.uids)
-    vector = tuple(by_uid[uid] for uid in uids)
-    miners = ", ".join(f"uid{uid}={w:.3f}" for uid, w in sorted(paid.items()))
-    summary = f"miners=[{miners}] burn={burn:.3f}->uid{burn_uid}"
-    if unpaid > 0:
-        summary += f" (unregistered={unpaid:.3f})"
-    return WeightPlan(uids, vector, True, None, summary)
+def publication(
+    result: Scoring,
+    decisions: Sequence[admission.Decision],
+    config: ScoringConfig,
+    *,
+    competition_share: float,
+    computed_at: dt.datetime,
+) -> dict[str, object]:
+    # The scoring one weight set was computed from, as JSON the platform serves unchanged: the
+    # policy, every competitor's line, and each submission's admission outcome. Weights are
+    # fractions of the competition's budget; `competition_share` turns them into the validator's.
+    outcome = {d.submission_id: d for d in decisions}
+    return {
+        "competition": "floatlib",
+        "slot": "add",
+        "computed_at": computed_at.isoformat(),
+        "policy": {
+            "version": POLICY_VERSION,
+            "competition_share": competition_share,
+            "winner_share": config.winner_share,
+            "promotion_bar": config.max_ratio,
+            "admission": {
+                "version": admission.POLICY_VERSION,
+                "draws": admission.DRAWS,
+                "quantile": admission.QUANTILE,
+            },
+        },
+        "leader": admission.leader(decisions),
+        "items": [
+            {
+                "hotkey": s.hotkey,
+                "submission_id": s.submission_id,
+                "ratio": s.ratio,
+                "weight": s.weight,
+                "admission": (
+                    outcome[s.submission_id].outcome if s.submission_id in outcome else None
+                ),
+            }
+            for s in result.scores
+        ],
+    }

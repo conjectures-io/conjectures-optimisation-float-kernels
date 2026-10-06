@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-stamp accepted submissions after a verifier change (see identity.py).
+"""Re-stamp accepted submissions after a verifier change (see fingerprint.py).
 
 A change to the gate, the contract, a Verify module, the bench or the toolchain changes the
 verifier fingerprint, and every accepted verdict from the old one drops off the leaderboard.
@@ -23,6 +23,7 @@ from db.verifier import required_fingerprint  # noqa: E402
 
 
 def main() -> int:
+    # Lists accepted submissions judged by another verifier; --apply requeues them for the gate.
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true", help="requeue them for re-verification")
     args = parser.parse_args()

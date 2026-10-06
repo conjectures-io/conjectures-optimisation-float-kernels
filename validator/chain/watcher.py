@@ -7,6 +7,8 @@ from collections.abc import Callable
 
 from loguru import logger
 
+from axiom import config_error, get_events
+
 from .source import ChainSource
 from .types import NETUID, POLL_INTERVAL_SECONDS, ChainHead, MetagraphSnapshot
 
@@ -40,6 +42,7 @@ def run(
                 last_block = step(source, publish, netuid, last_block)
             except Exception as exc:  # noqa: BLE001 - one bad tick must not kill the watcher
                 logger.exception(f"[watcher] poll failed: {exc}")
+                get_events().error("chain_read_failed", error=config_error(exc))
             sleep(poll_interval)
     except KeyboardInterrupt:
         logger.info("[watcher] interrupted")

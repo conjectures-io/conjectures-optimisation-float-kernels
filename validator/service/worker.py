@@ -12,10 +12,14 @@ import time
 from pathlib import Path
 from typing import cast
 
-import db
-from db import SubmissionState, models
 from loguru import logger
 
+import db
+import log
+from axiom import config_error, get_events, init
+from db import SubmissionState, models
+
+from . import storage
 from .settings import Settings, load
 
 VALIDATOR = Path(__file__).resolve().parent.parent
@@ -48,7 +52,19 @@ def recorded(verdict: Path) -> dict[str, object]:
         "incumbent_sha256": v.get("incumbent_sha256") or None,
         "verifier_fingerprint": v.get("verifier_fingerprint") or None,
         "gate_seconds": v.get("seconds"),
+        "report": verdict.read_text(),
     }
+
+
+def materialize(store: db.Store, settings: Settings, sub_id: int, tmp: Path) -> Path:
+    # The directory the gate reads: Kernel.lean from the store, written under `tmp`; a submission
+    # queued before the store kept files still has its copy under SERVICE_FILES.
+    kernel = store.submissions.kernel(sub_id)
+    if kernel is None:
+        return settings.submission_dir(sub_id)
+    directory = tmp / str(sub_id)
+    storage.write_submission(directory, kernel)
+    return directory
 
 
 def run_gate(
@@ -92,9 +108,11 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
     # Gate one claimed submission. No verdict (the gate failed before reaching it) requeues it
     # uncharged; a verdict with an undefined exit (a stage crashed on it) counts toward the cap.
     logger.info(f"[worker] verifying submission {sub.id} slot={sub.slot} ({sub.hotkey[:8]}…)")
+    events = get_events()
+    who = {"submission_id": sub.id, "hotkey": sub.hotkey, "slot": sub.slot}
     with tempfile.TemporaryDirectory(prefix=f"gate-{sub.id}-") as tmp:
         verdict = Path(tmp) / "verdict.json"
-        result = run_gate(settings.submission_dir(sub.id), verdict, sub.slot)
+        result = run_gate(materialize(store, settings, sub.id, Path(tmp)), verdict, sub.slot)
         fields = recorded(verdict)
     state = STATE_OF_EXIT.get(result.returncode)
 
@@ -103,15 +121,34 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             f"[worker] validator error on submission {sub.id} (exit {result.returncode}):\n"
             f"{result.stdout[-1500:]}\n{result.stderr[-1500:]}"
         )
+        events.error(
+            "gate_validator_error",
+            submission_id=sub.id,
+            exit_code=result.returncode,
+            error=result.stderr[-1500:] or result.stdout[-1500:],
+        )
         if not fields:
             store.submissions.requeue(sub.id, expected_attempt=sub.verification_attempt)
+            events.warning(
+                "submission_requeued",
+                submission_id=sub.id,
+                reason=f"validator error (exit {result.returncode}), no verdict",
+            )
         else:
-            store.submissions.gate_crashed(
+            state_now = store.submissions.gate_crashed(
                 sub.id,
                 max_errors=settings.max_gate_errors,
                 expected_attempt=sub.verification_attempt,
                 exit_code=result.returncode,
                 **fields,
+            )
+            events.error(
+                "gate_verdict",
+                **who,
+                state=state_now,
+                stage=fields.get("stage"),
+                reason=fields.get("reason"),
+                exit_code=result.returncode,
             )
         return SubmissionState.ERROR.value
 
@@ -121,6 +158,17 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
         expected_attempt=sub.verification_attempt,
         exit_code=result.returncode,
         **fields,
+    )
+    events.emit(
+        "info" if final == SubmissionState.ACCEPTED.value else "warning",
+        "gate_verdict",
+        **who,
+        state=final,
+        stage=fields.get("stage"),
+        reason=fields.get("reason"),
+        ratio=fields.get("ratio"),
+        exit_code=result.returncode,
+        duration_seconds=fields.get("gate_seconds"),
     )
     logger.info(
         f"[worker] submission {sub.id} {final} stage={fields['stage']} ratio={fields['ratio']}"
@@ -137,6 +185,13 @@ def _drain(store: db.Store, settings: Settings) -> tuple[int, bool]:
     # `drain`, also saying whether it stopped on a validator error.
     done = 0
     while (sub := store.submissions.claim_next(settings.worker_id)) is not None:
+        get_events().info(
+            "submission_claimed",
+            submission_id=sub.id,
+            hotkey=sub.hotkey,
+            slot=sub.slot,
+            worker_id=settings.worker_id,
+        )
         if score_one(store, settings, sub) == SubmissionState.ERROR.value:
             return done, True
         done += 1
@@ -147,6 +202,7 @@ def sweep(store: db.Store, settings: Settings) -> None:
     # Between drains: reclaim abandoned claims and prune dead rate-limit windows.
     if requeued := store.submissions.requeue_stale(settings.stale_claim_seconds):
         logger.info(f"[worker] requeued {requeued} submission(s) abandoned mid-gate")
+        get_events().warning("submission_requeued", count=requeued, reason="stale claim")
     store.rate.prune()
 
 
@@ -159,6 +215,11 @@ def backoff(errors: int) -> float:
 def run_forever(store: db.Store, settings: Settings) -> None:
     # Sweep, drain, sleep when idle (longer after validator errors), never die on one bad turn.
     logger.info(f"[worker] {settings.worker_id} draining the queue")
+    if interrupted := store.submissions.requeue_interrupted(settings.worker_id):
+        logger.info(f"[worker] requeued {interrupted} submission(s) this worker left mid-gate")
+        get_events().warning(
+            "submission_requeued", count=interrupted, reason="interrupted by a worker restart"
+        )
     turn = errors = 0
     while True:
         try:
@@ -174,13 +235,28 @@ def run_forever(store: db.Store, settings: Settings) -> None:
 
 def main() -> None:
     # Run the gate worker until interrupted, closing the store on the way out.
-    settings = load()
+    log.setup()
+    events = init("competition-gate-worker")
+    try:
+        settings = load()
+    except Exception as exc:
+        events.error("service_misconfigured", error=config_error(exc))
+        raise
     store = db.connect()
+    events.info(
+        "service_started",
+        worker_id=settings.worker_id,
+        total_timeout_seconds=TOTAL_TIMEOUT,
+        stale_claim_seconds=settings.stale_claim_seconds,
+    )
+    reason = "crashed"
     try:
         run_forever(store, settings)
     except KeyboardInterrupt:
+        reason = "interrupted"
         logger.info("[worker] interrupted")
     finally:
+        events.info("service_stopped", reason=reason)
         store.close()
 
 

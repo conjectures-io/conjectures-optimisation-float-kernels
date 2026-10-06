@@ -64,10 +64,12 @@ class SubnetParams:
 
 @dc.dataclass(frozen=True, slots=True)
 class PollState:
-    # Per-tick chain state: the tip, and blocks since our uid last set weights.
+    # Per-tick chain state at the tip: the tip, blocks since our uid last set weights, and the
+    # block of the subnet's most recent epoch (LastMechansimStepBlock).
 
     current_block: int
     blocks_since_last_update: int
+    last_epoch_block: int
 
 
 @dc.dataclass(frozen=True, slots=True)

@@ -1,7 +1,7 @@
 # The validator's store, and nothing else. The gate does not run in Docker: it needs
 # bubblewrap and the Lean toolchain that ./setup.sh puts on the host. This file brings up
 # Postgres and applies the migrations; the API, the gate worker and the chain workers run
-# beside it under pm2 (pm2/service.config.js).
+# beside it under pm2 (deploy/pm2.config.js).
 #
 #   docker compose up -d db          postgres, healthy
 #   docker compose up migrate        alembic upgrade head
@@ -20,8 +20,9 @@ services:
       POSTGRES_INITDB_ARGS: "--data-checksums"
       PGDATA: /var/lib/postgresql/data/pgdata
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    # Loopback only: Docker-published ports bypass ufw, and the pm2 workers connect locally.
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Mounted as single files, not directories: a bind that names a missing path

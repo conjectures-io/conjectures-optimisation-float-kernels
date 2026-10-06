@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
@@ -13,13 +12,10 @@ from typing import TypedDict
 import pytest
 import sqlalchemy as sa
 
-VALIDATOR = Path(__file__).resolve().parent.parent
-REPO = VALIDATOR.parent
-if str(VALIDATOR) not in sys.path:
-    sys.path.insert(0, str(VALIDATOR))
+import db as store_pkg
+from db import models
 
-import db as store_pkg  # noqa: E402
-from db import models  # noqa: E402
+REPO = Path(__file__).resolve().parents[1]
 
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 # The verifier fingerprint the suite runs under, and one from an older verifier.
@@ -184,6 +180,7 @@ def stub_gate(tmp_path, monkeypatch):
 def client(store, settings, stub_gate):
     # The API against the test store, with the stub gate behind its worker.
     from fastapi.testclient import TestClient
+
     from service.api import create_app
 
     with TestClient(app=create_app(settings, store)) as c:
@@ -205,24 +202,48 @@ def kernel_file(tmp: Path, name: str, marker: str = "") -> Path:
     # A copy of the incumbent's Kernel.lean, with a marker line the stub gate reads.
     d = tmp / name
     d.mkdir(parents=True)
-    text = (REPO / "submissions" / "incumbent" / "Kernel.lean").read_text()
+    text = (REPO / "kernels" / "add" / "incumbent" / "Kernel.lean").read_text()
     (d / "Kernel.lean").write_text(text + (f"\n-- {marker}\n" if marker else ""))
     return d
 
 
-def post_submission(client, kp, d: Path, *, signer=None, timestamp: int | None = None, data=None):
-    # Sign and post a submission; security tests bend `signer`, `timestamp` and `data`.
+def api(slot: str = "add") -> str:
+    # One slot's endpoints, under its competition slug.
+    from service import sig
+
+    return f"/v1/competitions/{sig.slug_of(slot)}"
+
+
+def post_submission(
+    client,
+    kp,
+    d: Path,
+    *,
+    signer=None,
+    timestamp: int | None = None,
+    data=None,
+    slot: str = "add",
+    signed_for: str | None = None,
+):
+    # Sign and post a submission; security tests bend `signer`, `timestamp`, `data` and
+    # `signed_for` (the slug signed, when it should differ from the one posted to).
     from service import sig
 
     lean = (d / "Kernel.lean").read_bytes()
     stamp = int(datetime.now(timezone.utc).timestamp()) if timestamp is None else timestamp
     digest = sig.digest_of(data if data is not None else lean)
+    message = sig.submit_message(
+        competition=signed_for or sig.slug_of(slot),
+        digest=digest,
+        hotkey=kp.ss58_address,
+        timestamp=stamp,
+    )
     return client.post(
-        "/submit",
-        data={
-            "hotkey": kp.ss58_address,
-            "signature": sig.sign(signer or kp, sig.submit_message(digest, kp.ss58_address, stamp)),
-            "timestamp": stamp,
+        f"{api(slot)}/submissions",
+        headers={
+            "X-Conjectures-Hotkey": kp.ss58_address,
+            "X-Conjectures-Signature": sig.sign(signer or kp, message),
+            "X-Conjectures-Timestamp": str(stamp),
         },
         files={"Kernel.lean": ("Kernel.lean", lean)},
     )

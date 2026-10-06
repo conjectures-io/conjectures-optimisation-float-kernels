@@ -1,4 +1,4 @@
-# Lint and format settings for the gate's Python; dependencies live in requirements.txt.
+# Lint and format settings for the gate's Python; dependencies live in requirements/.
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -13,5 +13,11 @@ select = ["E", "W", "F", "I"]
 "deploy/migrate/alembic/versions/*.py" = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["validator/tests"]
+testpaths = ["tests"]
+# The gate lives at the root, the validator's modules under validator/; tests import both.
+pythonpath = [".", "validator"]
 markers = ["slow: runs the real Lean gate (minutes); deselect with -m 'not slow'"]
+
+[tool.ruff.lint.isort]
+# Imported by bare name via the pythonpath above, or by each worker's own path setup.
+known-first-party = ["gate", "fingerprint", "selftest", "conftest", "admission", "axiom", "log", "reward", "treasury", "chain", "db", "service", "workers"]

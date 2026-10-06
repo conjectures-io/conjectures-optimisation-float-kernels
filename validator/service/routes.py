@@ -1,20 +1,27 @@
-"""The endpoints: submit a signed Kernel.lean, read a submission, read the board."""
+"""The endpoints: submit a signed Kernel.lean, read a submission and its report, read the board.
+
+Laid out like the conjectures platform's competition surface (`/v1/competitions/<slug>/...`, the
+signature in `X-Conjectures-*` headers), so one miner client talks to either.
+"""
 
 from __future__ import annotations
 
 from typing import cast
 
-import admission
-import db
-from db import SubmissionState, iso, models
-from db.verifier import required_fingerprint
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 from loguru import logger
 
-from . import schemas, security, sig, storage
+import admission
+import db
+from db import SLOTS, SubmissionState, iso, models
+from db.verifier import required_fingerprint
+
+from . import schemas, security, sig
 from .settings import MAX_FILE_BYTES, PROMOTION_BAR, Settings
 
 router = APIRouter()
+# Every competition endpoint, as the conjectures platform lays them out: one slug per slot.
+PREFIX = "/v1/competitions/{competition}"
 
 
 def refuse(code: int, reason: str) -> HTTPException:
@@ -95,20 +102,30 @@ def ready(request: Request) -> schemas.Ready:
     return schemas.Ready(ok=True, queued=queued, promotion_bar=PROMOTION_BAR, database=database)
 
 
-@router.post("/submit", response_model=schemas.SubmitAccepted)
+def _slot(competition: str) -> str:
+    # The slot a competition slug names; any other slug is not served here.
+    slot = sig.slot_of(competition)
+    if slot is None or slot not in SLOTS:
+        raise HTTPException(404, {"reason": f"no competition {competition!r} here"})
+    return slot
+
+
+@router.post(f"{PREFIX}/submissions", response_model=schemas.SubmitAccepted)
 async def submit(
     request: Request,
-    hotkey: str = Form(...),
-    signature: str = Form(...),
-    timestamp: int = Form(...),
+    competition: str,
+    hotkey: str = Header(..., alias="X-Conjectures-Hotkey"),
+    signature: str = Header(..., alias="X-Conjectures-Signature"),
+    timestamp: int = Header(..., alias="X-Conjectures-Timestamp"),
     kernel: UploadFile = File(..., alias="Kernel.lean"),
-    slot: str = Form("add"),
 ) -> schemas.SubmitAccepted:
     # Accept a signed Kernel.lean, cheapest checks first; resubmitting a file returns its id.
+    # Signed fields travel as headers, as on the platform: a header-only request is not one a
+    # browser can send cross-site, so no page can submit with a miner's leaked signature.
+    slot = _slot(competition)
     store, settings = _store(request), _settings(request)
     _limit(request, f"ip:{_client(request)}", "address")
     try:
-        security.check_slot(slot)
         security.check_hotkey(hotkey)
         security.check_signature(signature)
     except security.Invalid as exc:
@@ -132,7 +149,10 @@ async def submit(
         raise refuse(400, "Kernel.lean must be UTF-8 text") from exc
 
     digest = sig.digest_of(lean)
-    if not sig.verify(hotkey, sig.submit_message(digest, hotkey, timestamp, slot), signature):
+    message = sig.submit_message(
+        competition=competition, digest=digest, hotkey=hotkey, timestamp=timestamp
+    )
+    if not sig.verify(hotkey, message, signature):
         raise refuse(401, "signature does not verify against the hotkey for this file and slot")
 
     # A slot is required here but spent only on acceptance, so a rejection costs nothing.
@@ -146,9 +166,7 @@ async def submit(
             "one registration buys one accepted submission, so register again to submit again",
         )
 
-    sub_id, fresh = store.submissions.add(hotkey, digest, slot)
-    if fresh:
-        storage.write_submission(settings.submission_dir(sub_id), lean)
+    sub_id, fresh = store.submissions.add(hotkey, digest, slot, kernel=lean)
     row = store.submissions.get(sub_id)
     assert row is not None, "add() either inserted this row or found the existing one"
     logger.info(
@@ -156,26 +174,41 @@ async def submit(
         f"({'new' if fresh else 'repeat'}, {slots} slot(s))"
     )
     return schemas.SubmitAccepted(
-        submission=sub_id, slot=slot, state=row.state, digest=digest, slots_remaining=slots
+        competition=competition,
+        submission=sub_id,
+        slot=slot,
+        state=row.state,
+        digest=digest,
+        created=fresh,
+        slots_remaining=slots,
     )
 
 
-@router.get("/submissions/{sub_id}", response_model=schemas.SubmissionView)
-def submission(request: Request, sub_id: int) -> schemas.SubmissionView:
-    # One submission's state and verdict; public, so a miner can read why it was refused.
+def _row(request: Request, competition: str, sub_id: int) -> models.Submission:
+    # One submission of this competition slug's slot, or a 404.
+    slot = _slot(competition)
     row = _store(request).submissions.get(sub_id)
-    if row is None:
+    if row is None or row.slot != slot:
         raise HTTPException(404, {"reason": "no such submission"})
-    return submission_view(row)
+    return row
 
 
-@router.get("/leaderboard", response_model=schemas.Leaderboard)
-def leaderboard(request: Request, slot: str = "add") -> schemas.Leaderboard:
+@router.get(f"{PREFIX}/submissions/{{sub_id}}", response_model=schemas.SubmissionView)
+def submission(request: Request, competition: str, sub_id: int) -> schemas.SubmissionView:
+    # One submission's state and verdict; public, so a miner can read why it was refused.
+    return submission_view(_row(request, competition, sub_id))
+
+
+@router.get(f"{PREFIX}/submissions/{{sub_id}}/report", response_model=schemas.Report)
+def report(request: Request, competition: str, sub_id: int) -> schemas.Report:
+    # The gate's full verdict JSON, its own endpoint since no listing should carry it.
+    return schemas.Report(report=_row(request, competition, sub_id).report)
+
+
+@router.get(f"{PREFIX}/leaderboard", response_model=schemas.Leaderboard)
+def leaderboard(request: Request, competition: str) -> schemas.Leaderboard:
     # One slot's board: every hotkey's best accepted ratio vs its incumbent, fastest first.
-    try:
-        security.check_slot(slot)
-    except security.Invalid as exc:
-        raise refuse(400, str(exc)) from exc
+    slot = _slot(competition)
     store = _store(request)
     rows = store.submissions.leaderboard(slot)
     decisions = store.scoring.admission(slot, PROMOTION_BAR)

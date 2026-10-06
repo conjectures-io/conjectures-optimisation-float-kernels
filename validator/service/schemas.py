@@ -21,11 +21,19 @@ class Ready(Health):
 
 class SubmitAccepted(BaseModel):
     # The queued submission's id, and how many registrations the hotkey has left to spend.
+    competition: str
     submission: int
     slot: str
     state: str
     digest: str
+    # False when this exact file was already queued: a retry gets the same submission.
+    created: bool
     slots_remaining: int
+
+
+class Report(BaseModel):
+    # The gate's verdict JSON for one submission; null until the gate has run.
+    report: str | None
 
 
 class SubmissionView(BaseModel):

@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 import random
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import admission  # noqa: E402
+import admission
 
 T0 = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)
 BAR = 0.97

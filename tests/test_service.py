@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
-from conftest import FINGERPRINT, OLD_FINGERPRINT, kernel_file, post_submission, register
 
-VALIDATOR = Path(__file__).resolve().parent.parent
-REPO = VALIDATOR.parent
-sys.path.insert(0, str(VALIDATOR))
+import db as store_pkg
+from conftest import FINGERPRINT, OLD_FINGERPRINT, api, kernel_file, post_submission, register
+from db import models
+from service import sig, worker
 
-import db as store_pkg  # noqa: E402
-from db import models  # noqa: E402
-from service import sig, worker  # noqa: E402
+REPO = Path(__file__).resolve().parents[1]
 
 ALICE = sig.load_keypair("//Alice")
 BOB = sig.load_keypair("//Bob")
@@ -40,16 +38,16 @@ def test_submit_verify_rank(client, store, drain, tmp_path):
     rb = post_submission(client, BOB, kernel_file(tmp_path, "bob", "RATIO=0.53"))
     assert ra.status_code == 200 and rb.status_code == 200, ra.text + rb.text
     sa, sb = ra.json()["submission"], rb.json()["submission"]
-    assert client.get(f"/submissions/{sa}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{sa}").json()["state"] == "queued"
     assert client.get("/health").json()["queued"] == 2
     assert drain() == 2
 
-    a = client.get(f"/submissions/{sa}").json()
+    a = client.get(f"{api()}/submissions/{sa}").json()
     assert a["state"] == "accepted" and a["stage"] == "score" and a["ratio"] == 0.80
     assert a["incumbent_sha256"] == "a" * 64 and a["seed"] == 7
     assert a["classes"]["near-one"]["ratio"] == 0.80
 
-    board = client.get("/leaderboard").json()
+    board = client.get(f"{api()}/leaderboard").json()
     assert board["incumbent_sha256"] == "a" * 64 and board["promotion_bar"] == 0.97
     assert [x["submission"] for x in board["ranking"]] == [sb, sa]
     assert [x["rank"] for x in board["ranking"]] == [1, 2]
@@ -62,7 +60,7 @@ def test_a_kernel_no_faster_than_the_bar_is_ranked_but_does_not_qualify(
     enrol(store, ALICE)
     post_submission(client, ALICE, kernel_file(tmp_path, "alice", "RATIO=0.99"))
     drain()
-    (entry,) = client.get("/leaderboard").json()["ranking"]
+    (entry,) = client.get(f"{api()}/leaderboard").json()["ranking"]
     assert entry["ratio"] == 0.99 and entry["qualifies"] is False
 
 
@@ -77,7 +75,7 @@ def test_leaderboard_keeps_each_hotkeys_best_and_ties_go_to_the_earlier(
     # Alice ties Bob, later: Bob keeps the rank.
     post_submission(client, ALICE, kernel_file(tmp_path, "a2", "RATIO=0.60"))
     drain()
-    board = client.get("/leaderboard").json()
+    board = client.get(f"{api()}/leaderboard").json()
     ranking = board["ranking"]
     assert [x["hotkey"] for x in ranking] == [BOB.ss58_address, ALICE.ss58_address]
     assert [x["ratio"] for x in ranking] == [0.60, 0.60]
@@ -93,10 +91,10 @@ def test_a_verdict_from_another_verifier_is_not_ranked(client, store, drain, tmp
         "submission"
     ]
     drain()
-    s = client.get(f"/submissions/{sid}").json()
+    s = client.get(f"{api()}/submissions/{sid}").json()
     assert s["state"] == "accepted" and s["verifier_fingerprint"] == OLD_FINGERPRINT
     assert s["verification_current"] is False
-    board = client.get("/leaderboard").json()
+    board = client.get(f"{api()}/leaderboard").json()
     assert board["ranking"] == [] and board["verifier_fingerprint"] == FINGERPRINT
 
 
@@ -110,18 +108,18 @@ def test_reverify_restores_the_ranking_without_charging_again(
         "submission"
     ]
     drain()
-    assert [x["submission"] for x in client.get("/leaderboard").json()["ranking"]] == [sid]
+    assert [x["submission"] for x in client.get(f"{api()}/leaderboard").json()["ranking"]] == [sid]
 
     monkeypatch.setenv("GATE_REQUIRED_FINGERPRINT", "d" * 64)
-    assert client.get("/leaderboard").json()["ranking"] == []
+    assert client.get(f"{api()}/leaderboard").json()["ranking"] == []
     assert [r.id for r in store.submissions.stale("d" * 64)] == [sid]
 
     assert store.submissions.reverify("d" * 64) == [sid]
-    assert client.get(f"/submissions/{sid}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "queued"
     assert drain() == 1
-    s = client.get(f"/submissions/{sid}").json()
+    s = client.get(f"{api()}/submissions/{sid}").json()
     assert s["state"] == "accepted" and s["verification_current"] is True
-    assert [x["submission"] for x in client.get("/leaderboard").json()["ranking"]] == [sid]
+    assert [x["submission"] for x in client.get(f"{api()}/leaderboard").json()["ranking"]] == [sid]
     with store_pkg.session_scope(store.sessions) as session:
         claims = session.execute(sa.select(models.EntitlementClaim)).scalars().all()
         assert [c.submission_id for c in claims] == [sid]
@@ -145,10 +143,10 @@ def test_rejected_submission_is_reported_not_ranked(client, store, drain, tmp_pa
         "submission"
     ]
     drain()
-    s = client.get(f"/submissions/{sid}").json()
+    s = client.get(f"{api()}/submissions/{sid}").json()
     assert s["state"] == "rejected" and s["stage"] == "statement" and s["ratio"] is None
     assert "does not typecheck" in s["reason"]
-    assert client.get("/leaderboard").json()["ranking"] == []
+    assert client.get(f"{api()}/leaderboard").json()["ranking"] == []
 
 
 def test_validator_error_stops_the_worker_and_blames_nobody(client, store, drain, tmp_path):
@@ -161,8 +159,8 @@ def test_validator_error_stops_the_worker_and_blames_nobody(client, store, drain
         "submission"
     ]
     assert drain() == 0
-    assert client.get(f"/submissions/{ida}").json()["state"] == "queued"
-    assert client.get(f"/submissions/{idb}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{ida}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{idb}").json()["state"] == "queued"
 
 
 def test_a_gate_crash_without_a_verdict_is_retried_without_limit(
@@ -175,7 +173,7 @@ def test_a_gate_crash_without_a_verdict_is_retried_without_limit(
     ]
     for _ in range(settings.max_gate_errors + 2):
         assert drain() == 0
-    assert client.get(f"/submissions/{sid}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "queued"
     assert store.submissions.get(sid).gate_errors == 0
 
 
@@ -187,10 +185,10 @@ def test_a_submission_that_keeps_crashing_the_gate_ends_in_error(
     sid = post_submission(client, ALICE, kernel_file(tmp_path, "a", "CRASH")).json()["submission"]
     for attempt in range(1, settings.max_gate_errors):
         assert drain() == 0
-        assert client.get(f"/submissions/{sid}").json()["state"] == "queued"
+        assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "queued"
         assert store.submissions.get(sid).gate_errors == attempt
     assert drain() == 0
-    s = client.get(f"/submissions/{sid}").json()
+    s = client.get(f"{api()}/submissions/{sid}").json()
     assert s["state"] == "error" and s["stage"] == "policy" and s["reason"] == "gate error: boom"
     assert s["exit_code"] == 2
     assert client.get("/health").json()["queued"] == 0
@@ -212,8 +210,8 @@ def test_a_submission_that_crashes_the_gate_does_not_hold_up_the_queue(
     ]
     assert drain() == 0
     assert drain() == 1
-    assert client.get(f"/submissions/{good}").json()["state"] == "accepted"
-    assert client.get(f"/submissions/{bad}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{good}").json()["state"] == "accepted"
+    assert client.get(f"{api()}/submissions/{bad}").json()["state"] == "queued"
 
 
 def test_the_worker_backs_off_after_validator_errors():
@@ -230,7 +228,7 @@ def test_a_gate_that_never_finishes_is_a_rejection(client, store, drain, tmp_pat
     monkeypatch.setattr(worker, "TOTAL_TIMEOUT", 0.5)
     sid = post_submission(client, ALICE, kernel_file(tmp_path, "alice")).json()["submission"]
     drain()
-    s = client.get(f"/submissions/{sid}").json()
+    s = client.get(f"{api()}/submissions/{sid}").json()
     assert s["state"] == "rejected" and s["stage"] == "timeout"
     assert "did not finish within" in s["reason"]
 
@@ -245,9 +243,35 @@ def test_a_worker_that_died_mid_gate_is_reclaimed(client, store, settings, drain
     assert store.submissions.requeue_stale(settings.stale_claim_seconds) == 0  # still fresh
     clock["tick"](settings.stale_claim_seconds + 1)
     assert store.submissions.requeue_stale(settings.stale_claim_seconds) == 1
-    assert client.get(f"/submissions/{sid}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "queued"
     drain()
-    assert client.get(f"/submissions/{sid}").json()["state"] == "accepted"
+    assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "accepted"
+
+
+def test_a_restarted_worker_requeues_its_own_claims_at_once(client, store, settings, tmp_path):
+    # Its last process died mid-gate: no need to wait out the stale-claim timeout.
+    enrol(store, ALICE, BOB)
+    sa = post_submission(client, ALICE, kernel_file(tmp_path, "alice", "RATIO=0.8")).json()
+    sb = post_submission(client, BOB, kernel_file(tmp_path, "bob", "RATIO=0.7")).json()
+    assert store.submissions.claim_next(settings.worker_id).id == sa["submission"]
+    assert store.submissions.claim_next("another-worker").id == sb["submission"]
+    assert store.submissions.requeue_interrupted(settings.worker_id) == 1
+    assert client.get(f"{api()}/submissions/{sa['submission']}").json()["state"] == "queued"
+    assert client.get(f"{api()}/submissions/{sb['submission']}").json()["state"] == "verifying"
+
+
+def test_the_kernel_lives_in_the_store_and_the_verdict_becomes_the_report(
+    client, store, settings, drain, tmp_path
+):
+    # The gate reads Kernel.lean from submission_files, so no shared disk is needed.
+    enrol(store, ALICE)
+    d = kernel_file(tmp_path, "alice", "RATIO=0.8")
+    sid = post_submission(client, ALICE, d).json()["submission"]
+    assert store.submissions.kernel(sid) == (d / "Kernel.lean").read_bytes()
+    assert not settings.submission_dir(sid).exists()
+    drain()
+    row = store.submissions.get(sid)
+    assert row.state == "accepted" and json.loads(row.report)["ratio"] == 0.8
 
 
 def test_ratios_from_an_older_incumbent_leave_the_board(client, store, drain, tmp_path):
@@ -259,7 +283,7 @@ def test_ratios_from_an_older_incumbent_leave_the_board(client, store, drain, tm
     gate.write_text(gate.read_text().replace('"a" * 64', '"b" * 64'))
     post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.95"))
     drain()
-    board = client.get("/leaderboard").json()
+    board = client.get(f"{api()}/leaderboard").json()
     assert board["incumbent_sha256"] == "b" * 64
     assert [x["hotkey"] for x in board["ranking"]] == [BOB.ss58_address]
 
@@ -295,11 +319,11 @@ def test_the_real_gate_ranks_real_kernels(client, store, settings, monkeypatch):
     monkeypatch.setattr(worker, "TOTAL_TIMEOUT", 1800.0)
     # The real gate stamps this checkout's verifier, so score against it, not the suite's pin.
     monkeypatch.delenv("GATE_REQUIRED_FINGERPRINT")
-    subs = REPO / "submissions"
+    subs = REPO / "kernels" / "add"
     for kp, name in [(ALICE, "fastlog"), (BOB, "incumbent"), (CHARLIE, "wrong")]:
         assert post_submission(client, kp, subs / name).status_code == 200
     assert worker.drain(store, settings) == 3
-    board = client.get("/leaderboard").json()
+    board = client.get(f"{api()}/leaderboard").json()
     ratios = {x["hotkey"]: x["ratio"] for x in board["ranking"]}
     assert set(ratios) == {ALICE.ss58_address, BOB.ss58_address}
     assert ratios[ALICE.ss58_address] < 0.6 < 0.97 < ratios[BOB.ss58_address] < 1.03

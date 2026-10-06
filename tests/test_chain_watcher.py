@@ -3,20 +3,15 @@
 from __future__ import annotations
 
 import datetime as dt
-import sys
 from functools import partial
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
 
-VALIDATOR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(VALIDATOR))
-
-import db as store_pkg  # noqa: E402
-from chain import watcher  # noqa: E402
-from chain.types import NETUID, ChainHead, MetagraphSnapshot, NeuronInfo  # noqa: E402
-from db import models  # noqa: E402
+import db as store_pkg
+from chain import watcher
+from chain.types import NETUID, ChainHead, MetagraphSnapshot, NeuronInfo
+from db import models
 
 T0 = dt.datetime(2026, 10, 1, 12, 0, tzinfo=dt.timezone.utc)
 
