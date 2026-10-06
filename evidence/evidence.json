@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-24 13:06 UTC",
-  "seconds": 306,
+  "generated": "2026-10-06 11:06 UTC",
+  "seconds": 964,
   "environment": [
     [
       "CPU",
@@ -32,18 +32,27 @@
     ],
     [
       "Python",
-      "3.14.4"
+      "3.12.14"
     ],
     [
-      "pinned incumbent sha256",
-      "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1"
+      "pinned `add` incumbent sha256",
+      "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302"
+    ],
+    [
+      "pinned `fma` incumbent sha256",
+      "6848107e686ce7148176938a78db7ad5c4a571398cff8408553a0a6788406065"
+    ],
+    [
+      "pinned `mul` incumbent sha256",
+      "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160"
     ]
   ],
-  "setup": "12m35.642s",
+  "setup": "12m35.642s (measured 2026-09-24 13:06 UTC)",
   "rows": [
     {
       "case": {
-        "name": "cheat",
+        "name": "add/cheat",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -52,6 +61,7 @@
       },
       "verdict": {
         "submission": "cheat",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -59,7 +69,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -67,7 +79,8 @@
     },
     {
       "case": {
-        "name": "direct",
+        "name": "add/direct",
+        "slot": "add",
         "mode": "gate",
         "passed": true,
         "stage": "score",
@@ -76,44 +89,149 @@
       },
       "verdict": {
         "submission": "direct",
+        "slot": "add",
         "mode": "gate",
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2361336857,
-        "ratio": 0.7952953910994303,
+        "seed": 3919913191,
+        "ratio": 0.7942957056906335,
         "classes": {
           "near-one": {
-            "incumbent_ns": 51.607142,
-            "submission_ns": 42.867966,
-            "ratio": 0.8306595625853491,
-            "spread_inc": 1.0788146725893095,
-            "spread_sub": 1.1393586530324298
+            "incumbent_ns": 51.475688,
+            "submission_ns": 42.590522,
+            "ratio": 0.8273910200092905,
+            "spread_inc": 1.140238941536828,
+            "spread_sub": 1.1460174636976743
           },
           "wide-gap": {
-            "incumbent_ns": 57.944706,
-            "submission_ns": 43.282102,
-            "ratio": 0.7469552438491965,
-            "spread_inc": 1.0667856007415069,
-            "spread_sub": 1.1142460687329834
+            "incumbent_ns": 57.858936,
+            "submission_ns": 42.936132,
+            "ratio": 0.7420829861095268,
+            "spread_inc": 1.1178179633306773,
+            "spread_sub": 1.1408720282488418
           },
           "cancel": {
-            "incumbent_ns": 40.60227,
-            "submission_ns": 33.26681,
-            "ratio": 0.819333746610719,
-            "spread_inc": 1.1588851559284739,
-            "spread_sub": 1.145935242964384
+            "incumbent_ns": 40.143568,
+            "submission_ns": 33.203232,
+            "ratio": 0.8271121291460689,
+            "spread_inc": 1.2362822357992693,
+            "spread_sub": 1.1679123285347643
           }
         },
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 46.0
+        "rounds": [
+          [
+            77217560,
+            61860041
+          ],
+          [
+            77272403,
+            59796314
+          ],
+          [
+            77228050,
+            61358067
+          ],
+          [
+            79739425,
+            65854171
+          ],
+          [
+            75554689,
+            60137704
+          ],
+          [
+            76558502,
+            62953814
+          ],
+          [
+            80636150,
+            62758386
+          ],
+          [
+            77297089,
+            60576710
+          ],
+          [
+            80982491,
+            60432910
+          ],
+          [
+            80955399,
+            59732634
+          ],
+          [
+            77476477,
+            63971414
+          ],
+          [
+            77664871,
+            64634532
+          ],
+          [
+            76016796,
+            60436488
+          ],
+          [
+            77305365,
+            61243313
+          ],
+          [
+            76424060,
+            64006331
+          ],
+          [
+            78254107,
+            60605625
+          ],
+          [
+            84922990,
+            67889514
+          ],
+          [
+            75358008,
+            61371874
+          ],
+          [
+            77142861,
+            60368388
+          ],
+          [
+            79471813,
+            59812595
+          ],
+          [
+            76979803,
+            60633677
+          ],
+          [
+            77213733,
+            61924470
+          ],
+          [
+            81710947,
+            63443583
+          ],
+          [
+            79013252,
+            63714312
+          ],
+          [
+            78087504,
+            61199809
+          ]
+        ],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 65.5
       },
       "as_expected": true,
       "problem": null
     },
     {
       "case": {
-        "name": "exploit-csimp",
+        "name": "exploits/csimp",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -121,7 +239,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-csimp",
+        "submission": "csimp",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -129,7 +248,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -137,7 +258,8 @@
     },
     {
       "case": {
-        "name": "exploit-eval",
+        "name": "exploits/eval",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -145,7 +267,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-eval",
+        "submission": "eval",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -153,7 +276,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -161,7 +286,8 @@
     },
     {
       "case": {
-        "name": "exploit-forge",
+        "name": "exploits/includestr",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -169,7 +295,64 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-forge",
+        "submission": "includestr",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name 'include_str' at line 4",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 0.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploits/membomb",
+        "slot": "add",
+        "mode": "gate",
+        "passed": false,
+        "stage": "score",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "membomb",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "score",
+        "passed": false,
+        "reason": "bench killed: over the 512 MB bench memory cap",
+        "seed": 1594724818,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 44.8
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploits/forge",
+        "slot": "add",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "forge",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -177,7 +360,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -185,7 +370,8 @@
     },
     {
       "case": {
-        "name": "exploit-publicimport",
+        "name": "exploits/publicimport",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -193,7 +379,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-publicimport",
+        "submission": "publicimport",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -201,7 +388,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -209,7 +398,8 @@
     },
     {
       "case": {
-        "name": "exploit-skipkernel",
+        "name": "exploits/skipkernel",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -217,7 +407,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-skipkernel",
+        "submission": "skipkernel",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -225,7 +416,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -233,7 +426,8 @@
     },
     {
       "case": {
-        "name": "exploit-tactic",
+        "name": "exploits/tactic",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -241,7 +435,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-tactic",
+        "submission": "tactic",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -249,7 +444,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -257,7 +454,8 @@
     },
     {
       "case": {
-        "name": "exploit-tamper",
+        "name": "exploits/tamper",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -265,7 +463,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-tamper",
+        "submission": "tamper",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -273,7 +472,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -281,7 +482,8 @@
     },
     {
       "case": {
-        "name": "exploit-unsafeio",
+        "name": "exploits/unsafeio",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -289,7 +491,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-unsafeio",
+        "submission": "unsafeio",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -297,7 +500,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -305,7 +510,8 @@
     },
     {
       "case": {
-        "name": "fastlog",
+        "name": "add/fastlog",
+        "slot": "add",
         "mode": "gate",
         "passed": true,
         "stage": "score",
@@ -314,44 +520,149 @@
       },
       "verdict": {
         "submission": "fastlog",
+        "slot": "add",
         "mode": "gate",
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 4005073712,
-        "ratio": 0.5346315025106698,
+        "seed": 2281147088,
+        "ratio": 0.547562821042939,
         "classes": {
           "near-one": {
-            "incumbent_ns": 51.638202,
-            "submission_ns": 31.342556,
-            "ratio": 0.6069645104994167,
-            "spread_inc": 1.0512327675545325,
-            "spread_sub": 1.1667476002914376
+            "incumbent_ns": 50.875422,
+            "submission_ns": 32.255274,
+            "ratio": 0.6340050407837403,
+            "spread_inc": 1.1333307073108898,
+            "spread_sub": 1.152284677538315
           },
           "wide-gap": {
-            "incumbent_ns": 57.446552,
-            "submission_ns": 25.315134,
-            "ratio": 0.4406728187968531,
-            "spread_inc": 1.1103259252182793,
-            "spread_sub": 1.1181474291228322
+            "incumbent_ns": 56.747308,
+            "submission_ns": 25.057416,
+            "ratio": 0.44156131600110443,
+            "spread_inc": 1.1188603695526844,
+            "spread_sub": 1.1535092046203008
           },
           "cancel": {
-            "incumbent_ns": 40.41081,
-            "submission_ns": 23.267348,
-            "ratio": 0.5757703941098928,
-            "spread_inc": 1.0906054097901032,
-            "spread_sub": 1.1037322345460256
+            "incumbent_ns": 40.33645,
+            "submission_ns": 23.704256,
+            "ratio": 0.5876634160914012,
+            "spread_inc": 1.1511995230120649,
+            "spread_sub": 1.136814671593152
           }
         },
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 43.9
+        "rounds": [
+          [
+            78896974,
+            44190857
+          ],
+          [
+            77899008,
+            43036620
+          ],
+          [
+            81633082,
+            44319600
+          ],
+          [
+            77184978,
+            42110552
+          ],
+          [
+            79810098,
+            41408884
+          ],
+          [
+            74804097,
+            42284006
+          ],
+          [
+            74896000,
+            42223653
+          ],
+          [
+            75697306,
+            41028800
+          ],
+          [
+            79611456,
+            44027250
+          ],
+          [
+            78747883,
+            43152118
+          ],
+          [
+            77786308,
+            42485995
+          ],
+          [
+            77061638,
+            41747390
+          ],
+          [
+            76015432,
+            42096845
+          ],
+          [
+            74908293,
+            42562439
+          ],
+          [
+            76173701,
+            42582166
+          ],
+          [
+            78194004,
+            43466979
+          ],
+          [
+            75019692,
+            40931016
+          ],
+          [
+            74310280,
+            41691103
+          ],
+          [
+            76079923,
+            42497326
+          ],
+          [
+            76496466,
+            41619298
+          ],
+          [
+            77849428,
+            45037850
+          ],
+          [
+            81167527,
+            42957411
+          ],
+          [
+            77761081,
+            43517543
+          ],
+          [
+            75420745,
+            41597677
+          ],
+          [
+            75284189,
+            43191602
+          ]
+        ],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 63.2
       },
       "as_expected": true,
       "problem": null
     },
     {
       "case": {
-        "name": "incumbent",
+        "name": "add/incumbent",
+        "slot": "add",
         "mode": "gate",
         "passed": true,
         "stage": "score",
@@ -360,44 +671,149 @@
       },
       "verdict": {
         "submission": "incumbent",
+        "slot": "add",
         "mode": "gate",
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 223362324,
-        "ratio": 1.0014682887911557,
+        "seed": 2969270009,
+        "ratio": 0.997275101580595,
         "classes": {
           "near-one": {
-            "incumbent_ns": 51.535848,
-            "submission_ns": 51.657234,
-            "ratio": 1.0023553701881456,
-            "spread_inc": 1.175657612153777,
-            "spread_sub": 1.2189468371457906
+            "incumbent_ns": 51.088022,
+            "submission_ns": 51.097538,
+            "ratio": 1.0001862667534867,
+            "spread_inc": 1.138468935047045,
+            "spread_sub": 1.1624235985694653
           },
           "wide-gap": {
-            "incumbent_ns": 57.992978,
-            "submission_ns": 58.120596,
-            "ratio": 1.0022005767663802,
-            "spread_inc": 1.1524416628509748,
-            "spread_sub": 1.0969826255739015
+            "incumbent_ns": 57.41843,
+            "submission_ns": 57.229654,
+            "ratio": 0.9967122751353529,
+            "spread_inc": 1.1754788488643804,
+            "spread_sub": 1.1505954238339446
           },
           "cancel": {
-            "incumbent_ns": 40.63918,
-            "submission_ns": 40.610666,
-            "ratio": 0.9992983618271826,
-            "spread_inc": 1.171350898320291,
-            "spread_sub": 1.1308849256498281
+            "incumbent_ns": 40.433412,
+            "submission_ns": 40.206826,
+            "ratio": 0.9943960702599127,
+            "spread_inc": 1.1450749691863749,
+            "spread_sub": 1.144827050013846
           }
         },
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 42.2
+        "rounds": [
+          [
+            81414301,
+            80174664
+          ],
+          [
+            75052686,
+            75530812
+          ],
+          [
+            75045351,
+            75255855
+          ],
+          [
+            77805374,
+            75514391
+          ],
+          [
+            80481660,
+            79647975
+          ],
+          [
+            82298292,
+            76870068
+          ],
+          [
+            80857205,
+            77175943
+          ],
+          [
+            81411597,
+            80426206
+          ],
+          [
+            82431251,
+            79543779
+          ],
+          [
+            76642360,
+            76931352
+          ],
+          [
+            79264553,
+            78300725
+          ],
+          [
+            80263060,
+            81816566
+          ],
+          [
+            77939787,
+            83110337
+          ],
+          [
+            78973829,
+            80330476
+          ],
+          [
+            77939286,
+            78252274
+          ],
+          [
+            81879536,
+            75564597
+          ],
+          [
+            84433391,
+            83735862
+          ],
+          [
+            75812782,
+            79113250
+          ],
+          [
+            75915085,
+            75033219
+          ],
+          [
+            76091445,
+            75482652
+          ],
+          [
+            76578240,
+            77632708
+          ],
+          [
+            76190483,
+            77699175
+          ],
+          [
+            79779462,
+            78262162
+          ],
+          [
+            78776807,
+            75649626
+          ],
+          [
+            81203686,
+            83593031
+          ]
+        ],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 62.0
       },
       "as_expected": true,
       "problem": null
     },
     {
       "case": {
-        "name": "mirror",
+        "name": "add/mirror",
+        "slot": "add",
         "mode": "gate",
         "passed": true,
         "stage": "score",
@@ -406,44 +822,149 @@
       },
       "verdict": {
         "submission": "mirror",
+        "slot": "add",
         "mode": "gate",
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2149684287,
-        "ratio": 0.781936591245599,
+        "seed": 2626753138,
+        "ratio": 0.7919239687901057,
         "classes": {
           "near-one": {
-            "incumbent_ns": 51.758588,
-            "submission_ns": 41.962826,
-            "ratio": 0.8107413208412872,
-            "spread_inc": 1.135229461823804,
-            "spread_sub": 1.302104867770345
+            "incumbent_ns": 51.134528,
+            "submission_ns": 42.214416,
+            "ratio": 0.8255559922250578,
+            "spread_inc": 1.1558356811272414,
+            "spread_sub": 1.1360365615385986
           },
           "wide-gap": {
-            "incumbent_ns": 57.17412,
-            "submission_ns": 41.596818,
-            "ratio": 0.7275462744332576,
-            "spread_inc": 1.1450631859309772,
-            "spread_sub": 1.3199822159473833
+            "incumbent_ns": 57.085182,
+            "submission_ns": 42.444266,
+            "ratio": 0.7435251060424052,
+            "spread_inc": 1.1532852080597729,
+            "spread_sub": 1.1430809994452489
           },
           "cancel": {
-            "incumbent_ns": 40.61251,
-            "submission_ns": 33.375234,
-            "ratio": 0.8217968798284075,
-            "spread_inc": 1.113813256063218,
-            "spread_sub": 1.305001666804793
+            "incumbent_ns": 40.018152,
+            "submission_ns": 32.734434,
+            "ratio": 0.8179896462985098,
+            "spread_inc": 1.1610194793602664,
+            "spread_sub": 1.1766812280914953
           }
         },
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 47.4
+        "rounds": [
+          [
+            79288230,
+            61041893
+          ],
+          [
+            77254440,
+            65985396
+          ],
+          [
+            75436596,
+            59902233
+          ],
+          [
+            77933585,
+            59273592
+          ],
+          [
+            75183390,
+            59565310
+          ],
+          [
+            76387291,
+            59727394
+          ],
+          [
+            77413979,
+            61963454
+          ],
+          [
+            80731579,
+            64824697
+          ],
+          [
+            84057165,
+            64866356
+          ],
+          [
+            74747943,
+            59718477
+          ],
+          [
+            75232212,
+            59225742
+          ],
+          [
+            78153609,
+            59510307
+          ],
+          [
+            76807820,
+            62282172
+          ],
+          [
+            81874476,
+            63981644
+          ],
+          [
+            82565203,
+            61421184
+          ],
+          [
+            76878723,
+            60532496
+          ],
+          [
+            80556731,
+            62446470
+          ],
+          [
+            78573465,
+            62949225
+          ],
+          [
+            83033743,
+            65341709
+          ],
+          [
+            80636301,
+            65725478
+          ],
+          [
+            75844171,
+            59503765
+          ],
+          [
+            75671106,
+            59735801
+          ],
+          [
+            75979546,
+            63334890
+          ],
+          [
+            81137583,
+            66370229
+          ],
+          [
+            78551055,
+            67143912
+          ]
+        ],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 64.9
       },
       "as_expected": true,
       "problem": null
     },
     {
       "case": {
-        "name": "textbook-unproved",
+        "name": "add/textbook-unproved",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "policy",
@@ -452,6 +973,7 @@
       },
       "verdict": {
         "submission": "textbook-unproved",
+        "slot": "add",
         "mode": "gate",
         "stage": "policy",
         "passed": false,
@@ -459,7 +981,9 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
         "seconds": 0.0
       },
       "as_expected": true,
@@ -467,7 +991,159 @@
     },
     {
       "case": {
-        "name": "word",
+        "name": "add/tuned",
+        "slot": "add",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.42,
+        "ratio_max": 0.58
+      },
+      "verdict": {
+        "submission": "tuned",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 3256631095,
+        "ratio": 0.5188199292234081,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 51.394818,
+            "submission_ns": 32.28008,
+            "ratio": 0.6280804418842382,
+            "spread_inc": 1.1272763335790001,
+            "spread_sub": 1.069073186931383
+          },
+          "wide-gap": {
+            "incumbent_ns": 58.12133,
+            "submission_ns": 23.660874,
+            "ratio": 0.40709450385942647,
+            "spread_inc": 1.1246503478155094,
+            "spread_sub": 1.1444002448937431
+          },
+          "cancel": {
+            "incumbent_ns": 40.274054,
+            "submission_ns": 21.773188,
+            "ratio": 0.54062568421843,
+            "spread_inc": 1.147750509546419,
+            "spread_sub": 1.153326651108694
+          }
+        },
+        "rounds": [
+          [
+            84763451,
+            41086258
+          ],
+          [
+            76639975,
+            40164236
+          ],
+          [
+            78019547,
+            39662264
+          ],
+          [
+            76686484,
+            39673344
+          ],
+          [
+            76943315,
+            40546254
+          ],
+          [
+            76809484,
+            40203840
+          ],
+          [
+            76041702,
+            39708651
+          ],
+          [
+            76834020,
+            39111118
+          ],
+          [
+            77970354,
+            40490399
+          ],
+          [
+            76681232,
+            40628588
+          ],
+          [
+            76824723,
+            40073085
+          ],
+          [
+            79496039,
+            39956906
+          ],
+          [
+            76376030,
+            40343714
+          ],
+          [
+            79272991,
+            39556596
+          ],
+          [
+            76941562,
+            39478407
+          ],
+          [
+            75256740,
+            39577304
+          ],
+          [
+            77592685,
+            40030335
+          ],
+          [
+            77640665,
+            39749097
+          ],
+          [
+            76309646,
+            39199064
+          ],
+          [
+            76998289,
+            42757306
+          ],
+          [
+            80862985,
+            42295960
+          ],
+          [
+            79471453,
+            42973633
+          ],
+          [
+            77859206,
+            41277647
+          ],
+          [
+            78970092,
+            42160205
+          ],
+          [
+            79978496,
+            40270706
+          ]
+        ],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 62.3
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "add/word",
+        "slot": "add",
         "mode": "gate",
         "passed": true,
         "stage": "score",
@@ -476,44 +1152,149 @@
       },
       "verdict": {
         "submission": "word",
+        "slot": "add",
         "mode": "gate",
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2809637394,
-        "ratio": 0.9997442567681273,
+        "seed": 956333327,
+        "ratio": 0.9969714318620235,
         "classes": {
           "near-one": {
-            "incumbent_ns": 51.543422,
-            "submission_ns": 51.331966,
-            "ratio": 0.9958975172428404,
-            "spread_inc": 1.2037444467695606,
-            "spread_sub": 1.1071279444079738
+            "incumbent_ns": 50.78349,
+            "submission_ns": 50.943288,
+            "ratio": 1.0031466525833495,
+            "spread_inc": 1.2130191131015218,
+            "spread_sub": 1.1772405817229543
           },
           "wide-gap": {
-            "incumbent_ns": 57.603566,
-            "submission_ns": 57.72822,
-            "ratio": 1.002163997971931,
-            "spread_inc": 1.2116744647371311,
-            "spread_sub": 1.099004195868156
+            "incumbent_ns": 56.985936,
+            "submission_ns": 56.805858,
+            "ratio": 0.9968399571431098,
+            "spread_inc": 1.1537680104087435,
+            "spread_sub": 1.1565451225118366
           },
           "cancel": {
-            "incumbent_ns": 40.659518,
-            "submission_ns": 40.708008,
-            "ratio": 1.00119258669028,
-            "spread_inc": 1.134470605381992,
-            "spread_sub": 1.137919497313649
+            "incumbent_ns": 40.14998,
+            "submission_ns": 39.722276,
+            "ratio": 0.9893473421406437,
+            "spread_inc": 1.1991247318180482,
+            "spread_sub": 1.1434681638081363
           }
         },
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 47.1
+        "rounds": [
+          [
+            74427552,
+            74742422
+          ],
+          [
+            80449229,
+            80120992
+          ],
+          [
+            85727442,
+            81151638
+          ],
+          [
+            78088247,
+            81729343
+          ],
+          [
+            79400740,
+            75054928
+          ],
+          [
+            77585270,
+            74398737
+          ],
+          [
+            75598360,
+            74307234
+          ],
+          [
+            77238479,
+            75418452
+          ],
+          [
+            75509803,
+            74389549
+          ],
+          [
+            74909726,
+            74349354
+          ],
+          [
+            75191336,
+            75340385
+          ],
+          [
+            75347870,
+            74437529
+          ],
+          [
+            80456955,
+            83064671
+          ],
+          [
+            74475140,
+            79070911
+          ],
+          [
+            74400480,
+            74491681
+          ],
+          [
+            75475729,
+            74127957
+          ],
+          [
+            76479215,
+            78299262
+          ],
+          [
+            76237941,
+            79348673
+          ],
+          [
+            75776083,
+            75193859
+          ],
+          [
+            80583803,
+            74832231
+          ],
+          [
+            79022670,
+            81330854
+          ],
+          [
+            82612661,
+            79677480
+          ],
+          [
+            83001512,
+            81512186
+          ],
+          [
+            76527734,
+            77834709
+          ],
+          [
+            76058763,
+            76488351
+          ]
+        ],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 65.2
       },
       "as_expected": true,
       "problem": null
     },
     {
       "case": {
-        "name": "wrong",
+        "name": "add/wrong",
+        "slot": "add",
         "mode": "gate",
         "passed": false,
         "stage": "statement",
@@ -522,6 +1303,7 @@
       },
       "verdict": {
         "submission": "wrong",
+        "slot": "add",
         "mode": "gate",
         "stage": "statement",
         "passed": false,
@@ -529,15 +1311,18 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 4.2
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 6.9
       },
       "as_expected": true,
       "problem": null
     },
     {
       "case": {
-        "name": "exploit-forge",
+        "name": "exploits/forge",
+        "slot": "add",
         "mode": "nopolicy",
         "passed": false,
         "stage": "kernel",
@@ -545,7 +1330,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-forge",
+        "submission": "forge",
+        "slot": "add",
         "mode": "gate",
         "stage": "kernel",
         "passed": false,
@@ -553,15 +1339,18 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 17.6
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 26.1
       },
       "as_expected": true,
       "problem": null
     },
     {
       "case": {
-        "name": "exploit-tamper",
+        "name": "exploits/tamper",
+        "slot": "add",
         "mode": "nopolicy",
         "passed": false,
         "stage": "statement",
@@ -569,7 +1358,8 @@
         "ratio_max": null
       },
       "verdict": {
-        "submission": "exploit-tamper",
+        "submission": "tamper",
+        "slot": "add",
         "mode": "gate",
         "stage": "statement",
         "passed": false,
@@ -577,8 +1367,821 @@
         "seed": 0,
         "ratio": null,
         "classes": {},
-        "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-        "seconds": 9.1
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 14.8
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "mul/incumbent",
+        "slot": "mul",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.97,
+        "ratio_max": 1.03
+      },
+      "verdict": {
+        "submission": "incumbent",
+        "slot": "mul",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 2893014785,
+        "ratio": 1.0059708084916232,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 33.953562,
+            "submission_ns": 34.48913,
+            "ratio": 1.0157735438773698,
+            "spread_inc": 1.138172012703704,
+            "spread_sub": 1.1172454045665983
+          },
+          "spread": {
+            "incumbent_ns": 36.051802,
+            "submission_ns": 36.143134,
+            "ratio": 1.00253335464341,
+            "spread_inc": 1.1338969408519441,
+            "spread_sub": 1.126505521076285
+          },
+          "tiny": {
+            "incumbent_ns": 32.97198,
+            "submission_ns": 32.959938,
+            "ratio": 0.9996347808047924,
+            "spread_inc": 1.135841766251223,
+            "spread_sub": 1.1813846251773896
+          }
+        },
+        "rounds": [
+          [
+            55518701,
+            56901528
+          ],
+          [
+            54876466,
+            53843225
+          ],
+          [
+            55145130,
+            53186332
+          ],
+          [
+            54451066,
+            53499368
+          ],
+          [
+            53716045,
+            53240432
+          ],
+          [
+            57556909,
+            56034269
+          ],
+          [
+            56211122,
+            53132731
+          ],
+          [
+            52511975,
+            53055735
+          ],
+          [
+            52754391,
+            52608075
+          ],
+          [
+            53290417,
+            52512927
+          ],
+          [
+            56231561,
+            56163241
+          ],
+          [
+            58187964,
+            56822389
+          ],
+          [
+            53806415,
+            52313222
+          ],
+          [
+            52848636,
+            57040417
+          ],
+          [
+            52682695,
+            54294923
+          ],
+          [
+            54246442,
+            53218151
+          ],
+          [
+            52012167,
+            52070196
+          ],
+          [
+            52844489,
+            52689397
+          ],
+          [
+            54574067,
+            53863802
+          ],
+          [
+            53376368,
+            52649724
+          ],
+          [
+            53899711,
+            53888389
+          ],
+          [
+            52465557,
+            53075994
+          ],
+          [
+            54760415,
+            53200096
+          ],
+          [
+            52371561,
+            52696791
+          ],
+          [
+            54673073,
+            52394253
+          ]
+        ],
+        "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 56.6
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "mul/fast",
+        "slot": "mul",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.48,
+        "ratio_max": 0.62
+      },
+      "verdict": {
+        "submission": "fast",
+        "slot": "mul",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 808248716,
+        "ratio": 0.5536656308516542,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 33.76726,
+            "submission_ns": 18.353918,
+            "ratio": 0.5435418212789548,
+            "spread_inc": 1.1143768845917614,
+            "spread_sub": 1.1740672482028087
+          },
+          "spread": {
+            "incumbent_ns": 36.030202,
+            "submission_ns": 20.463472,
+            "ratio": 0.5679532965149626,
+            "spread_inc": 1.1242660809950495,
+            "spread_sub": 1.161927457862478
+          },
+          "tiny": {
+            "incumbent_ns": 33.00146,
+            "submission_ns": 18.09884,
+            "ratio": 0.5484254332990116,
+            "spread_inc": 1.107844925648744,
+            "spread_sub": 1.0818543066848483
+          }
+        },
+        "rounds": [
+          [
+            54584348,
+            30940278
+          ],
+          [
+            53435686,
+            29879681
+          ],
+          [
+            53340486,
+            29907334
+          ],
+          [
+            56477423,
+            29842251
+          ],
+          [
+            52364498,
+            30533482
+          ],
+          [
+            52332227,
+            29094602
+          ],
+          [
+            52272324,
+            29356797
+          ],
+          [
+            53096186,
+            30614855
+          ],
+          [
+            52564053,
+            29208097
+          ],
+          [
+            52399303,
+            29153002
+          ],
+          [
+            52345534,
+            29656442
+          ],
+          [
+            54039321,
+            28652200
+          ],
+          [
+            55946143,
+            29001206
+          ],
+          [
+            51399461,
+            29886573
+          ],
+          [
+            53006106,
+            28873517
+          ],
+          [
+            52140317,
+            32163741
+          ],
+          [
+            54032450,
+            29717376
+          ],
+          [
+            53213385,
+            28980719
+          ],
+          [
+            52195910,
+            28595793
+          ],
+          [
+            53045240,
+            29021336
+          ],
+          [
+            52748392,
+            29710853
+          ],
+          [
+            51887209,
+            29629912
+          ],
+          [
+            52275901,
+            29122375
+          ],
+          [
+            53189882,
+            29991742
+          ],
+          [
+            52089109,
+            28592156
+          ]
+        ],
+        "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 58.7
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "mul/word",
+        "slot": "mul",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.97,
+        "ratio_max": 1.03
+      },
+      "verdict": {
+        "submission": "word",
+        "slot": "mul",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 189129590,
+        "ratio": 1.0009928875543823,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 33.91027,
+            "submission_ns": 34.173568,
+            "ratio": 1.0077645503854733,
+            "spread_inc": 1.1978460802582815,
+            "spread_sub": 1.1574341900734508
+          },
+          "spread": {
+            "incumbent_ns": 36.137784,
+            "submission_ns": 36.276324,
+            "ratio": 1.0038336606361917,
+            "spread_inc": 1.1799852475735646,
+            "spread_sub": 1.173205311541489
+          },
+          "tiny": {
+            "incumbent_ns": 33.383598,
+            "submission_ns": 33.084456,
+            "ratio": 0.9910392522699321,
+            "spread_inc": 1.1288536963571152,
+            "spread_sub": 1.1940297280390526
+          }
+        },
+        "rounds": [
+          [
+            53637356,
+            55135917
+          ],
+          [
+            53313315,
+            53950003
+          ],
+          [
+            53146861,
+            55774028
+          ],
+          [
+            55708255,
+            55583759
+          ],
+          [
+            53558035,
+            57907736
+          ],
+          [
+            52537614,
+            54759347
+          ],
+          [
+            55130847,
+            54626418
+          ],
+          [
+            55146106,
+            58106509
+          ],
+          [
+            54089907,
+            59644226
+          ],
+          [
+            56834626,
+            55037572
+          ],
+          [
+            55349807,
+            59004551
+          ],
+          [
+            56273248,
+            56538148
+          ],
+          [
+            58547190,
+            52592306
+          ],
+          [
+            52497558,
+            53093791
+          ],
+          [
+            52779671,
+            52075506
+          ],
+          [
+            53915989,
+            53771858
+          ],
+          [
+            56469397,
+            56193938
+          ],
+          [
+            55603578,
+            58381939
+          ],
+          [
+            55179248,
+            53746851
+          ],
+          [
+            53600485,
+            53519404
+          ],
+          [
+            54336752,
+            55151917
+          ],
+          [
+            55341343,
+            52328862
+          ],
+          [
+            56038206,
+            53848232
+          ],
+          [
+            54987056,
+            53669966
+          ],
+          [
+            60239226,
+            54934698
+          ]
+        ],
+        "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 61.5
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "mul/wrong",
+        "slot": "mul",
+        "mode": "gate",
+        "passed": false,
+        "stage": "statement",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "wrong",
+        "slot": "mul",
+        "mode": "gate",
+        "stage": "statement",
+        "passed": false,
+        "reason": "the obligation does not typecheck: error: work/Submission.lean:12:13: Type mismatch | error: build failed",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 7.0
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "fma/incumbent",
+        "slot": "fma",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.97,
+        "ratio_max": 1.03
+      },
+      "verdict": {
+        "submission": "incumbent",
+        "slot": "fma",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 1586195337,
+        "ratio": 0.9980015243011802,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 65.896638,
+            "submission_ns": 65.656948,
+            "ratio": 0.9963626368920369,
+            "spread_inc": 1.1232638605933127,
+            "spread_sub": 1.115346177833304
+          },
+          "cancel": {
+            "incumbent_ns": 62.19589,
+            "submission_ns": 61.994692,
+            "ratio": 0.9967650917126517,
+            "spread_inc": 1.1196482918726622,
+            "spread_sub": 1.14222349874728
+          },
+          "wide": {
+            "incumbent_ns": 245.132926,
+            "submission_ns": 244.827932,
+            "ratio": 0.9987558015768147,
+            "spread_inc": 1.104312172245682,
+            "spread_sub": 1.1410462512096047
+          }
+        },
+        "rounds": [
+          [
+            206946445,
+            206948568
+          ],
+          [
+            192975669,
+            199832870
+          ],
+          [
+            189538486,
+            190558327
+          ],
+          [
+            191757435,
+            209266782
+          ],
+          [
+            192633705,
+            187620215
+          ],
+          [
+            193523901,
+            190963340
+          ],
+          [
+            192137258,
+            197149387
+          ],
+          [
+            193527978,
+            199903273
+          ],
+          [
+            190670739,
+            189084310
+          ],
+          [
+            194732186,
+            191942323
+          ],
+          [
+            198491384,
+            192866092
+          ],
+          [
+            189600373,
+            187338435
+          ],
+          [
+            197883339,
+            190334795
+          ],
+          [
+            190029140,
+            189284068
+          ],
+          [
+            192226658,
+            189815538
+          ],
+          [
+            188515601,
+            189004482
+          ],
+          [
+            189425514,
+            191027701
+          ],
+          [
+            190156009,
+            189691324
+          ],
+          [
+            188972480,
+            190213086
+          ],
+          [
+            193025693,
+            191748497
+          ],
+          [
+            188873534,
+            188464073
+          ],
+          [
+            186718977,
+            189340894
+          ],
+          [
+            187796317,
+            189314245
+          ],
+          [
+            190199882,
+            188895957
+          ],
+          [
+            191560745,
+            193125941
+          ]
+        ],
+        "incumbent_sha256": "6848107e686ce7148176938a78db7ad5c4a571398cff8408553a0a6788406065",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 99.8
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "fma/word",
+        "slot": "fma",
+        "mode": "gate",
+        "passed": true,
+        "stage": "score",
+        "ratio_min": 0.97,
+        "ratio_max": 1.03
+      },
+      "verdict": {
+        "submission": "word",
+        "slot": "fma",
+        "mode": "gate",
+        "stage": "score",
+        "passed": true,
+        "reason": "",
+        "seed": 1872685546,
+        "ratio": 1.0047813106660217,
+        "classes": {
+          "near-one": {
+            "incumbent_ns": 66.222926,
+            "submission_ns": 65.956346,
+            "ratio": 0.9959745058682548,
+            "spread_inc": 1.1380623683103341,
+            "spread_sub": 1.075829761703294
+          },
+          "cancel": {
+            "incumbent_ns": 62.433068,
+            "submission_ns": 62.240506,
+            "ratio": 0.9969157049914639,
+            "spread_inc": 1.070659446048687,
+            "spread_sub": 1.1369949659470957
+          },
+          "wide": {
+            "incumbent_ns": 244.36892,
+            "submission_ns": 246.61161,
+            "ratio": 1.009177476415577,
+            "spread_inc": 1.0731254367372087,
+            "spread_sub": 1.0741143208951112
+          }
+        },
+        "rounds": [
+          [
+            190008184,
+            193497406
+          ],
+          [
+            189263996,
+            190523259
+          ],
+          [
+            197257951,
+            189870894
+          ],
+          [
+            190197769,
+            194709662
+          ],
+          [
+            188097403,
+            189042127
+          ],
+          [
+            195698610,
+            188512694
+          ],
+          [
+            191087089,
+            192167259
+          ],
+          [
+            191142152,
+            193946871
+          ],
+          [
+            192799656,
+            189728328
+          ],
+          [
+            188684507,
+            190705283
+          ],
+          [
+            191795499,
+            192178789
+          ],
+          [
+            190972084,
+            191059778
+          ],
+          [
+            188097213,
+            201770125
+          ],
+          [
+            189007534,
+            189861999
+          ],
+          [
+            191212575,
+            191334474
+          ],
+          [
+            200933895,
+            190766488
+          ],
+          [
+            195381466,
+            188863050
+          ],
+          [
+            189268364,
+            188913317
+          ],
+          [
+            190475140,
+            188366510
+          ],
+          [
+            189162284,
+            191080497
+          ],
+          [
+            189619973,
+            189057156
+          ],
+          [
+            188025309,
+            191015595
+          ],
+          [
+            192469626,
+            188068570
+          ],
+          [
+            187835282,
+            197566920
+          ],
+          [
+            188561475,
+            197013170
+          ]
+        ],
+        "incumbent_sha256": "6848107e686ce7148176938a78db7ad5c4a571398cff8408553a0a6788406065",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 103.8
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "fma/wrong",
+        "slot": "fma",
+        "mode": "gate",
+        "passed": false,
+        "stage": "statement",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "wrong",
+        "slot": "fma",
+        "mode": "gate",
+        "stage": "statement",
+        "passed": false,
+        "reason": "the obligation does not typecheck: error: work/Submission.lean:15:15: Type mismatch | error: build failed",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "6848107e686ce7148176938a78db7ad5c4a571398cff8408553a0a6788406065",
+        "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+        "seconds": 6.3
       },
       "as_expected": true,
       "problem": null
@@ -588,88 +2191,196 @@
     "host_file_before": false,
     "host_file_after": false,
     "verdict": {
-      "submission": "exploit-eval",
+      "submission": "eval",
+      "slot": "add",
       "mode": "gate",
       "stage": "score",
       "passed": true,
       "reason": "",
-      "seed": 723013204,
-      "ratio": 1.00031083607472,
+      "seed": 3736800864,
+      "ratio": 1.0055191394504952,
       "classes": {
         "near-one": {
-          "incumbent_ns": 51.511082,
-          "submission_ns": 51.507374,
-          "ratio": 0.9999280154899484,
-          "spread_inc": 1.2458279948380817,
-          "spread_sub": 1.0354841231082756
+          "incumbent_ns": 50.805828,
+          "submission_ns": 50.77501,
+          "ratio": 0.9993934160466788,
+          "spread_inc": 1.5079238547199743,
+          "spread_sub": 1.1654944824235387
         },
         "wide-gap": {
-          "incumbent_ns": 57.538204,
-          "submission_ns": 57.379324,
-          "ratio": 0.9972387042181574,
-          "spread_inc": 1.1687800682829794,
-          "spread_sub": 1.0504219255005514
+          "incumbent_ns": 56.538836,
+          "submission_ns": 56.919152,
+          "ratio": 1.0067266329996607,
+          "spread_inc": 1.3598825416214795,
+          "spread_sub": 1.1836494682844185
         },
         "cancel": {
-          "incumbent_ns": 40.302748,
-          "submission_ns": 40.51176,
-          "ratio": 1.0051860483558095,
-          "spread_inc": 1.2050491445397222,
-          "spread_sub": 1.0753429127739698
+          "incumbent_ns": 39.672096,
+          "submission_ns": 40.134004,
+          "ratio": 1.01164314585244,
+          "spread_inc": 1.4524316537245725,
+          "spread_sub": 1.134376575035972
         }
       },
-      "incumbent_sha256": "4c19abfac2ce0702220acba5f2e24c8f539be8f1af75ae34dae47473b3d15ac1",
-      "seconds": 46.7
+      "rounds": [
+        [
+          76704183,
+          76707661
+        ],
+        [
+          74692825,
+          79132804
+        ],
+        [
+          75419921,
+          77001310
+        ],
+        [
+          76576303,
+          74680533
+        ],
+        [
+          77017492,
+          74473023
+        ],
+        [
+          78805000,
+          75965938
+        ],
+        [
+          76840890,
+          82309933
+        ],
+        [
+          78022600,
+          76552589
+        ],
+        [
+          76807148,
+          78202379
+        ],
+        [
+          75549044,
+          76911272
+        ],
+        [
+          74572400,
+          75791921
+        ],
+        [
+          74821338,
+          75951530
+        ],
+        [
+          75029668,
+          77242224
+        ],
+        [
+          74901206,
+          76405692
+        ],
+        [
+          78024093,
+          75580633
+        ],
+        [
+          75056098,
+          75767996
+        ],
+        [
+          76449214,
+          73995837
+        ],
+        [
+          75940479,
+          76413377
+        ],
+        [
+          74126432,
+          74325386
+        ],
+        [
+          78639169,
+          80237038
+        ],
+        [
+          79382925,
+          78238846
+        ],
+        [
+          88429817,
+          76856500
+        ],
+        [
+          100204184,
+          81611531
+        ],
+        [
+          81860228,
+          82039245
+        ],
+        [
+          79410898,
+          78772348
+        ]
+      ],
+      "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+      "verifier_fingerprint": "ebae4484c4db5a221a3d8e51be35e882e3b81cb9c10c1cc71e068285ca53f447",
+      "seconds": 65.9
     }
   },
   "timing_study": {
-    "incumbent": {
-      "runs": 43,
-      "accepted": 43,
-      "ratio_mean": 1.0005419196182408,
-      "ratio_stdev": 0.004282827817943438,
-      "ratio_min": 0.9931795945824129,
-      "ratio_max": 1.013530089822023,
-      "at_or_below_bar": 0,
-      "class_ratio_range": {
-        "near-one": [
-          0.9961827853956512,
-          1.0175937492460552
-        ],
-        "wide-gap": [
-          0.9818131354878505,
-          1.0166714643664059
-        ],
-        "cancel": [
-          0.9892825783376545,
-          1.013701343427317
-        ]
+    "summary": {
+      "incumbent": {
+        "runs": 43,
+        "accepted": 43,
+        "ratio_mean": 1.0005419196182408,
+        "ratio_stdev": 0.004282827817943438,
+        "ratio_min": 0.9931795945824129,
+        "ratio_max": 1.013530089822023,
+        "at_or_below_bar": 0,
+        "class_ratio_range": {
+          "near-one": [
+            0.9961827853956512,
+            1.0175937492460552
+          ],
+          "wide-gap": [
+            0.9818131354878505,
+            1.0166714643664059
+          ],
+          "cancel": [
+            0.9892825783376545,
+            1.013701343427317
+          ]
+        },
+        "seconds_mean": 40.62558139534884
       },
-      "seconds_mean": 40.62558139534884
+      "fastlog": {
+        "runs": 43,
+        "accepted": 43,
+        "ratio_mean": 0.5339730361013222,
+        "ratio_stdev": 0.004440109085589824,
+        "ratio_min": 0.5243749269552639,
+        "ratio_max": 0.5562594063500894,
+        "at_or_below_bar": 43,
+        "class_ratio_range": {
+          "near-one": [
+            0.5980268775138138,
+            0.6523333780407847
+          ],
+          "wide-gap": [
+            0.4306340778687198,
+            0.45468770879764325
+          ],
+          "cancel": [
+            0.5452976893962078,
+            0.5850173417081742
+          ]
+        },
+        "seconds_mean": 43.2906976744186
+      }
     },
-    "fastlog": {
-      "runs": 43,
-      "accepted": 43,
-      "ratio_mean": 0.5339730361013222,
-      "ratio_stdev": 0.004440109085589824,
-      "ratio_min": 0.5243749269552639,
-      "ratio_max": 0.5562594063500894,
-      "at_or_below_bar": 43,
-      "class_ratio_range": {
-        "near-one": [
-          0.5980268775138138,
-          0.6523333780407847
-        ],
-        "wide-gap": [
-          0.4306340778687198,
-          0.45468770879764325
-        ],
-        "cancel": [
-          0.5452976893962078,
-          0.5850173417081742
-        ]
-      },
-      "seconds_mean": 43.2906976744186
-    }
+    "minutes": 60.14,
+    "measured": "2026-09-24 13:06 UTC"
   }
 }

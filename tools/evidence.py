@@ -23,7 +23,7 @@ import gate  # noqa: E402 - the gate lives at the repository root, one level up
 import selftest  # noqa: E402 - so do the expected verdicts
 
 OUT = HERE / "evidence"
-# The file exploit-eval's `#eval` writes; it must never appear on the host.
+# The file exploits/eval's `#eval` writes; it must never appear on the host.
 PWNED = Path("/tmp/pwned")
 
 
@@ -36,7 +36,7 @@ def sh(cmd: list[str], cwd: Path | None = None) -> str:
         return f"unavailable ({exc})"
 
 
-def environment(digest: str) -> list[tuple[str, str]]:
+def environment(digests: dict[str, str]) -> list[tuple[str, str]]:
     # The machine, toolchain and pins the evidence was produced with.
     manifest = json.loads((gate.LIB / "lake-manifest.json").read_text())
     revs = {p["name"]: p["rev"] for p in manifest["packages"]}
@@ -50,32 +50,59 @@ def environment(digest: str) -> list[tuple[str, str]]:
         ("Mathlib", revs.get("mathlib", "?")),
         ("bubblewrap", sh(["bwrap", "--version"])),
         ("Python", platform.python_version()),
-        ("pinned incumbent sha256", digest),
+        *[(f"pinned `{slot}` incumbent sha256", d) for slot, d in digests.items()],
     ]
 
 
+def previous() -> dict:
+    # The last evidence pack's data, so measurements whose raw logs are gone carry over.
+    path = OUT / "evidence.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
 def setup_time() -> str:
-    # Wall time of the first from-scratch setup, if its log was kept.
+    # Wall time of the first from-scratch setup, if its log was kept, else the last pack's.
     log = HERE / "logs" / "setup-first.log"
     m = re.search(r"real\s+(\S+)", log.read_text()) if log.exists() else None
-    return m.group(1) if m else "not recorded (run `./setup.sh` on a fresh clone, log to logs/)"
+    if m:
+        return m.group(1)
+    old = previous()
+    if old.get("setup") and not old["setup"].startswith("not recorded"):
+        # A value already carried over keeps its original date.
+        return (
+            old["setup"] if "(" in old["setup"] else f"{old['setup']} (measured {old['generated']})"
+        )
+    return "not recorded (run `./setup.sh` on a fresh clone, log to logs/)"
 
 
 def timing_study() -> dict | None:
-    # The latest completed timing study, if one was run.
+    # The latest completed timing study, if one was run here, else the last pack's.
     done = [
         f
         for f in glob.glob(str(HERE / "results" / "timing-study-*.json"))
         if "summary" in json.loads(Path(f).read_text())
     ]
-    return json.loads(Path(max(done, key=os.path.getmtime)).read_text()) if done else None
+    if done:
+        latest = max(done, key=os.path.getmtime)
+        study = json.loads(Path(latest).read_text())
+        stamp = datetime.fromtimestamp(os.path.getmtime(latest), timezone.utc)
+        return {**study, "measured": f"{stamp:%Y-%m-%d %H:%M UTC}"}
+    old = previous()
+    study = old.get("timing_study")
+    if not study:
+        return None
+    if "summary" in study:
+        return study
+    # Packs before 2026-10 stored only the summary; its runs and mean run times give the length.
+    minutes = sum(s["runs"] * s["seconds_mean"] for s in study.values()) / 60
+    return {"summary": study, "minutes": minutes, "measured": old["generated"]}
 
 
-def gate_rows(digest: str) -> list[dict]:
+def gate_rows(digests: dict[str, str]) -> list[dict]:
     # Every expected-verdict case through the real gate, with the gate's own reason.
     rows = []
     for case in selftest.load():
-        v = selftest.run_case(case.name, case.mode, digest)
+        v = selftest.run_case(case, digests[case.slot])
         problem = selftest.check(case, v)
         rows.append(
             {
@@ -85,14 +112,17 @@ def gate_rows(digest: str) -> list[dict]:
                 "problem": problem,
             }
         )
-        logger.info(f"[evidence] {case.name:22} {case.mode:8} {v.stage:9} ok={problem is None}")
+        logger.info(
+            f"[evidence] {case.name:22} {case.slot:4} {case.mode:8} {v.stage:9} ok={problem is None}"
+        )
     return rows
 
 
 def containment(digest: str) -> dict:
-    # Runs exploit-eval with policy off: its `#eval` executes in the build, but only inside bwrap.
+    # Runs exploits/eval with policy off: its `#eval` executes in the build, but only inside bwrap.
     before = PWNED.exists()
-    v = selftest.run_case("exploit-eval", "nopolicy", digest)
+    case = selftest.Case("exploits/eval", "add", "nopolicy", True, "score", None, None)
+    v = selftest.run_case(case, digest)
     return {"host_file_before": before, "host_file_after": PWNED.exists(), "verdict": asdict(v)}
 
 
@@ -106,7 +136,15 @@ def render(env, setup, rows, contain, study, stamp) -> str:
     # The evidence document, entirely from the data above.
     ok = sum(r["as_expected"] for r in rows)
     accepted = [r for r in rows if r["verdict"]["passed"]]
-    best = min(accepted, key=lambda r: r["verdict"]["ratio"])
+    slots = list(dict.fromkeys(r["case"]["slot"] for r in rows))
+    best = {
+        slot: min(
+            (r for r in accepted if r["case"]["slot"] == slot), key=lambda r: r["verdict"]["ratio"]
+        )
+        for slot in slots
+        if any(r["case"]["slot"] == slot for r in accepted)
+    }
+    exploits = len({r["case"]["name"] for r in rows if r["case"]["name"].startswith("exploits/")})
     rejected = [r for r in rows if not r["verdict"]["passed"]]
     contained = not contain["host_file_after"]
     lines = [
@@ -122,14 +160,18 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         "## Quick Summary",
         "",
         f"- Generated {stamp} by `tools/evidence.py` from real gate runs on the machine in section 1; nothing here is typed by hand.",
-        f"- **{ok}/{len(rows)}** fixtures got exactly their expected verdict: {len(accepted)} accepted, {len(rejected)} rejected at the expected stage.",
-        f"- Best accepted kernel this run: `{best['case']['name']}` at **{best['verdict']['ratio']:.3f}x** of the incumbent's time.",
+        f"- **{ok}/{len(rows)}** fixtures across the {', '.join(f'`{s}`' for s in slots)} slots got exactly their expected verdict: {len(accepted)} accepted, {len(rejected)} rejected at the expected stage.",
+        "- Best accepted kernel per slot this run: "
+        + ", ".join(
+            f"`{r['case']['name']}` at **{r['verdict']['ratio']:.3f}x**" for r in best.values()
+        )
+        + ", each of its own slot's incumbent's time.",
         f"- Sandbox containment: an `#eval` that writes `{PWNED}` ran during the build, and the file {'did **not** appear' if contained else '**appeared**'} on the host.",
     ]
     if study:
         s = study["summary"]
         lines.append(
-            f"- Timing: over {study['minutes']:.0f} minutes, the incumbent against itself cleared the 0.97 bar "
+            f"- Timing (`add`, study of {study['measured']}): over {study['minutes']:.0f} minutes, the incumbent against itself cleared the 0.97 bar "
             f"{s['incumbent']['at_or_below_bar']} of {s['incumbent']['runs']} times, `fastlog` "
             f"{s['fastlog']['at_or_below_bar']} of {s['fastlog']['runs']}."
         )
@@ -137,7 +179,7 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         "",
         "```bash",
         "export PATH=$HOME/.elan/bin:$PATH",
-        ".venv/bin/python tools/evidence.py      # about 6 minutes; rewrites evidence/EVIDENCE.md and evidence.json",
+        ".venv/bin/python tools/evidence.py      # about 10 minutes; rewrites evidence/EVIDENCE.md and evidence.json",
         "```",
         "",
         "## 1. Environment",
@@ -154,8 +196,8 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         "",
         "Each row is one full `gate.py` pass. `nopolicy` skips the policy stage, to show the stages behind it hold on their own.",
         "",
-        "| submission | mode | expected | got | as expected | gate's reason, or time vs incumbent |",
-        "|---|---|---|---|---|---|",
+        "| submission | slot | mode | expected | got | as expected | gate's reason, or time vs incumbent |",
+        "|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         c, v = r["case"], r["verdict"]
@@ -163,29 +205,29 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         got = f"{'accept' if v['passed'] else 'reject'} at {v['stage']}"
         why = f"{v['ratio']:.3f}x" if v["passed"] else cell(v["reason"])
         lines.append(
-            f"| `{c['name']}` | {c['mode']} | {exp} | {got} | {'yes' if r['as_expected'] else '**NO**'} | {why} |"
+            f"| `{c['name']}` | {c['slot']} | {c['mode']} | {exp} | {got} | {'yes' if r['as_expected'] else '**NO**'} | {why} |"
         )
     lines += [
         "",
         "## 4. Accepted kernels: timing per operand class",
         "",
-        "Nanoseconds per addition, fastest of 25 rounds, 500,000 pairs per class, fresh seed per run.",
+        "Nanoseconds per operation, fastest of 25 rounds, 500,000 operand sets per class, fresh seed per run; each ratio is against that slot's incumbent.",
         "",
-        "| submission | seed | class | incumbent ns | submission ns | ratio |",
-        "|---|---:|---|---:|---:|---:|",
+        "| submission | slot | seed | class | incumbent ns | submission ns | ratio |",
+        "|---|---|---:|---|---:|---:|---:|",
     ]
     for r in accepted:
         v = r["verdict"]
         for cls, m in v["classes"].items():
             lines.append(
-                f"| `{r['case']['name']}` | {v['seed']} | {cls} | {m['incumbent_ns']:.2f} | {m['submission_ns']:.2f} | {m['ratio']:.3f} |"
+                f"| `{r['case']['name']}` | {r['case']['slot']} | {v['seed']} | {cls} | {m['incumbent_ns']:.2f} | {m['submission_ns']:.2f} | {m['ratio']:.3f} |"
             )
     cv = contain["verdict"]
     lines += [
         "",
         "## 5. Sandbox containment",
         "",
-        '`submissions/exploit-eval` contains `#eval show IO Unit from IO.FS.writeFile "/tmp/pwned" "x"`. With the',
+        '`kernels/exploits/eval` contains `#eval show IO Unit from IO.FS.writeFile "/tmp/pwned" "x"`. With the',
         "policy stage skipped, that code really runs while the gate builds the file. The build runs in",
         "bwrap with a private `/tmp`, no network and a read-only root, so the write lands in the sandbox",
         "and disappears with it.",
@@ -197,14 +239,14 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         f"| gate verdict | {'accept' if cv['passed'] else 'reject'} at {cv['stage']} {cell(cv['reason']) if cv['reason'] else ''} |",
         "",
         "The kernel itself is FloatLib's, so with policy off it is accepted; in real runs policy rejects it",
-        "first (section 3, `exploit-eval`, gate mode).",
+        "first (section 3, `exploits/eval`, gate mode).",
     ]
     if study:
         lines += [
             "",
             "## 6. Timing stability",
             "",
-            f"`tools/timing_study.py`, {study['minutes']:.0f} minutes of alternating full gate runs, fresh seed each:",
+            f"`tools/timing_study.py` on `add`, measured {study['measured']}: {study['minutes']:.0f} minutes of alternating full gate runs, fresh seed each:",
             "",
             "| submission | runs | mean | stdev | min | max | at or below 0.97 |",
             "|---|---:|---:|---:|---:|---:|---:|",
@@ -219,7 +261,7 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         "",
         "- Other hardware: everything above ran on the machine in section 1. The validator's server needs its own timing study before launch.",
         "- Kernels within about 1.5% of each other cannot be ranked by timing; ties need the earlier-submission rule.",
-        "- Attacks beyond the eight fixtures: the policy is a text scan backed by the sandbox, leanchecker and the axiom audit, not a proof of completeness.",
+        f"- Attacks beyond the {exploits} exploit fixtures: the policy is a text scan backed by the sandbox, leanchecker and the axiom audit, not a proof of completeness.",
         "",
     ]
     return "\n".join(lines)
@@ -228,17 +270,16 @@ def render(env, setup, rows, contain, study, stamp) -> str:
 def main() -> int:
     # Runs the flow under the gate's lock and writes the evidence document and its data.
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    logger.add(
-        HERE / "logs" / f"evidence-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.log", level="DEBUG"
-    )
+    gate.log_to("evidence", f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
     OUT.mkdir(exist_ok=True)
     t0 = time.monotonic()
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        digest = gate.pin(gate.SLOTS["add"])
-        env = environment(digest)
-        rows = gate_rows(digest)
-        contain = containment(digest)
+        slots = sorted({c.slot for c in selftest.load()})
+        digests = {slot: gate.pin(gate.SLOTS[slot]) for slot in slots}
+        env = environment(digests)
+        rows = gate_rows(digests)
+        contain = containment(digests["add"])
     study, setup = timing_study(), setup_time()
     data = {
         "generated": stamp,
@@ -247,7 +288,7 @@ def main() -> int:
         "setup": setup,
         "rows": rows,
         "containment": contain,
-        "timing_study": study["summary"] if study else None,
+        "timing_study": study,
     }
     (OUT / "evidence.json").write_text(json.dumps(data, indent=2))
     (OUT / "EVIDENCE.md").write_text(render(env, setup, rows, contain, study, stamp))
