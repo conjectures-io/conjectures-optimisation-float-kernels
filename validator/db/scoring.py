@@ -23,19 +23,28 @@ class ScoredSubmission:
     submitted_at: dt.datetime
 
 
+@dc.dataclass(frozen=True, slots=True)
+class Board:
+    # One slot as the weight setter scores it: each hotkey's best accepted submission, the
+    # statistical admission decisions, and the admitted leader (the one submission paid).
+    slot: str
+    best: list[ScoredSubmission]
+    decisions: list[admission.Decision]
+    leader: ScoredSubmission | None
+
+
 class ScoringDb:
-    # What the weight setter scores: each hotkey's best accepted ratio.
+    # What the weight setter scores: each slot's board of best accepted ratios.
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         # Reads through the leaderboard query, so what a miner sees ranked is what gets scored.
         self._sessions = sessions
         self._submissions = SubmissionsDb(sessions)
 
-    def best_per_hotkey(self) -> list[ScoredSubmission]:
-        # Each hotkey's best accepted ratio against the current incumbent, fastest first.
+    def best_per_hotkey(self, slot: str = "add") -> list[ScoredSubmission]:
+        # Each hotkey's best accepted ratio in `slot` against its current incumbent, fastest first.
         return [
             ScoredSubmission(r.id, r.hotkey, float(r.ratio or 0.0), r.submitted_at)
-            # Only the add board pays until the rewards say how emission splits across slots.
-            for r in self._submissions.leaderboard("add")
+            for r in self._submissions.leaderboard(slot)
         ]
 
     def admission(self, slot: str, bar: float) -> list[admission.Decision]:
@@ -52,12 +61,19 @@ class ScoringDb:
         ]
         return admission.decide(evidence, bar)
 
-    def leader(self, bar: float) -> ScoredSubmission | None:
-        # The add board's admitted leader, the one submission the weight setter pays.
-        lead = admission.leader(self.admission("add", bar))
-        if lead is None:
-            return None
-        row = self._submissions.get(lead)
+    def leader(self, slot: str, bar: float) -> ScoredSubmission | None:
+        # A slot's admitted leader, the one submission in it the weight setter pays.
+        return self._leader(admission.leader(self.admission(slot, bar)))
+
+    def board(self, slot: str, bar: float) -> Board:
+        # Everything the weight setter needs for one slot, admission computed once.
+        decisions = self.admission(slot, bar)
+        leader = self._leader(admission.leader(decisions))
+        return Board(slot, self.best_per_hotkey(slot), decisions, leader)
+
+    def _leader(self, sub_id: int | None) -> ScoredSubmission | None:
+        # The leading submission's row as scoring reads it, or None.
+        row = self._submissions.get(sub_id) if sub_id is not None else None
         if row is None:
             return None
         return ScoredSubmission(row.id, row.hotkey, float(row.ratio or 0.0), row.submitted_at)

@@ -177,15 +177,13 @@ def plan_for(
         plan = burn(meta, treasury_uid=treasury, burn_uid=config.burn_uid, competition_share=share)
         return plan, None, None
     try:
-        decisions = store.scoring.admission("add", scoring_config.max_ratio)
-        result = reward.score(
-            store.scoring.best_per_hotkey(),
-            scoring_config,
-            store.scoring.leader(scoring_config.max_ratio),
-        )
+        boards = [
+            store.scoring.board(slot, scoring_config.max_ratio) for slot in reward.PAYING_SLOTS
+        ]
+        result = reward.score(boards, scoring_config)
         snapshot = reward.publication(
             result,
-            decisions,
+            boards,
             scoring_config,
             competition_share=share,
             computed_at=clock.now(),
@@ -351,7 +349,8 @@ def run(
         f"[weights] running netuid={config.netuid} treasury_uid={config.treasury_uid} "
         f"competition_share={config.competition_share:.3f} margin={config.set_margin} "
         f"burn_mode={config.burn_mode} burn_uid={config.burn_uid} dry_run={config.dry_run} "
-        f"scoring=king-of-the-hill winner_share={scoring_config.winner_share:.2f}"
+        f"scoring=king-of-the-hill per slot, slots={','.join(reward.PAYING_SLOTS)} "
+        f"winner_share={scoring_config.winner_share:.2f}"
     )
     ticks = TickLog()
     try:

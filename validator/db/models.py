@@ -64,7 +64,7 @@ class Submission(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     hotkey: Mapped[str] = mapped_column(Text, nullable=False)
-    # Which competition slot the kernel is for: add, mul or fma.
+    # Which competition slot the kernel is for: add, mul, fma, div or sqrt.
     slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="add")
     # sha256(Kernel.lean), hex: what the miner signed, and the submission's identity.
     digest: Mapped[str] = mapped_column(Text, nullable=False)
@@ -191,13 +191,15 @@ class WeightSet(Base):
 
 
 class ScoreSnapshot(Base):
-    # One hotkey's scoring input and output for one weight_sets row.
+    # One hotkey's scoring input and output in one slot, for one weight_sets row.
     __tablename__ = "score_snapshots"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     weight_set_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("weight_sets.id", ondelete="CASCADE"), nullable=False
     )
+    # The slot this line scores; each slot's leader is paid an equal part of the budget.
+    slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="add")
     hotkey: Mapped[str] = mapped_column(Text, nullable=False)
     submission_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("submissions.id", ondelete="SET NULL")

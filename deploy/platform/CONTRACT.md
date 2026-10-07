@@ -21,8 +21,8 @@ commit `d24e86c` (2026-09-30). This repository's side is migration `0006` and `d
   - the published snapshot's shape
 - **The platform serves one competition per process.** FloatLib needs a second API deployment, or
   multi-competition support in the platform.
-- **Scope:** the platform serves the `add` slot only, as the competition `floatlib`. The `mul` and `fma` slots
-  stay on this repository's own API (`floatlib-mul`, `floatlib-fma`) until the platform supports more than
+- **Scope:** the platform serves the `add` slot only, as the competition `floatlib`. The other four slots
+  stay on this repository's own API (`floatlib-mul`, `-fma`, `-div`, `-sqrt`) until the platform supports more than
   one board per competition.
 
 ## Connection
@@ -85,8 +85,9 @@ exactly this request, so a miner client works against either.
 - **No aggregation or admission tables.** FloatLib has neither `benchmark_aggregations` nor
   `submission_admission_checks`. The admission outcome of every scored submission is inside the published
   snapshot.
-- **`score_snapshots`:** `(id, weight_set_id, hotkey, submission_id, ratio, weight)`. `weight` is the hotkey's
-  fraction of the competition's budget, like DEFLATE's `payable_weight`.
+- **`score_snapshots`:** `(id, weight_set_id, slot, hotkey, submission_id, ratio, weight)`, one row per hotkey per
+  slot. `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`; the platform
+  reads `slot = 'add'`.
 - **`weight_sets`:** published rows are those with `jsonb_typeof(api_snapshot) = 'object'`, as for DEFLATE. The
   weight setter writes one every tick, before any chain check, then updates `accepted` and `error`.
 
@@ -95,23 +96,31 @@ exactly this request, so a miner client works against either.
 ```json
 {
   "competition": "floatlib",
-  "slot": "add",
-  "computed_at": "2026-10-06T12:00:00+00:00",
+  "computed_at": "2026-10-07T12:00:00+00:00",
   "policy": {
-    "version": "king-of-the-hill-v1",
+    "version": "king-of-the-hill-per-slot-v1",
     "competition_share": 0.2,
+    "slot_shares": {"add": 0.2, "mul": 0.2, "fma": 0.2, "div": 0.2, "sqrt": 0.2},
     "winner_share": 1.0,
     "promotion_bar": 0.97,
     "admission": {"version": "paired-median-bootstrap-v1", "draws": 2000, "quantile": 0.05}
   },
-  "leader": 42,
-  "items": [
-    {"hotkey": "5F…", "submission_id": 42, "ratio": 0.53, "weight": 1.0, "admission": "leader"},
-    {"hotkey": "5G…", "submission_id": 40, "ratio": 0.61, "weight": 0.0, "admission": "not-significant"}
-  ]
+  "slots": {
+    "add": {
+      "share": 0.2,
+      "leader": 42,
+      "items": [
+        {"hotkey": "5F…", "submission_id": 42, "ratio": 0.53, "weight": 0.2, "admission": "leader"},
+        {"hotkey": "5G…", "submission_id": 40, "ratio": 0.61, "weight": 0.0, "admission": "not-significant"}
+      ]
+    },
+    "mul": {"share": 0.2, "leader": null, "items": []}
+  }
 }
 ```
 
+- **Per slot:** every slot's leader gets an equal part (`slot_shares`) of the competition's budget. The platform
+  serves `slots.add`; the other slots are scored and paid by the validator alongside it.
 - **Lower ratio is faster:** `ratio` is submission time over incumbent time.
 - **Admission outcomes:** `leader`, `not-significant`, `above-bar`, `no-evidence`, or `null` before the first
   evidence.

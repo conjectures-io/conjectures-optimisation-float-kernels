@@ -1,7 +1,11 @@
-"""Leaderboard -> the competition's weights: king of the hill, a placeholder until rewards are set.
+"""Leaderboards -> the competition's weights: an equal part per slot, king of the hill within each.
 
-The weights here are fractions of the competition's budget; treasury.py turns them into the
-validator's vector. `publication` is what each weight set publishes for the platform to serve.
+Every stage-1 slot pays: the competition's budget is split equally across PAYING_SLOTS, and each
+slot's admitted leader takes the winner share of that slot's part; whatever no leader earns goes
+to the treasury. Like the treasury split, the paying slots are code, not configuration: where
+emission goes is a reviewed change. The weights here are fractions of the competition's budget;
+treasury.py turns them into the validator's vector. `publication` is what each weight set
+publishes for the platform to serve.
 """
 
 from __future__ import annotations
@@ -12,16 +16,21 @@ import os
 from collections.abc import Sequence
 
 import admission
-from db.scoring import ScoredSubmission
+from db.scoring import Board, ScoredSubmission
 from service.settings import PROMOTION_BAR
 
 # The scoring rule a published snapshot was computed under; bump it when the rule changes.
-POLICY_VERSION = "king-of-the-hill-v1"
+POLICY_VERSION = "king-of-the-hill-per-slot-v1"
+
+# The slots that pay, and each one's part of the competition's budget: equal for now. Listed, not
+# taken from db.SLOTS, so a slot added later (stage 2) pays only once it is added here on purpose.
+PAYING_SLOTS: tuple[str, ...] = ("add", "mul", "fma", "div", "sqrt")
+SLOT_SHARES: dict[str, float] = {slot: 1.0 / len(PAYING_SLOTS) for slot in PAYING_SLOTS}
 
 
 @dc.dataclass(frozen=True, slots=True)
 class ScoringConfig:
-    # The leader's share of the competition's budget; the treasury takes the rest.
+    # The leader's share of its slot's part of the budget; the treasury takes the rest.
     winner_share: float = 1.0
     # Only a ratio at or below this pays: the promotion bar, the same one the leaderboard's
     # `qualifies` uses, so a noisy near-copy of the incumbent earns nothing.
@@ -38,7 +47,8 @@ class ScoringConfig:
 
 @dc.dataclass(frozen=True, slots=True)
 class HotkeyScore:
-    # One competitor's line in the audit: its best ratio and the weight it came to.
+    # One competitor's line in one slot's audit: its best ratio there and the weight it came to.
+    slot: str
     hotkey: str
     submission_id: int | None
     ratio: float | None
@@ -47,6 +57,7 @@ class HotkeyScore:
     def as_snapshot(self) -> dict:
         # The shape db.scoring.record_weight_set stores.
         return {
+            "slot": self.slot,
             "hotkey": self.hotkey,
             "submission_id": self.submission_id,
             "ratio": self.ratio,
@@ -56,33 +67,44 @@ class HotkeyScore:
 
 @dc.dataclass(frozen=True, slots=True)
 class Scoring:
-    # Every competitor's score for one epoch.
+    # Every competitor's score in every paying slot, for one epoch.
     scores: tuple[HotkeyScore, ...]
 
     @property
     def weights(self) -> dict[str, float]:
-        # Per-hotkey emission shares, only the paid ones.
-        return {s.hotkey: s.weight for s in self.scores if s.weight > 0}
+        # Per-hotkey fractions of the competition's budget, summed over the slots a hotkey leads.
+        total: dict[str, float] = {}
+        for s in self.scores:
+            if s.weight > 0:
+                total[s.hotkey] = total.get(s.hotkey, 0.0) + s.weight
+        return total
 
     def snapshots(self) -> list[dict]:
         # The audit rows written beside the vector.
         return [s.as_snapshot() for s in self.scores]
 
     def summary(self) -> str:
-        # One line for the weight_sets row and the log.
-        paid = [s for s in self.scores if s.weight > 0]
-        leader = f"{paid[0].hotkey[:8]}… ratio={paid[0].ratio:.4f}" if paid else "none"
-        return f"competitors={len(self.scores)} leader={leader}"
+        # One line for the weight_sets row and the log: each slot's paid leader, if any.
+        leaders = [
+            f"{s.slot}:{s.hotkey[:8]}…@{s.ratio:.4f}"
+            for s in self.scores
+            if s.weight > 0 and s.ratio is not None
+        ]
+        hotkeys = len({s.hotkey for s in self.scores})
+        return f"competitors={hotkeys} leaders=[{', '.join(leaders) or 'none'}]"
 
 
-def score(
+def score_board(
+    slot: str,
     best_per_hotkey: Sequence[ScoredSubmission],
     config: ScoringConfig,
     leader: ScoredSubmission | None,
-) -> Scoring:
-    # The admitted leader's hotkey takes the winner share (see admission.py): the fastest headline
-    # ratio alone does not pay, so a lucky copy cannot unseat the submission it copied. Its line
-    # names the leading submission; every other hotkey's names its best, fastest first.
+) -> list[HotkeyScore]:
+    # One slot: the admitted leader's hotkey takes the winner share of the slot's part (see
+    # admission.py): the fastest headline ratio alone does not pay, so a lucky copy cannot unseat
+    # the submission it copied. Its line names the leading submission; every other hotkey's names
+    # its best, fastest first.
+    part = SLOT_SHARES.get(slot, 0.0) * config.winner_share
     scores = []
     for row in best_per_hotkey:
         paid = (
@@ -90,33 +112,58 @@ def score(
         )
         shown = leader if paid and leader is not None else row
         scores.append(
-            HotkeyScore(
-                shown.hotkey, shown.submission_id, shown.ratio, config.winner_share if paid else 0.0
-            )
+            HotkeyScore(slot, shown.hotkey, shown.submission_id, shown.ratio, part if paid else 0.0)
         )
     scores.sort(key=lambda s: s.weight == 0)
+    return scores
+
+
+def score(boards: Sequence[Board], config: ScoringConfig) -> Scoring:
+    # Every paying slot's board, scored on its own and combined.
+    scores: list[HotkeyScore] = []
+    for board in boards:
+        if board.slot in SLOT_SHARES:
+            scores += score_board(board.slot, board.best, config, board.leader)
     return Scoring(tuple(scores))
 
 
 def publication(
     result: Scoring,
-    decisions: Sequence[admission.Decision],
+    boards: Sequence[Board],
     config: ScoringConfig,
     *,
     competition_share: float,
     computed_at: dt.datetime,
 ) -> dict[str, object]:
     # The scoring one weight set was computed from, as JSON the platform serves unchanged: the
-    # policy, every competitor's line, and each submission's admission outcome. Weights are
-    # fractions of the competition's budget; `competition_share` turns them into the validator's.
-    outcome = {d.submission_id: d for d in decisions}
+    # policy, and per slot its share, its leader, every competitor's line and each submission's
+    # admission outcome. Weights are fractions of the competition's budget; `competition_share`
+    # turns them into the validator's.
+    slots: dict[str, object] = {}
+    for board in boards:
+        outcome = {d.submission_id: d.outcome for d in board.decisions}
+        slots[board.slot] = {
+            "share": SLOT_SHARES.get(board.slot, 0.0),
+            "leader": admission.leader(board.decisions),
+            "items": [
+                {
+                    "hotkey": s.hotkey,
+                    "submission_id": s.submission_id,
+                    "ratio": s.ratio,
+                    "weight": s.weight,
+                    "admission": outcome.get(s.submission_id) if s.submission_id else None,
+                }
+                for s in result.scores
+                if s.slot == board.slot
+            ],
+        }
     return {
         "competition": "floatlib",
-        "slot": "add",
         "computed_at": computed_at.isoformat(),
         "policy": {
             "version": POLICY_VERSION,
             "competition_share": competition_share,
+            "slot_shares": SLOT_SHARES,
             "winner_share": config.winner_share,
             "promotion_bar": config.max_ratio,
             "admission": {
@@ -125,17 +172,5 @@ def publication(
                 "quantile": admission.QUANTILE,
             },
         },
-        "leader": admission.leader(decisions),
-        "items": [
-            {
-                "hotkey": s.hotkey,
-                "submission_id": s.submission_id,
-                "ratio": s.ratio,
-                "weight": s.weight,
-                "admission": (
-                    outcome[s.submission_id].outcome if s.submission_id in outcome else None
-                ),
-            }
-            for s in result.scores
-        ],
+        "slots": slots,
     }
