@@ -25,4 +25,4 @@ PENDING = (SubmissionState.QUEUED, SubmissionState.VERIFYING)
 STATE_VALUES = tuple(s.value for s in SubmissionState)
 
 # The competition slots, as gate.py names them; `add` is the default and the one weights score.
-SLOTS = ("add", "mul", "fma")
+SLOTS = ("add", "mul", "fma", "div", "sqrt")

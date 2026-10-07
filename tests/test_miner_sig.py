@@ -41,7 +41,7 @@ def test_the_message_is_the_platforms_five_lines():
     )
 
 
-@pytest.mark.parametrize("slot", ["add", "mul", "fma"])
+@pytest.mark.parametrize("slot", ["add", "mul", "fma", "div", "sqrt"])
 def test_both_copies_build_the_same_slug_and_message(slot):
     kernel = b"import Contract\n"
     assert miner_sig.slug_of(slot) == service_sig.slug_of(slot)

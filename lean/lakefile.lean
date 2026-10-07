@@ -6,8 +6,9 @@ open Lake DSL
 
 FloatLib is a pinned dependency; nothing in it is edited. `Contract` is pinned by the operator,
 `Submission` is the miner's `Kernel.lean` copied in by `gate.py`, `Verify` is the three-line
-statement check (`VerifyMul`, `VerifyFma` for the other slots). `BenchCore` is the shared timing
-core; `bench`, `benchMul` and `benchFma` run it over `Submission.add`, `.mul`, `.fma`. The gate pins
+statement check (`VerifyMul`, `VerifyFma`, `VerifyDiv`, `VerifySqrt` for the other slots).
+`BenchCore` is the shared timing core; `bench`, `benchMul`, `benchFma`, `benchDiv` and `benchSqrt`
+run it over `Submission.add`, `.mul`, `.fma`, `.div`, `.sqrt`. The gate pins
 each slot's bench built from that slot's incumbent submission, so a miner's build never touches
 the binary it is compared against. `micro` is the cost breakdown.
 
@@ -40,7 +41,8 @@ lean_lib Verify where
 
 lean_lib BenchCore where
   srcDir := "bench"
-  roots := #[`Bench]
+  -- BenchDivSqrt is separate so the add, mul and fma binaries compile exactly as calibrated.
+  roots := #[`Bench, `BenchDivSqrt]
 
 lean_exe bench where
   srcDir := "bench"
@@ -61,6 +63,22 @@ lean_lib VerifyFma where
 lean_exe benchFma where
   srcDir := "bench"
   root := `MainFma
+
+lean_lib VerifyDiv where
+  srcDir := "verify"
+  roots := #[`VerifyDiv]
+
+lean_exe benchDiv where
+  srcDir := "bench"
+  root := `MainDiv
+
+lean_lib VerifySqrt where
+  srcDir := "verify"
+  roots := #[`VerifySqrt]
+
+lean_exe benchSqrt where
+  srcDir := "bench"
+  root := `MainSqrt
 
 lean_exe micro where
   srcDir := "bench"

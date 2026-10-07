@@ -3,7 +3,7 @@
 The same five lines the platform verifies for every competition, so a signature made for one
 competition, or for one of this competition's slots, cannot be replayed against another. Each
 slot is its own competition slug: `floatlib` is the add board (the one the platform serves),
-`floatlib-mul` and `floatlib-fma` the others. The miner keeps its own copy in miner/sig.py;
+`floatlib-mul`, `-fma`, `-div` and `-sqrt` the others. The miner keeps its own copy in miner/sig.py;
 tests/test_miner_sig.py holds the two to the same bytes.
 """
 

@@ -28,8 +28,9 @@ CONFIG = LIB / ".lake" / "config"
 SCRATCH = HERE / ".sandbox" / "config"
 LAYER = HERE / ".sandbox" / "layer"
 # Build outputs a submission may write, by file stem: its module, the gates, the bench binaries.
-OWN_STEMS = {"Submission", "Verify", "VerifyMul", "VerifyFma", "Main", "MainMul", "MainFma"}
-OWN_STEMS |= {"bench", "benchMul", "benchFma"}
+OWN_STEMS = {"Submission", "Verify", "Main", "bench"}
+for _op in ("Mul", "Fma", "Div", "Sqrt"):
+    OWN_STEMS |= {f"Verify{_op}", f"Main{_op}", f"bench{_op}"}
 WORK = LIB / "work" / "Submission.lean"
 # Shared inputs of every pinned binary; a change to any of them rebuilds it.
 SHARED_INPUTS = [
@@ -47,6 +48,8 @@ class Slot:
     bench: str
     main: str
     incumbent: Path
+    # Bench modules beyond the shared core that this slot's binary is built from.
+    extra: tuple[str, ...] = ()
 
     @property
     def pinned(self) -> Path:
@@ -56,7 +59,8 @@ class Slot:
     @property
     def inputs(self) -> list[Path]:
         # Everything the pinned binary is built from.
-        return [self.incumbent, LIB / "bench" / self.main] + SHARED_INPUTS
+        bench = [LIB / "bench" / name for name in (self.main, *self.extra)]
+        return [self.incumbent, *bench] + SHARED_INPUTS
 
 
 KERNELS = HERE / "kernels"
@@ -73,6 +77,17 @@ SLOTS = {
     "add": Slot("add", "Verify", "bench", "Main.lean", incumbent("add")),
     "mul": Slot("mul", "VerifyMul", "benchMul", "MainMul.lean", incumbent("mul")),
     "fma": Slot("fma", "VerifyFma", "benchFma", "MainFma.lean", incumbent("fma")),
+    "div": Slot(
+        "div", "VerifyDiv", "benchDiv", "MainDiv.lean", incumbent("div"), ("BenchDivSqrt.lean",)
+    ),
+    "sqrt": Slot(
+        "sqrt",
+        "VerifySqrt",
+        "benchSqrt",
+        "MainSqrt.lean",
+        incumbent("sqrt"),
+        ("BenchDivSqrt.lean",),
+    ),
 }
 ELAN = Path.home() / ".elan"
 LAKE = str(ELAN / "bin" / "lake")
@@ -505,9 +520,10 @@ def main() -> int:
     mode = "bench" if "--bench" in argv else "gate"
     bad_verdict = "--verdict" in sys.argv and (verdict_path is None or len(args) != 1)
     if not args or bad_verdict or slot not in SLOTS:
-        print("usage: gate.py [--bench] [--slot add|mul|fma] <kernel dir> [...]", file=sys.stderr)
+        slots = "|".join(SLOTS)
+        print(f"usage: gate.py [--bench] [--slot {slots}] <kernel dir> [...]", file=sys.stderr)
         print(
-            "       gate.py <submission dir> [--slot add|mul|fma] --verdict <file.json>",
+            f"       gate.py <submission dir> [--slot {slots}] --verdict <file.json>",
             file=sys.stderr,
         )
         return 2

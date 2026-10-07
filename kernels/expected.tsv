@@ -28,3 +28,9 @@ mul/wrong	mul	gate	false	statement	-	-
 fma/incumbent	fma	gate	true	score	0.97	1.03
 fma/word	fma	gate	true	score	0.97	1.03
 fma/wrong	fma	gate	false	statement	-	-
+div/incumbent	div	gate	true	score	0.97	1.03
+div/word	div	gate	true	score	0.97	1.03
+div/wrong	div	gate	false	statement	-	-
+sqrt/incumbent	sqrt	gate	true	score	0.97	1.03
+sqrt/word	sqrt	gate	true	score	0.97	1.03
+sqrt/wrong	sqrt	gate	false	statement	-	-

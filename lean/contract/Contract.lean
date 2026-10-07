@@ -28,4 +28,12 @@ def MulObligation (kernel : Binary32 → Binary32 → Binary32) : Prop :=
 def FmaObligation (kernel : Binary32 → Binary32 → Binary32 → Binary32) : Prop :=
   ∀ x y z : Binary32, kernel x y z = ExecFloat.Spec.fma x y z
 
+/-- The division slot's obligation: a kernel agrees with `ExecFloat.Spec.div` everywhere. -/
+def DivObligation (kernel : Binary32 → Binary32 → Binary32) : Prop :=
+  ∀ x y : Binary32, kernel x y = ExecFloat.Spec.div x y
+
+/-- The square-root slot's obligation: a kernel agrees with `ExecFloat.Spec.sqrt` everywhere. -/
+def SqrtObligation (kernel : Binary32 → Binary32) : Prop :=
+  ∀ x : Binary32, kernel x = ExecFloat.Spec.sqrt x
+
 end Competition

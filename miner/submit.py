@@ -2,10 +2,10 @@
 
 Talks to any API laid out like the conjectures platform's competition surface,
 `/v1/competitions/<slug>/...`: a FloatLib validator, or conjectures.io once it serves FloatLib.
-Each slot is its own slug (`floatlib` is add, `floatlib-mul`, `floatlib-fma`). Needs only
+Each slot is its own slug (`floatlib` is add; `floatlib-mul`, `-fma`, `-div`, `-sqrt`). Needs only
 requirements/miner.txt. Usage in MANUAL.md, section 12:
 
-python miner/submit.py submit my-kernel --hotkey <file> --url <api> [--slot add|mul|fma]
+python miner/submit.py submit my-kernel --hotkey <file> --url <api> [--slot add|mul|fma|div|sqrt]
 python miner/submit.py status <submission id> --url <api> [--slot ...]
 python miner/submit.py report <submission id> --url <api> [--slot ...]
 python miner/submit.py leaderboard --url <api> [--slot ...]
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sig  # noqa: E402 - the miner's copy of the signing contract, pinned by test_miner_sig.py
 
 TIMEOUT = 60
-SLOTS = ("add", "mul", "fma")
+SLOTS = ("add", "mul", "fma", "div", "sqrt")
 
 
 class SubmitResult(TypedDict):

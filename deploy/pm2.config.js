@@ -1,7 +1,7 @@
 // The validator under PM2: four processes, each doing one thing, named floatlib-* so they sit
 // beside another competition's on one host.
 //
-//   floatlib-submission-api   serves /v1/competitions/floatlib[-mul|-fma]/...
+//   floatlib-submission-api   serves /v1/competitions/floatlib[-mul|-fma|-div|-sqrt]/...
 //   floatlib-gate-worker      drains the queue through gate.py
 //   floatlib-chain-watcher    streams subnet registrations into the store
 //   floatlib-weight-setter    scores the round and sets weights, once an epoch (dry run by default)

@@ -4,7 +4,7 @@ The miner's half of the wire contract, the same message the conjectures platform
 every competition. The contract is the message, not this file: the validator keeps its own copy
 (validator/service/sig.py), and tests/test_miner_sig.py holds the two to the same bytes, so a
 miner needs nothing from the validator's code. Each slot is its own competition slug: `floatlib`
-is the add board, `floatlib-mul` and `floatlib-fma` the others.
+is the add board, `floatlib-mul`, `floatlib-fma`, `floatlib-div` and `floatlib-sqrt` the others.
 """
 
 from __future__ import annotations
