@@ -1,18 +1,18 @@
-# Mining the FloatLib binary32 slots (add, mul, fma) - the manual
+# Mining the FloatLib binary32 slots (add, mul, fma, div, sqrt) - the manual
 
 ## Quick Summary
 
 - You submit one Lean file, `Kernel.lean`: a binary32 addition `Submission.add` and a proof `Submission.add_spec` that it equals FloatLib's reference `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the kernel, audits axioms, then times your kernel against the incumbent. Lower time wins.
 - The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
-- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 28 expected verdicts in about 9 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
+- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 34 expected verdicts in about 15 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
 - The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror`, `fastlog` and `tuned` are four accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
-- Two more slots, binary32 `mul` and `fma`, run on the same gate with `--slot mul|fma` (section 13). `kernels/mul/fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma` yet.
+- Four more slots, binary32 `mul`, `fma`, `div` and `sqrt`, run on the same gate with `--slot` (section 13). `kernels/mul/fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma`, `div` or `sqrt` yet.
 - Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
 
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                                # 28/28 cases as expected = ready
+.venv/bin/python selftest.py                                # 34/34 cases as expected = ready
 cp -r kernels/add/textbook-unproved my-kernel               # the fast adder, one sorry left
 .venv/bin/python gate.py --bench my-kernel                  # speed only, proof not checked
 .venv/bin/python gate.py my-kernel                          # the real gate: all six stages
@@ -49,7 +49,7 @@ export PATH=$HOME/.elan/bin:$PATH
 ### Test the environment
 
 ```bash
-.venv/bin/python selftest.py     # about 9 minutes
+.venv/bin/python selftest.py     # about 15 minutes
 ```
 
 The self-test gates every kernel in `kernels/` and compares each verdict with
@@ -63,7 +63,7 @@ policy hold on their own. A healthy machine ends with:
 [selftest] ok   mul/incumbent          mul  gate
 ...
 [selftest] ok   fma/wrong              fma  gate
-[selftest] 28/28 cases as expected
+[selftest] 34/34 cases as expected
 ```
 
 Exit code 0 means the toolchain, the build, the sandbox, the kernel re-check and the timing all
@@ -359,13 +359,13 @@ python miner/submit.py status 12 --url http://<validator>:9300
 #   stage score
 #   time vs incumbent 0.5347x (lower is faster)
 python miner/submit.py report 12 --url http://<validator>:9300    # the gate's full verdict
-python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul|fma for the others
+python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul|fma|div|sqrt for the others
 #   rank    ratio qualifies       admission  hotkey
 #      1   0.5347       yes          leader  5Grw...  <- paid
 ```
 
-Each slot is its own competition slug: `floatlib` is the add board, `floatlib-mul` and
-`floatlib-fma` the others. Every endpoint below sits under `/v1/competitions/<slug>`.
+Each slot is its own competition slug: `floatlib` is the add board, `floatlib-mul`,
+`floatlib-fma`, `floatlib-div` and `floatlib-sqrt` the others. Every endpoint below sits under `/v1/competitions/<slug>`.
 
 | endpoint | what it does |
 |---|---|
@@ -382,17 +382,17 @@ Each slot is its own competition slug: `floatlib` is the add board, `floatlib-mu
 - The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
 - A signature is bound to its slot's slug: one made for `floatlib` (add) does not verify for `floatlib-mul`, and the other way round, nor for any other competition on the platform.
 - Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `add`, `mul` or `fma`.)
-- **Only the `add` board pays for now.** `mul` and `fma` are gated, ranked and shown, but the weight setter scores `add` until the rewards say how emission splits across slots.
+- **Every slot pays, equally.** The competition's share is split into five equal parts, one per slot (`add`, `mul`, `fma`, `div`, `sqrt`), and each slot's admitted leader receives its part. A slot without a leader leaves its part to the treasury, and a hotkey leading two slots receives both parts.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
 - **A verdict counts only under the verifier that gave it.** When the validator updates its gate, contract or bench, older accepted submissions leave the board until the operator re-verifies them, at no cost to you: a re-acceptance reuses the registration already spent.
 
 **Round rules (proposed, not final):**
 - **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin.
 - **Who leads: statistical admission.** The headline ratio ranks the board; the lead needs evidence as well. The gate records every round's paired incumbent and submission timings, and the validator bootstraps them (2000 draws, a seed derived from the timings themselves, so every validator agrees). A submission qualifies when its ratio is at or below the bar *and* its 5th-percentile gain over the incumbent is positive. Taken in submission order, a qualifying submission takes the lead only if its 5th-percentile gain over the current leader is positive too. So a later copy of the leader, or the same kernel with one lucky round, cannot take the lead; a genuinely faster kernel can. This is the rule the DEFLATE competition uses.
-- **Emission:** a placeholder until rewards are announced. As in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; within the competition's share the admitted leader's hotkey receives the winner share, and whatever no miner earns goes to the treasury.
-- **Later slots** use the same shape, one obligation per operation and format: `Spec.div`, `Spec.sqrt`, and binary64.
+- **Emission:** a placeholder until rewards are announced. As in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; within the competition's share each slot's admitted leader receives an equal fifth, and whatever no miner earns goes to the treasury.
+- **Later slots** use the same shape, one obligation per operation and format: binary64 next.
 
-## 13. The multiplication and fused multiply-add slots
+## 13. The other slots: multiplication, fused multiply-add, division and square root
 
 Everything above applies, with these names swapped in. Pass `--slot` to the gate; the default is `add`.
 
@@ -401,16 +401,21 @@ Everything above applies, with these names swapped in. Pass `--slot` to the gate
 | `add` | `Submission.add x y` | `add_spec : ∀ x y, add x y = ExecFloat.Spec.add x y` | `Obligation` | `ExecFloat.add` |
 | `mul` | `Submission.mul x y` | `mul_spec : ∀ x y, mul x y = ExecFloat.Spec.mul x y` | `MulObligation` | `ExecFloat.mul` |
 | `fma` | `Submission.fma x y z` | `fma_spec : ∀ x y z, fma x y z = ExecFloat.Spec.fma x y z` | `FmaObligation` | `ExecFloat.fma` |
+| `div` | `Submission.div x y` | `div_spec : ∀ x y, div x y = ExecFloat.Spec.div x y` | `DivObligation` | `ExecFloat.div` |
+| `sqrt` | `Submission.sqrt x` | `sqrt_spec : ∀ x, sqrt x = ExecFloat.Spec.sqrt x` | `SqrtObligation` | `ExecFloat.sqrt` |
 
 ```bash
 .venv/bin/python gate.py --slot mul --bench my-mul          # time an unproved multiplication
 .venv/bin/python gate.py --slot fma kernels/fma/word         # the full gate on the fma slot
+.venv/bin/python gate.py --slot sqrt kernels/sqrt/incumbent  # the square-root slot's incumbent
 ```
 
 `ExecFloat.Spec.fma` rounds once: `x * y + z` computed exactly, then rounded. Multiplying,
 rounding and adding is a different function, and `kernels/fma/wrong` shows it fails to prove.
-FloatLib's word kernels `Configured.Backend.wordMul` and `wordFma`, with `wordMul_eq_spec` and
-`wordFma_eq_spec`, play the role `wordAdd` plays in section 7.
+FloatLib's word kernels `Configured.Backend.wordMul`, `wordFma`, `wordDiv` and `wordSqrt`, with
+their `_eq_spec` theorems, play the role `wordAdd` plays in section 7. `kernels/div/wrong`
+(multiplying instead) and `kernels/sqrt/wrong` (returning the input) show the statement stage
+refusing a kernel that is not the operation.
 
 Each slot times its own operand classes, 500,000 calls each, summed:
 
@@ -422,6 +427,12 @@ Each slot times its own operand classes, 500,000 calls each, summed:
 | `fma` | `near-one` | all three near one, a dot product's accumulate step |
 | `fma` | `cancel` | a negative addend the size of the product: cancellation |
 | `fma` | `wide` | an addend 20 to 40 binades from the product, either side |
+| `div` | `near-one` | both operands within 3 binades of one |
+| `div` | `spread` | exponents over the whole normal range: overflow, underflow and normal quotients |
+| `div` | `extremes` | tiny over huge and huge over tiny, alternately: subnormal quotients and just past overflow |
+| `sqrt` | `near-one` | positive values within 3 binades of one |
+| `sqrt` | `spread` | positive values over the whole normal range, odd and even exponents |
+| `sqrt` | `subnormal` | positive subnormal inputs, which need normalising first |
 
 **`mul/fast` (0.55x, accepted):** FloatLib's `mulFiniteImpl?` on bare words with `tuned`'s
 `roundP`. All three slots round through the same `roundProduct`, and its `UInt64.log2` bit loop runs
@@ -434,4 +445,11 @@ lemma `sm1_eq`), because the rounding step already signs a zero product. Its pro
 Where to look first in `fma`: FloatLib's fma takes about 250 ns on the `wide` class against about 65 ns on
 the other two, so the far-addend path is the obvious target. The summed score weights classes by
 the incumbent's time, so `wide` is about two thirds of the fma score.
+
+`div` and `sqrt` are new: their incumbents are FloatLib's certified kernels, about 50 ns a call on
+every class on the reference machine, and no faster proven kernel exists yet. Both carry the
+`Option`/`Model` wrappers and the carrier codec `direct` and `mirror` removed for `add`. `sqrt`'s
+word kernel also normalises with the bit-at-a-time `UInt64.log2` that `fastlog` replaced, so that
+lemma is the first thing to try there; `div` takes its own quotient path, where nobody has
+measured yet where the time goes.
 

@@ -5,15 +5,15 @@
 - A proof-gated speed competition on [FloatLib](https://github.com/lean-dojo/FloatLib)'s verified floating-point kernels. A miner submits one Lean file: a binary32 addition `Submission.add` and a proof that it equals `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the Lean kernel, audits axioms, then times the kernel against the incumbent. Lower time wins.
 - The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog` 0.53x); an unproved textbook adder reaches **0.40x**.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected. This README is the overview for operators and reviewers.
-- Three slots share one gate: binary32 `add` (the main one; best proven 0.50x), `mul` (best proven `mul/fast`, 0.55x) and `fma`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma`). The validator service accepts all three; only the `add` board pays until the rewards split is decided.
-- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 28 expected verdicts across the three slots (about 9 minutes).
+- Five slots share one gate: binary32 `add` (the main one; best proven 0.50x), `mul` (best proven `mul/fast`, 0.55x), `fma`, `div` and `sqrt`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma|div|sqrt`). The validator service accepts all five, and all five pay: the competition's share is split equally across them, each slot's admitted leader taking its fifth.
+- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 34 expected verdicts across the five slots (about 15 minutes).
 - A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                        # 28/28 cases as expected = ready
+.venv/bin/python selftest.py                        # 34/34 cases as expected = ready
 .venv/bin/python gate.py kernels/add/fastlog        # intake, policy, statement, kernel, axioms, score
 .venv/bin/python gate.py --bench my-kernel          # time an unproved kernel; never a verdict
 .venv/bin/python gate.py --slot mul kernels/mul/incumbent   # the multiplication slot
@@ -124,10 +124,10 @@ directory itself and names them `floatlib-*`, so they sit beside another competi
 
 | process | what it does |
 |---|---|
-| `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is add, `floatlib-mul`, `floatlib-fma`): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`; plus `GET /health`, `GET /ready` |
+| `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is add; `floatlib-mul`, `-fma`, `-div`, `-sqrt`): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`; plus `GET /health`, `GET /ready` |
 | `floatlib-gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, writes their `Kernel.lean` from the store, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
 | `floatlib-chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
-| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the add board (the admitted leader takes the competition's budget: `validator/admission.py` and the placeholder rule in `validator/reward.py`) and records the vector, its per-hotkey lines and the published snapshot; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
+| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores every slot's board (each slot's admitted leader takes an equal fifth of the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and records the vector, its per-hotkey lines and the published snapshot; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
 
 **Weights.** The vector is the whole validator's, as in the DEFLATE competition
 (`validator/treasury.py`): the treasury, uid 121 on netuid 66, takes 80%; the competition's 20% goes
@@ -192,14 +192,14 @@ The service layer is ported from our DEFLATE competition (`conjectures-optimisat
 registrations and entitlement claims, the Postgres rate limiter, signed timestamps, the queue with
 stale-claim recovery, the weight-setting audit trail, the treasury split, the platform's wire
 contract and the Axiom events. What is new is the single-file submission, one slug per slot, the
-ratio-based leaderboard filtered to the current incumbent, and the king-of-the-hill placeholder
+ratio-based leaderboard per slot filtered to its current incumbent, and the per-slot king-of-the-hill
 scorer in `validator/reward.py`.
 
 ```bash
 # The tests: a scratch database on the compose Postgres, a stub gate, one real-gate test.
 set -a; . ./.env; set +a
-.venv/bin/python -m pytest -q                  # 137 tests, about 2 minutes
-.venv/bin/python -m pytest -q -m "not slow"    # 136 tests, seconds
+.venv/bin/python -m pytest -q                  # 139 tests, about 2 minutes
+.venv/bin/python -m pytest -q -m "not slow"    # 138 tests, seconds
 ```
 
 Without Docker, `tools/test-env.sh test` downloads a local Postgres into `~/.local/share` and runs
@@ -334,7 +334,7 @@ validator/               the validator service, run from this directory by pm2
                          rate limits, weight sets
   chain/, workers/       the chain watcher and the weight setter (bittensor SDK)
   admission.py           the statistical admission that picks who leads
-  reward.py              the king-of-the-hill placeholder reward rule, and the published snapshot
+  reward.py              the reward rule (an equal part per slot, king of the hill in each), and the published snapshot
   treasury.py            the validator's vector: the treasury's share and the competition's
   axiom.py, log.py       events to the platform's Axiom dataset; console logging
 deploy/                  Postgres config, the Alembic migrations, pm2.config.js
@@ -357,7 +357,7 @@ kernel under test), `pinned/` (each slot's incumbent binary), `logs/`, `results/
 ## Status
 
 - Working: the gate, the timing, the self-test, the manual, three proven faster kernels, and the validator service (API, gate worker, store, chain workers), tested live end to end.
-- To decide: the rewards (the scorer is a king-of-the-hill placeholder), the proposed 3% promotion bar and the statistical admission rule in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
+- To decide: the rewards (today an equal fifth of the competition's share per slot, king of the hill in each), the proposed 3% promotion bar and the statistical admission rule in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
 - Platform-ready, not yet platform-served: the database, grants, wire contract, treasury split and events match DEFLATE's production setup; the platform's side, FloatLib's share of SN66 and which weight setter submits are open ([`deploy/platform/CONTRACT.md`](deploy/platform/CONTRACT.md)). The weight setter runs in dry run until then.
-- Next scalar slots follow the same shape, one obligation per operation and format: `Spec.div`, `Spec.sqrt`, and binary64.
+- Next scalar slots follow the same shape, one obligation per operation and format: binary64.
 - Stage 2 (tensor kernels over TorchLean's specs) is a draft in `lean/stage2/`: contract, proved kernels and measurements, not yet in the gate (see [Stage 2 draft](#stage-2-draft-tensor-kernels)).
