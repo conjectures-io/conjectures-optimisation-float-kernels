@@ -18,9 +18,7 @@ def fetch(workspace: Path) -> None:
             name = name[1:-1]
         directory = packages / name
         if not directory.exists():
-            subprocess.run(
-                ["git", "clone", package["url"], str(directory)], check=True
-            )
+            subprocess.run(["git", "clone", package["url"], str(directory)], check=True)
         revision = package["rev"]
         present = subprocess.run(
             ["git", "-C", str(directory), "cat-file", "-e", f"{revision}^{{commit}}"],
