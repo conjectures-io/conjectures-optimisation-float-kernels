@@ -91,7 +91,14 @@ exactly this request, so a miner client works against either.
   paying slot. `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`;
   the platform reads `slot = 'full'`.
 - **`weight_sets`:** published rows are those with `jsonb_typeof(api_snapshot) = 'object'`, as for DEFLATE. The
-  weight setter writes one every tick, before any chain check, then updates `accepted` and `error`.
+  weight setter reuses unchanged publications. Changes and actual chain attempts create new rows;
+  idle polls never overwrite an earlier chain outcome. `computed_at` is the publication time.
+  Migration 0013 adds the content hash and lookup/cleanup indexes.
+- Old `api_snapshot` payloads expire after one hour by default; the latest valid payload per
+  subnet is retained regardless of age. Rows and score history remain. An adapter must return
+  a missing/expired snapshot response for cleared payloads and let clients restart pagination.
+- `submission_state_sha256` tracks queue and verdict changes without embedding all submissions;
+  it participates in publication deduplication.
 
 `weight_sets.api_snapshot`, built by `validator/reward.py` `publication()`:
 

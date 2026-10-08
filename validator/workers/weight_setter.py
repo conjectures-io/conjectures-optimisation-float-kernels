@@ -1,7 +1,7 @@
 """Score the round and set weights once an epoch, recording every outcome and its reasons.
 
-Each tick scores first and records the weight set (its vector, per-hotkey lines and the published
-snapshot the platform serves), then checks whether the chain can take it: registration, the epoch
+Each tick scores first and publishes changed results (reusing unchanged snapshots), then checks
+whether the chain can take the vector: registration, the epoch
 window, dry run. A chain outage therefore never costs the scoring evidence. The vector is the
 whole validator's, treasury included (treasury.py); dry run is on until it is explicitly turned
 off, because only one process may set weights per validator hotkey.
@@ -81,6 +81,9 @@ class WeightSetterConfig:
     poll_seconds: float = 12.0
     # Compute and record the vector without submitting it, on unless WEIGHT_DRY_RUN=0.
     dry_run: bool = True
+    snapshot_retention_seconds: int = 3600
+    snapshot_cleanup_interval_seconds: float = 60.0
+    snapshot_cleanup_batch_size: int = 10
     # Off mainnet only: where the treasury share goes (default: the burn uid).
     treasury_override: int | None = None
     # The treasury's registered hotkey; when set, an epoch whose metagraph does not have it where
@@ -91,6 +94,12 @@ class WeightSetterConfig:
 
     def __post_init__(self) -> None:
         # Refuse nonsensical knobs at startup, not mid-run.
+        if (
+            self.snapshot_retention_seconds <= 0
+            or self.snapshot_cleanup_interval_seconds <= 0
+            or self.snapshot_cleanup_batch_size <= 0
+        ):
+            raise ValueError("snapshot retention, cleanup interval and batch size must be positive")
         if self.burn_uid < 0:
             raise ValueError("burn_uid must be >= 0")
         if self.treasury_override is not None and self.treasury_override < 0:
@@ -122,6 +131,11 @@ class WeightSetterConfig:
         treasury_uid = env.get("WEIGHT_TREASURY_UID", "").strip()
         share = env.get("WEIGHT_COMPETITION_SHARE", "").strip()
         return cls(
+            snapshot_retention_seconds=int(env.get("API_SNAPSHOT_RETENTION_SECONDS", "3600")),
+            snapshot_cleanup_interval_seconds=float(
+                env.get("API_SNAPSHOT_CLEANUP_INTERVAL_SECONDS", "60")
+            ),
+            snapshot_cleanup_batch_size=int(env.get("API_SNAPSHOT_CLEANUP_BATCH_SIZE", "10")),
             network=env.get("BITTENSOR_NETWORK", d.network),
             netuid=int(env.get("NETUID", str(d.netuid))),
             wallet_name=env.get("BITTENSOR_WALLET_NAME", d.wallet_name),
@@ -188,6 +202,7 @@ def plan_for(
             competition_share=share,
             computed_at=clock.now(),
         )
+        snapshot["submission_state_sha256"] = store.scoring.submission_state_key()
     except Exception as exc:  # noqa: BLE001 - any scoring failure pays the treasury
         logger.exception(f"[weights] scoring failed; paying the treasury this epoch: {exc}")
         plan = split(None, meta, treasury_uid=treasury, reason=f"scoring failed: {exc}")
@@ -207,15 +222,16 @@ def step(
     block = chain.current_block()
     meta = chain.metagraph(config.netuid)
     plan, result, snapshot = plan_for(store, meta, config, scoring_config)
-    weight_set_id = record(
+    weight_set_id, created = record(
         store, config, block, plan, result, snapshot, "chain submission not attempted yet"
     )
 
     def finish(action: Action, reason: str, *, accepted: bool = False) -> StepResult:
-        # Record the chain's outcome on the weight set already written, and report the tick.
-        store.scoring.weight_set_outcome(
-            weight_set_id, accepted=accepted, error=None if accepted else reason
-        )
+        # Only newly created records belong to this tick; reused chain history is immutable.
+        if created:
+            store.scoring.weight_set_outcome(
+                weight_set_id, accepted=accepted, error=None if accepted else reason
+            )
         return StepResult(
             action,
             reason,
@@ -258,6 +274,17 @@ def step(
     if config.dry_run:
         emit_plan("info", "weights_planned", config, meta, block, plan)
         return finish("skip", f"dry run: not submitted | {summary}")
+    if not created:
+        weight_set_id, created = record(
+            store,
+            config,
+            block,
+            plan,
+            result,
+            snapshot,
+            "chain submission not attempted yet",
+            reuse_unchanged=False,
+        )
     try:
         accepted = chain.set_weights(config.netuid, list(plan.uids), list(plan.weights))
     except Exception as exc:  # noqa: BLE001 - an RPC error may have an unknown chain outcome
@@ -319,10 +346,12 @@ def record(
     result: reward.Scoring | None,
     snapshot: dict[str, object] | None,
     error: str | None,
-) -> int:
+    *,
+    reuse_unchanged: bool = True,
+) -> tuple[int, bool]:
     # Record the vector, its reasons and its published snapshot in one transaction, whatever
     # happens next: a refused or skipped epoch is exactly the one somebody will ask about later.
-    return store.scoring.record_weight_set(
+    return store.scoring.publish_weight_set(
         netuid=config.netuid,
         block=block,
         uids=list(plan.uids),
@@ -333,6 +362,7 @@ def record(
         error=error,
         snapshots=result.snapshots() if result else None,
         api_snapshot=snapshot,
+        reuse_unchanged=reuse_unchanged,
     )
 
 
@@ -353,12 +383,25 @@ def run(
         f"winner_share={scoring_config.winner_share:.2f}"
     )
     ticks = TickLog()
+    next_cleanup = 0.0
     try:
         while True:
             try:
                 ticks.report(step(chain, store, config, scoring_config))
             except Exception as exc:  # noqa: BLE001 - a bad tick must not end the worker
                 logger.exception(f"[weights] tick failed: {exc}")
+            if time.monotonic() >= next_cleanup:
+                try:
+                    cleared = store.scoring.prune_api_snapshots(
+                        netuid=config.netuid,
+                        retention_seconds=config.snapshot_retention_seconds,
+                        batch_size=config.snapshot_cleanup_batch_size,
+                    )
+                    if cleared:
+                        logger.info("[weights] cleared {} expired API snapshots", cleared)
+                except Exception as exc:
+                    logger.warning("[weights] API snapshot cleanup failed; will retry: {}", exc)
+                next_cleanup = time.monotonic() + config.snapshot_cleanup_interval_seconds
             sleep(config.poll_seconds)
     except KeyboardInterrupt:
         logger.info("[weights] interrupted")
