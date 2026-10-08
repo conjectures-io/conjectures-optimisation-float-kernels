@@ -1,11 +1,12 @@
-"""Leaderboards -> the competition's weights: an equal part per slot, king of the hill within each.
+"""Leaderboards -> the competition's weights: equal parts per paying slot, king of the hill in each.
 
-Every stage-1 slot pays: the competition's budget is split equally across PAYING_SLOTS, and each
-slot's admitted leader takes the winner share of that slot's part; whatever no leader earns goes
-to the treasury. Like the treasury split, the paying slots are code, not configuration: where
-emission goes is a reviewed change. The weights here are fractions of the competition's budget;
-treasury.py turns them into the validator's vector. `publication` is what each weight set
-publishes for the platform to serve.
+One entry, one paid board: PAYING_SLOTS is the full entry alone (FloatLib's add and mul with
+TorchLean's sum and bmm built from them, proved and timed together), and its admitted leader takes
+the winner share of the competition's budget; whatever it does not earn goes to the treasury. The
+single-kernel slots are ranked practice boards, unpaid. Like the treasury split,
+the paying slots are code, not configuration: where emission goes is a reviewed change. The
+weights here are fractions of the competition's budget; treasury.py turns them into the
+validator's vector. `publication` is what each weight set publishes for the platform to serve.
 """
 
 from __future__ import annotations
@@ -20,11 +21,11 @@ from db.scoring import Board, ScoredSubmission
 from service.settings import PROMOTION_BAR
 
 # The scoring rule a published snapshot was computed under; bump it when the rule changes.
-POLICY_VERSION = "king-of-the-hill-per-slot-v1"
+POLICY_VERSION = "king-of-the-hill-full-entry-v1"
 
-# The slots that pay, and each one's part of the competition's budget: equal for now. Listed, not
-# taken from db.SLOTS, so a slot added later (stage 2) pays only once it is added here on purpose.
-PAYING_SLOTS: tuple[str, ...] = ("add", "mul", "fma", "div", "sqrt")
+# The slots that pay, and each one's part of the competition's budget: equal. Listed, not taken
+# from db.SLOTS, so a slot added later pays only once it is added here on purpose.
+PAYING_SLOTS: tuple[str, ...] = ("full",)
 SLOT_SHARES: dict[str, float] = {slot: 1.0 / len(PAYING_SLOTS) for slot in PAYING_SLOTS}
 
 

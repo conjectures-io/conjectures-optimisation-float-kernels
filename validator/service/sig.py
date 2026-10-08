@@ -2,8 +2,9 @@
 
 The same five lines the platform verifies for every competition, so a signature made for one
 competition, or for one of this competition's slots, cannot be replayed against another. Each
-slot is its own competition slug: `floatlib` is the add board (the one the platform serves),
-`floatlib-mul`, `-fma`, `-div` and `-sqrt` the others. The miner keeps its own copy in miner/sig.py;
+slot is its own competition slug: `floatlib` is the full entry (the paid board, the one the
+platform serves), `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum` and `-bmm` the practice
+boards. The miner keeps its own copy in miner/sig.py;
 tests/test_miner_sig.py holds the two to the same bytes.
 """
 
@@ -23,17 +24,24 @@ SS58_FORMAT: Final = 42
 SR25519: Final = 1
 
 
+# The slot the competition's own slug names: the full entry, the one paid board.
+MAIN_SLOT: Final = "full"
+
+
 def slug_of(slot: str) -> str:
-    # The competition slug a slot is submitted under: the add board is the competition itself.
-    return COMPETITION if slot == "add" else f"{COMPETITION}-{slot}"
+    # The competition slug a slot is submitted under: the full entry is the competition itself,
+    # each single-kernel practice board `floatlib-<slot>`.
+    return COMPETITION if slot == MAIN_SLOT else f"{COMPETITION}-{slot}"
 
 
 def slot_of(slug: str) -> str | None:
     # The slot a slug names, or None for a slug that is not this competition's.
     if slug == COMPETITION:
-        return "add"
+        return MAIN_SLOT
     prefix = f"{COMPETITION}-"
-    return slug.removeprefix(prefix) if slug.startswith(prefix) else None
+    slot = slug.removeprefix(prefix) if slug.startswith(prefix) else None
+    # One slug per slot: the full entry is `floatlib`, never `floatlib-full`.
+    return None if slot == MAIN_SLOT else slot
 
 
 def digest_of(kernel: bytes) -> str:

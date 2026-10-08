@@ -171,9 +171,14 @@ def render(env, setup, rows, contain, study, stamp) -> str:
     if study:
         s = study["summary"]
         lines.append(
-            f"- Timing (`add`, study of {study['measured']}): over {study['minutes']:.0f} minutes, the incumbent against itself cleared the 0.97 bar "
-            f"{s['incumbent']['at_or_below_bar']} of {s['incumbent']['runs']} times, `fastlog` "
-            f"{s['fastlog']['at_or_below_bar']} of {s['fastlog']['runs']}."
+            f"- Timing (`{study.get('slot', 'add')}`, study of {study['measured']}): over {study['minutes']:.0f} minutes, the incumbent against itself cleared the 0.97 bar "
+            f"{s['incumbent']['at_or_below_bar']} of {s['incumbent']['runs']} times, "
+            + ", ".join(
+                f"`{n}` {v['at_or_below_bar']} of {v['runs']}"
+                for n, v in s.items()
+                if n != "incumbent"
+            )
+            + "."
         )
     lines += [
         "",
@@ -246,7 +251,7 @@ def render(env, setup, rows, contain, study, stamp) -> str:
             "",
             "## 6. Timing stability",
             "",
-            f"`tools/timing_study.py` on `add`, measured {study['measured']}: {study['minutes']:.0f} minutes of alternating full gate runs, fresh seed each:",
+            f"`tools/timing_study.py` on `{study.get('slot', 'add')}`, measured {study['measured']}: {study['minutes']:.0f} minutes of alternating full gate runs, fresh seed each:",
             "",
             "| submission | runs | mean | stdev | min | max | at or below 0.97 |",
             "|---|---:|---:|---:|---:|---:|---:|",

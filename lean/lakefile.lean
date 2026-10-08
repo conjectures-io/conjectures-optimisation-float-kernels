@@ -29,7 +29,8 @@ require TorchLean from git
 
 lean_lib Contract where
   srcDir := "contract"
-  roots := #[`Contract]
+  -- ContractTensor (the sum slot's rule) is its own module so the scalar slots compile as calibrated.
+  roots := #[`Contract, `ContractTensor]
 
 lean_lib Submission where
   srcDir := "work"
@@ -41,8 +42,9 @@ lean_lib Verify where
 
 lean_lib BenchCore where
   srcDir := "bench"
-  -- BenchDivSqrt is separate so the add, mul and fma binaries compile exactly as calibrated.
-  roots := #[`Bench, `BenchDivSqrt]
+  -- BenchDivSqrt and BenchTensor are separate so the add, mul and fma binaries compile exactly as
+  -- calibrated.
+  roots := #[`Bench, `BenchDivSqrt, `BenchTensor, `BenchBmm, `BenchFull]
 
 lean_exe bench where
   srcDir := "bench"
@@ -71,6 +73,31 @@ lean_lib VerifyDiv where
 lean_exe benchDiv where
   srcDir := "bench"
   root := `MainDiv
+
+lean_lib VerifySum where
+  srcDir := "verify"
+  roots := #[`VerifySum]
+
+-- The full entry, the one paid board: add, mul, sum and bmm checked and timed together.
+lean_lib VerifyFull where
+  srcDir := "verify"
+  roots := #[`VerifyFull]
+
+lean_exe benchFull where
+  srcDir := "bench"
+  root := `MainFull
+
+lean_lib VerifyBmm where
+  srcDir := "verify"
+  roots := #[`VerifyBmm]
+
+lean_exe benchBmm where
+  srcDir := "bench"
+  root := `MainBmm
+
+lean_exe benchSum where
+  srcDir := "bench"
+  root := `MainSum
 
 lean_lib VerifySqrt where
   srcDir := "verify"

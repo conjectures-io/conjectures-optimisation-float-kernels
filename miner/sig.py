@@ -4,7 +4,7 @@ The miner's half of the wire contract, the same message the conjectures platform
 every competition. The contract is the message, not this file: the validator keeps its own copy
 (validator/service/sig.py), and tests/test_miner_sig.py holds the two to the same bytes, so a
 miner needs nothing from the validator's code. Each slot is its own competition slug: `floatlib`
-is the add board, `floatlib-mul`, `floatlib-fma`, `floatlib-div` and `floatlib-sqrt` the others.
+is the full entry (the paid board), `floatlib-<slot>` each single-kernel practice board.
 """
 
 from __future__ import annotations
@@ -22,9 +22,14 @@ COMPETITION_SUBMIT_PREFIX: Final = "conjectures-competition-submit-v1"
 SR25519: Final = 1
 
 
+# The slot the competition's own slug names: the full entry, the one paid board.
+MAIN_SLOT: Final = "full"
+
+
 def slug_of(slot: str) -> str:
-    # The competition slug a slot is submitted under: the add board is the competition itself.
-    return COMPETITION if slot == "add" else f"{COMPETITION}-{slot}"
+    # The competition slug a slot is submitted under: the full entry is the competition itself,
+    # each single-kernel practice board `floatlib-<slot>`.
+    return COMPETITION if slot == MAIN_SLOT else f"{COMPETITION}-{slot}"
 
 
 def digest_of(kernel: bytes) -> str:

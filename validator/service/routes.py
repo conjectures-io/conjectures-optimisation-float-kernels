@@ -13,6 +13,7 @@ from loguru import logger
 
 import admission
 import db
+import reward
 from db import SLOTS, SubmissionState, iso, models
 from db.verifier import required_fingerprint
 
@@ -219,6 +220,7 @@ def leaderboard(request: Request, competition: str) -> schemas.Leaderboard:
         verifier_fingerprint=required_fingerprint(),
         promotion_bar=PROMOTION_BAR,
         leader=admission.leader(decisions),
+        pays=slot in reward.PAYING_SLOTS,
         ranking=[
             schemas.Ranking(
                 rank=i + 1,

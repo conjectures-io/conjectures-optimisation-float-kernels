@@ -95,7 +95,7 @@ def accept(
     incumbent: str = INCUMBENT,
     uid: int = 1,
     true_ratio: float | None = None,
-    slot: str = "add",
+    slot: str = "full",
 ) -> int:
     # One accepted submission through the store, so the scorer reads real rows; its rounds sit
     # at `true_ratio`, the headline `ratio` unless a lucky run is being simulated.
@@ -115,8 +115,8 @@ def accept(
     return sub_id
 
 
-# Each paying slot's part of the competition's budget: equal, five slots.
-FIFTH = 1 / 5
+# The paying slot's part of the competition's budget: all of it, the full entry alone.
+WHOLE = 1.0
 
 
 def pay(store) -> reward.Scoring:
@@ -134,7 +134,7 @@ def test_the_fastest_hotkey_takes_its_slots_share(store, clock):
     clock["tick"](10)
     accept(store, "hk-fast", 0.53, uid=2)
     result = pay(store)
-    assert result.weights == {"hk-fast": FIFTH}
+    assert result.weights == {"hk-fast": WHOLE}
 
 
 def test_a_tie_goes_to_the_earlier_submission(store, clock):
@@ -142,7 +142,7 @@ def test_a_tie_goes_to_the_earlier_submission(store, clock):
     clock["tick"](10)
     accept(store, "hk-second", 0.60, uid=2)
     result = pay(store)
-    assert result.weights == {"hk-first": FIFTH}
+    assert result.weights == {"hk-first": WHOLE}
 
 
 def test_a_lucky_later_copy_does_not_take_the_share(store, clock):
@@ -151,8 +151,8 @@ def test_a_lucky_later_copy_does_not_take_the_share(store, clock):
     accept(store, "hk-first", 0.60, uid=1)
     clock["tick"](10)
     accept(store, "hk-copy", 0.58, uid=2, true_ratio=0.60)
-    assert [r.hotkey for r in store.scoring.best_per_hotkey()] == ["hk-copy", "hk-first"]
-    assert pay(store).weights == {"hk-first": FIFTH}
+    assert [r.hotkey for r in store.scoring.best_per_hotkey("full")] == ["hk-copy", "hk-first"]
+    assert pay(store).weights == {"hk-first": WHOLE}
 
 
 def test_no_faster_than_the_incumbent_pays_nothing(store):
@@ -172,7 +172,7 @@ def test_a_near_copy_of_the_incumbent_pays_nothing(store):
 def test_a_ratio_on_the_promotion_bar_pays(store):
     accept(store, "hk", reward.PROMOTION_BAR)
     result = pay(store)
-    assert result.weights == {"hk": FIFTH}
+    assert result.weights == {"hk": WHOLE}
 
 
 def test_only_the_current_incumbent_counts(store, clock):
@@ -181,29 +181,29 @@ def test_only_the_current_incumbent_counts(store, clock):
     clock["tick"](10)
     accept(store, "hk-new", 0.90, incumbent="c" * 64, uid=2)
     result = pay(store)
-    assert result.weights == {"hk-new": FIFTH}
+    assert result.weights == {"hk-new": WHOLE}
 
 
-def test_every_slot_pays_its_own_leader_an_equal_part(store, clock):
-    accept(store, "hk-add", 0.53, uid=1)
-    accept(store, "hk-mul", 0.55, uid=2, slot="mul")
-    accept(store, "hk-sqrt", 0.80, uid=3, slot="sqrt")
-    assert pay(store).weights == {"hk-add": FIFTH, "hk-mul": FIFTH, "hk-sqrt": FIFTH}
+def test_only_the_full_entry_pays(store):
+    # One entry, one paid board: practice-board leaders earn nothing, the full entry's leader all.
+    accept(store, "hk-full", 0.55, uid=1)
+    accept(store, "hk-sum", 0.53, uid=2, slot="sum")
+    accept(store, "hk-bmm", 0.57, uid=3, slot="bmm")
+    assert pay(store).weights == {"hk-full": WHOLE}
 
 
-def test_a_hotkey_leading_two_slots_collects_both_parts(store):
-    accept(store, "hk", 0.53, uid=1)
-    accept(store, "hk", 0.60, uid=2, slot="div")  # a second registration, one per acceptance
-    result = pay(store)
-    assert result.weights == {"hk": 2 * FIFTH}
-    assert {s.slot for s in result.scores if s.weight > 0} == {"add", "div"}
+def test_practice_boards_are_ranked_but_unpaid(store):
+    accept(store, "hk-add", 0.50, uid=1, slot="add")
+    accept(store, "hk-sqrt", 0.80, uid=2, slot="sqrt")
+    assert pay(store).weights == {}
+    assert [r.hotkey for r in store.scoring.best_per_hotkey("add")] == ["hk-add"]
 
 
 def test_slots_without_a_leader_leave_their_part_to_the_treasury():
-    # Only add has a leader: 1/5 of the competition's 0.2 is paid, the rest is the treasury's.
+    # The full entry's leader takes the competition's 0.2; the rest is the treasury's.
     meta = MetagraphView(uids=(0, 1, 2), uid_by_hotkey={"hk": 2})
-    plan = treasury.split({"hk": FIFTH}, meta, treasury_uid=0, competition_share=0.2)
-    assert vector(plan) == {0: 0.96, 1: 0.0, 2: 0.04}
+    plan = treasury.split({"hk": WHOLE}, meta, treasury_uid=0, competition_share=0.2)
+    assert vector(plan) == {0: 0.8, 1: 0.0, 2: 0.2}
 
 
 # ── The epoch and the treasury ────────────────────────────────────────────
@@ -284,19 +284,19 @@ def test_a_step_at_the_boundary_sets_the_split_and_records_why(store):
     chain = FakeChain(hotkeys={"hk-fast": 2}, block=at_epoch_boundary())
     result = step(chain, store, config(), reward.ScoringConfig())
     assert result.action == "set", result.reason
-    # Only add has a leader: it gets 1/5 of the competition's 0.2, the treasury the rest.
+    # The full entry's leader gets the competition's 0.2, the treasury the rest.
     ((uids, weights),) = chain.submitted
-    assert uids == [0, 1, 2] and weights == pytest.approx([0.96, 0.0, 0.04])
+    assert uids == [0, 1, 2] and weights == pytest.approx([0.8, 0.0, 0.2])
     (weight_set,), snapshots = weight_sets(store)
     assert weight_set.accepted is True and weight_set.error is None
-    assert [(s.slot, s.hotkey, s.ratio) for s in snapshots] == [("add", "hk-fast", 0.53)]
-    assert snapshots[0].weight == pytest.approx(FIFTH)
+    assert [(s.slot, s.hotkey, s.ratio) for s in snapshots] == [("full", "hk-fast", 0.53)]
+    assert snapshots[0].weight == pytest.approx(WHOLE)
     published = weight_set.api_snapshot
     assert published["policy"]["competition_share"] == 0.2
-    assert published["policy"]["slot_shares"] == {slot: FIFTH for slot in reward.PAYING_SLOTS}
-    assert published["slots"]["add"]["leader"] == sub
-    assert published["slots"]["add"]["items"][0]["admission"] == "leader"
-    assert published["slots"]["mul"] == {"share": FIFTH, "leader": None, "items": []}
+    assert published["policy"]["slot_shares"] == {slot: WHOLE for slot in reward.PAYING_SLOTS}
+    assert published["slots"]["full"]["leader"] == sub
+    assert published["slots"]["full"]["items"][0]["admission"] == "leader"
+    assert list(published["slots"]) == ["full"]
     json.dumps(published)
 
 

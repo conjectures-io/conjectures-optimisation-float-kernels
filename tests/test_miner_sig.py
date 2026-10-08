@@ -41,7 +41,7 @@ def test_the_message_is_the_platforms_five_lines():
     )
 
 
-@pytest.mark.parametrize("slot", ["add", "mul", "fma", "div", "sqrt"])
+@pytest.mark.parametrize("slot", ["full", "add", "mul", "fma", "div", "sqrt", "sum", "bmm"])
 def test_both_copies_build_the_same_slug_and_message(slot):
     kernel = b"import Contract\n"
     assert miner_sig.slug_of(slot) == service_sig.slug_of(slot)
@@ -106,3 +106,11 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
         timestamp=int(h["X-Conjectures-Timestamp"]),
     )
     assert service_sig.verify(h["X-Conjectures-Hotkey"], message, h["X-Conjectures-Signature"])
+
+
+def test_the_full_entry_is_the_competition_itself():
+    # `floatlib` is the paid full entry; every practice board is `floatlib-<slot>`, and the full
+    # entry has no second slug.
+    assert miner_sig.slug_of("full") == "floatlib" and miner_sig.slug_of("add") == "floatlib-add"
+    assert service_sig.slot_of("floatlib") == "full"
+    assert service_sig.slot_of("floatlib-full") is None

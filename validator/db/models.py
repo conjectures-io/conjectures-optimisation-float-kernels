@@ -64,8 +64,9 @@ class Submission(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     hotkey: Mapped[str] = mapped_column(Text, nullable=False)
-    # Which competition slot the kernel is for: add, mul, fma, div or sqrt.
-    slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="add")
+    # Which slot the entry is for: `full` (the paid entry; the platform's inserts land here) or a
+    # single-kernel practice board (add, mul, fma, div, sqrt, sum, bmm).
+    slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="full")
     # sha256(Kernel.lean), hex: what the miner signed, and the submission's identity.
     digest: Mapped[str] = mapped_column(Text, nullable=False)
     submitted_at: Mapped[dt.datetime] = mapped_column(

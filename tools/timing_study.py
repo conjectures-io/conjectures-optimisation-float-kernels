@@ -1,4 +1,9 @@
-"""Timing study - alternates full gate runs of two submissions for a fixed time, then summarises."""
+"""Timing study - alternates full gate runs of two submissions for a fixed time, then summarises.
+
+It measures the noise the promotion bar must clear: the incumbent against itself, and a known
+faster kernel. Run it on the board that pays, the full entry (the default; STUDY_SLOT=add for the
+add practice board, as the first study was), and on every new validator machine.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +24,10 @@ sys.path.insert(0, str(HERE))
 import gate  # noqa: E402 - the gate lives at the repository root, one level up
 
 _MINUTES = float(os.environ.get("STUDY_MINUTES", "60"))
-# Both add-slot kernels, under kernels/add/.
-SUBMISSIONS = ["incumbent", "fastlog"]
+# The board studied, and the known faster kernel timed beside its incumbent, under kernels/<slot>/.
+_SLOT = os.environ.get("STUDY_SLOT", "full")
+CHALLENGER = {"full": "winners", "add": "fastlog", "mul": "fast", "sum": "tuned", "bmm": "fast"}
+SUBMISSIONS = ["incumbent", CHALLENGER[_SLOT]]
 # A kernel at or below this ratio would be promoted under the proposed 3% rule.
 PROMOTION_BAR = 0.97
 
@@ -47,7 +54,7 @@ def summarise(runs: list[dict]) -> dict:
 
 def markdown(summary: dict, minutes: float) -> str:
     # The study's result as one table per submission.
-    lines = [f"Timing study, {minutes:.0f} minutes, bar {PROMOTION_BAR}", ""]
+    lines = [f"Timing study of `{_SLOT}`, {minutes:.0f} minutes, bar {PROMOTION_BAR}", ""]
     lines += [
         "| submission | runs | accepted | mean | stdev | min | max | at or below bar | s/run |"
     ]
@@ -75,24 +82,33 @@ def main() -> int:
     started = time.monotonic()
     with open(HERE / "gate.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        digest = gate.pin(gate.SLOTS["add"])
+        digest = gate.pin(gate.SLOTS[_SLOT])
         i = 0
         while time.monotonic() - started < _MINUTES * 60:
             name = SUBMISSIONS[i % len(SUBMISSIONS)]
-            v = asdict(gate.gate(gate.KERNELS / "add" / name, digest))
+            v = asdict(gate.gate(gate.KERNELS / _SLOT / name, digest, slot=_SLOT))
             v["load1"] = os.getloadavg()[0]
             runs[name].append(v)
             logger.info(
                 f"[study] #{i + 1:3} {name:10} passed={v['passed']} ratio={v['ratio']} "
                 f"seed={v['seed']} load={v['load1']:.2f} {v['seconds']:.0f}s"
             )
-            out.write_text(json.dumps({"bar": PROMOTION_BAR, "runs": runs}, indent=2))
+            out.write_text(
+                json.dumps({"slot": _SLOT, "bar": PROMOTION_BAR, "runs": runs}, indent=2)
+            )
             i += 1
     minutes = (time.monotonic() - started) / 60
     summary = {n: summarise(r) for n, r in runs.items()}
     out.write_text(
         json.dumps(
-            {"bar": PROMOTION_BAR, "minutes": minutes, "summary": summary, "runs": runs}, indent=2
+            {
+                "slot": _SLOT,
+                "bar": PROMOTION_BAR,
+                "minutes": minutes,
+                "summary": summary,
+                "runs": runs,
+            },
+            indent=2,
         )
     )
     table = markdown(summary, minutes)

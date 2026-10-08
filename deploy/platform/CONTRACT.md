@@ -21,9 +21,11 @@ commit `d24e86c` (2026-09-30). This repository's side is migration `0006` and `d
   - the published snapshot's shape
 - **The platform serves one competition per process.** FloatLib needs a second API deployment, or
   multi-competition support in the platform.
-- **Scope:** the platform serves the `add` slot only, as the competition `floatlib`. The other four slots
-  stay on this repository's own API (`floatlib-mul`, `-fma`, `-div`, `-sqrt`) until the platform supports more than
-  one board per competition.
+- **Scope: one entry, one board.** The slug `floatlib` is the full entry (slot `full`): one
+  `Kernel.lean` with FloatLib's `add` and `mul` and TorchLean's `sum` and `bmm`, proved and timed
+  together; it is the only board that pays, and the one the platform serves. The single-kernel
+  practice boards (`floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm`) are unpaid and stay
+  on this repository's own API.
 
 ## Connection
 
@@ -59,7 +61,7 @@ passes as it stands.
 | Digest | sha256(parse.rs ‖ Parse.lean) | sha256(Kernel.lean) |
 | Signed message | `conjectures-competition-submit-v1` / `competition` / `digest` / `hotkey` / `timestamp` | **the same five lines**, `competition: floatlib` |
 | Headers | `X-Conjectures-Hotkey`, `-Timestamp`, `-Signature` | the same |
-| Insert | `submissions(hotkey, digest, account_id)` `ON CONFLICT (hotkey, digest)` | `submissions(hotkey, digest, account_id)`. `slot` defaults to `'add'`. The unique key is **`(hotkey, slot, digest)`** (`uq_submissions_hotkey_slot_digest`), so the conflict target must be `(hotkey, slot, digest)`. |
+| Insert | `submissions(hotkey, digest, account_id)` `ON CONFLICT (hotkey, digest)` | `submissions(hotkey, digest, account_id)`. `slot` defaults to `'full'` (migration 0011), so a platform insert lands on the full entry. The unique key is **`(hotkey, slot, digest)`** (`uq_submissions_hotkey_slot_digest`), so the conflict target must be `(hotkey, slot, digest)`. |
 | Files | two `submission_files` rows | one row, `name = 'Kernel.lean'` (enforced by `ck_submission_files_name`) |
 | Rate limits, entitlement, advisory lock | as implemented | unchanged: same tables and the same rule (unclaimed registrations > queued + verifying) |
 
@@ -78,7 +80,7 @@ exactly this request, so a miner client works against either.
 
 - A FloatLib row is public when `hotkey IS NOT NULL`, which is always: there are no baselines.
 - `report` is the gate's verdict JSON in full.
-- The platform should filter `slot = 'add'`.
+- The platform should filter `slot = 'full'`.
 
 ### Scoring
 
@@ -86,8 +88,8 @@ exactly this request, so a miner client works against either.
   `submission_admission_checks`. The admission outcome of every scored submission is inside the published
   snapshot.
 - **`score_snapshots`:** `(id, weight_set_id, slot, hotkey, submission_id, ratio, weight)`, one row per hotkey per
-  slot. `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`; the platform
-  reads `slot = 'add'`.
+  paying slot. `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`;
+  the platform reads `slot = 'full'`.
 - **`weight_sets`:** published rows are those with `jsonb_typeof(api_snapshot) = 'object'`, as for DEFLATE. The
   weight setter writes one every tick, before any chain check, then updates `accepted` and `error`.
 
@@ -98,29 +100,29 @@ exactly this request, so a miner client works against either.
   "competition": "floatlib",
   "computed_at": "2026-10-07T12:00:00+00:00",
   "policy": {
-    "version": "king-of-the-hill-per-slot-v1",
+    "version": "king-of-the-hill-full-entry-v1",
     "competition_share": 0.2,
-    "slot_shares": {"add": 0.2, "mul": 0.2, "fma": 0.2, "div": 0.2, "sqrt": 0.2},
+    "slot_shares": {"full": 1.0},
     "winner_share": 1.0,
     "promotion_bar": 0.97,
     "admission": {"version": "paired-median-bootstrap-v1", "draws": 2000, "quantile": 0.05}
   },
   "slots": {
-    "add": {
-      "share": 0.2,
+    "full": {
+      "share": 1.0,
       "leader": 42,
       "items": [
-        {"hotkey": "5F…", "submission_id": 42, "ratio": 0.53, "weight": 0.2, "admission": "leader"},
+        {"hotkey": "5F…", "submission_id": 42, "ratio": 0.56, "weight": 1.0, "admission": "leader"},
         {"hotkey": "5G…", "submission_id": 40, "ratio": 0.61, "weight": 0.0, "admission": "not-significant"}
       ]
-    },
-    "mul": {"share": 0.2, "leader": null, "items": []}
+    }
   }
 }
 ```
 
-- **Per slot:** every slot's leader gets an equal part (`slot_shares`) of the competition's budget. The platform
-  serves `slots.add`; the other slots are scored and paid by the validator alongside it.
+- **One paying slot:** the full entry's leader takes the competition's budget (`slot_shares`), and
+  the platform serves `slots.full`. A full entry's `ratio` is its total time over the incumbent's
+  across all twelve timed input types (`add`, `mul`, `sum`, `bmm`, three each).
 - **Lower ratio is faster:** `ratio` is submission time over incumbent time.
 - **Admission outcomes:** `leader`, `not-significant`, `above-bar`, `no-evidence`, or `null` before the first
   evidence.
@@ -177,7 +179,7 @@ On the platform (`conjectures-validator`):
   - digest sha256(Kernel.lean)
   - the conflict target `(hotkey, slot, digest)`
   - one `submission_files` row
-- [ ] FloatLib read views over the columns above, the snapshot shape above, and `slot = 'add'`.
+- [ ] FloatLib read views over the columns above, the snapshot shape above, and `slot = 'full'`.
 - [ ] FloatLib's `description`, `files` and `metric_definitions`.
 - [ ] A second API deployment with `COMPETITION_SLUG=floatlib`, or multi-competition support.
 - [ ] An emissions decision: FloatLib's share, and which process submits the vector.

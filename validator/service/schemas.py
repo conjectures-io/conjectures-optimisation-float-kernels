@@ -77,6 +77,8 @@ class Leaderboard(BaseModel):
     incumbent_sha256: str | None = None
     verifier_fingerprint: str
     promotion_bar: float
-    # The admitted leader's submission id, the one the weight setter pays; null when none leads.
+    # The admitted leader's submission id; null when none leads.
     leader: int | None = None
+    # Whether this board pays its leader: the full entry does, the practice boards do not.
+    pays: bool = False
     ranking: list[Ranking]

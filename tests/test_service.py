@@ -49,6 +49,9 @@ def test_submit_verify_rank(client, store, drain, tmp_path):
 
     board = client.get(f"{api()}/leaderboard").json()
     assert board["incumbent_sha256"] == "a" * 64 and board["promotion_bar"] == 0.97
+    # This is the add practice board: it ranks and names a leader, but does not pay.
+    assert board["slot"] == "add" and board["pays"] is False
+    assert client.get("/v1/competitions/floatlib/leaderboard").json()["pays"] is True
     assert [x["submission"] for x in board["ranking"]] == [sb, sa]
     assert [x["rank"] for x in board["ranking"]] == [1, 2]
     assert [x["qualifies"] for x in board["ranking"]] == [True, True]

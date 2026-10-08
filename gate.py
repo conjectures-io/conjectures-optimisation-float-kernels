@@ -29,7 +29,7 @@ SCRATCH = HERE / ".sandbox" / "config"
 LAYER = HERE / ".sandbox" / "layer"
 # Build outputs a submission may write, by file stem: its module, the gates, the bench binaries.
 OWN_STEMS = {"Submission", "Verify", "Main", "bench"}
-for _op in ("Mul", "Fma", "Div", "Sqrt"):
+for _op in ("Mul", "Fma", "Div", "Sqrt", "Sum", "Bmm", "Full"):
     OWN_STEMS |= {f"Verify{_op}", f"Main{_op}", f"bench{_op}"}
 WORK = LIB / "work" / "Submission.lean"
 # Shared inputs of every pinned binary; a change to any of them rebuilds it.
@@ -48,8 +48,10 @@ class Slot:
     bench: str
     main: str
     incumbent: Path
-    # Bench modules beyond the shared core that this slot's binary is built from.
+    # Files beyond the shared core that this slot's binary is built from, relative to lean/.
     extra: tuple[str, ...] = ()
+    # The one module a submission to this slot may import.
+    contract: str = "Contract"
 
     @property
     def pinned(self) -> Path:
@@ -59,8 +61,8 @@ class Slot:
     @property
     def inputs(self) -> list[Path]:
         # Everything the pinned binary is built from.
-        bench = [LIB / "bench" / name for name in (self.main, *self.extra)]
-        return [self.incumbent, *bench] + SHARED_INPUTS
+        own = [LIB / "bench" / self.main, *(LIB / name for name in self.extra)]
+        return [self.incumbent, *own] + SHARED_INPUTS
 
 
 KERNELS = HERE / "kernels"
@@ -78,7 +80,12 @@ SLOTS = {
     "mul": Slot("mul", "VerifyMul", "benchMul", "MainMul.lean", incumbent("mul")),
     "fma": Slot("fma", "VerifyFma", "benchFma", "MainFma.lean", incumbent("fma")),
     "div": Slot(
-        "div", "VerifyDiv", "benchDiv", "MainDiv.lean", incumbent("div"), ("BenchDivSqrt.lean",)
+        "div",
+        "VerifyDiv",
+        "benchDiv",
+        "MainDiv.lean",
+        incumbent("div"),
+        ("bench/BenchDivSqrt.lean",),
     ),
     "sqrt": Slot(
         "sqrt",
@@ -86,7 +93,45 @@ SLOTS = {
         "benchSqrt",
         "MainSqrt.lean",
         incumbent("sqrt"),
-        ("BenchDivSqrt.lean",),
+        ("bench/BenchDivSqrt.lean",),
+    ),
+    # Stage 2's first tensor slot: proved against TorchLean's `reduceSumLeftSpec` (restated in
+    # ContractTensor; lean/stage2/Stage2/Link.lean proves the two equal), so the gate needs no
+    # TorchLean.
+    "sum": Slot(
+        "sum",
+        "VerifySum",
+        "benchSum",
+        "MainSum.lean",
+        incumbent("sum"),
+        ("bench/BenchTensor.lean", "contract/ContractTensor.lean"),
+        contract="ContractTensor",
+    ),
+    # The full entry, the one paid board: FloatLib's add and mul and TorchLean's sum and bmm,
+    # proved together and timed together; the slots above are its single-kernel practice boards.
+    "full": Slot(
+        "full",
+        "VerifyFull",
+        "benchFull",
+        "MainFull.lean",
+        incumbent("full"),
+        (
+            "bench/BenchTensor.lean",
+            "bench/BenchBmm.lean",
+            "bench/BenchFull.lean",
+            "contract/ContractTensor.lean",
+        ),
+        contract="ContractTensor",
+    ),
+    # Stage 2's batched matmul, proved against TorchLean's `bmmSpec` the same way.
+    "bmm": Slot(
+        "bmm",
+        "VerifyBmm",
+        "benchBmm",
+        "MainBmm.lean",
+        incumbent("bmm"),
+        ("bench/BenchTensor.lean", "bench/BenchBmm.lean", "contract/ContractTensor.lean"),
+        contract="ContractTensor",
     ),
 }
 ELAN = Path.home() / ".elan"
@@ -317,11 +362,12 @@ def intake(src: Path, v: Verdict) -> str | None:
 
 
 def policy(src: Path, v: Verdict) -> str | None:
-    # Imports Contract only; no escape hatch, elaboration-time code, or unlisted option/attribute.
+    # Imports the slot's contract only; no escape hatch, build-time code, or unlisted option.
     text = src.read_text()
+    contract = SLOTS[v.slot].contract
     for line in text.splitlines():
-        if re.search(r"\bimport\b", line) and line.strip() != "import Contract":
-            return f"import other than Contract: {line.strip()!r}"
+        if re.search(r"\bimport\b", line) and line.strip() != f"import {contract}":
+            return f"import other than {contract}: {line.strip()!r}"
     if m := BANNED.search(text):
         return f"banned name {m.group(0)!r} at line {text.count(chr(10), 0, m.start()) + 1}"
     for opt in re.findall(r"set_option\s+([\w.]+)", text):
@@ -515,7 +561,7 @@ def main() -> int:
             opts[flag] = argv[i + 1] if i + 1 < len(argv) else None
             argv = argv[:i] + argv[i + 2 :]
     verdict_path = Path(opts["--verdict"]) if opts.get("--verdict") else None
-    slot = opts.get("--slot", "add")
+    slot = opts.get("--slot", "full")
     args = [a for a in argv if a != "--bench"]
     mode = "bench" if "--bench" in argv else "gate"
     bad_verdict = "--verdict" in sys.argv and (verdict_path is None or len(args) != 1)

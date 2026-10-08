@@ -2,10 +2,11 @@
 
 Talks to any API laid out like the conjectures platform's competition surface,
 `/v1/competitions/<slug>/...`: a FloatLib validator, or conjectures.io once it serves FloatLib.
-Each slot is its own slug (`floatlib` is add; `floatlib-mul`, `-fma`, `-div`, `-sqrt`). Needs only
-requirements/miner.txt. Usage in MANUAL.md, section 12:
+`floatlib` is the full entry (add, mul, sum, bmm in one file; the paid board and the default
+slot), `floatlib-<slot>` each single-kernel practice board. Needs only requirements/miner.txt.
+Usage in MANUAL.md, sections 12 and 15:
 
-python miner/submit.py submit my-kernel --hotkey <file> --url <api> [--slot add|mul|fma|div|sqrt]
+python miner/submit.py submit my-entry --hotkey <file> --url <api> [--slot full|add|mul|...]
 python miner/submit.py status <submission id> --url <api> [--slot ...]
 python miner/submit.py report <submission id> --url <api> [--slot ...]
 python miner/submit.py leaderboard --url <api> [--slot ...]
@@ -26,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sig  # noqa: E402 - the miner's copy of the signing contract, pinned by test_miner_sig.py
 
 TIMEOUT = 60
-SLOTS = ("add", "mul", "fma", "div", "sqrt")
+SLOTS = ("full", "add", "mul", "fma", "div", "sqrt", "sum", "bmm")
 
 
 class SubmitResult(TypedDict):
@@ -70,8 +71,9 @@ class LeaderboardResult(TypedDict):
     incumbent_sha256: str | None
     promotion_bar: float
     ranking: list[LeaderboardEntry]
-    # The admitted leader, the submission that is paid.
+    # The admitted leader, and whether this board pays it (practice boards do not).
     leader: int | None
+    pays: bool
 
 
 def base(url: str, slot: str) -> str:
@@ -190,7 +192,12 @@ def cmd_leaderboard(args: argparse.Namespace) -> None:
     leader = b["leader"]
     print(f"{'rank':>4} {'ratio':>8} {'qualifies':>9} {'admission':>15}  hotkey")
     for x in b["ranking"]:
-        mark = "  <- paid" if leader is not None and x["submission"] == leader else ""
+        lead = leader is not None and x["submission"] == leader
+        mark = (
+            ("  <- leader, paid" if b["pays"] else "  <- leader (practice board, unpaid)")
+            if lead
+            else ""
+        )
         print(
             f"{x['rank']:>4} {x['ratio']:>8.4f} "
             f"{'yes' if x['qualifies'] else 'no':>9} {x['admission'] or '-':>15}  "
@@ -214,7 +221,7 @@ def main() -> None:
     def common(p: argparse.ArgumentParser) -> None:
         # The options every subcommand takes: where the API is, and which slot.
         p.add_argument("--url", required=True, help="API origin, e.g. http://host:9300")
-        p.add_argument("--slot", default="add", choices=SLOTS, help="default add")
+        p.add_argument("--slot", default="full", choices=SLOTS, help="default full, the paid entry")
 
     p = sub.add_parser("submit")
     p.add_argument("dir", help="submission directory with Kernel.lean")

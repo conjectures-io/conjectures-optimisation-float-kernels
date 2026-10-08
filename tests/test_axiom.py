@@ -230,9 +230,9 @@ def test_the_weight_setter_reports_a_set_vector_with_its_split(store):
     assert step(chain, store, config(), reward.ScoringConfig()).action == "set"
     (event,) = of_type(flushed(capture), "weights_set")
     assert event["severity"] == "info" and event["treasury_uid"] == 0
-    # Only add has a leader: 1/5 of the competition's 0.2 to the miner, the rest to the treasury.
-    assert event["uids"] == [0, 2] and event["weights"] == pytest.approx([0.96, 0.04])
-    assert event["treasury_share"] == pytest.approx(0.96) and event["miners"] == 1
+    # The full entry's leader: the competition's 0.2 to the miner, the rest to the treasury.
+    assert event["uids"] == [0, 2] and event["weights"] == pytest.approx([0.8, 0.2])
+    assert event["treasury_share"] == pytest.approx(0.8) and event["miners"] == 1
 
 
 @pytest.mark.parametrize(
