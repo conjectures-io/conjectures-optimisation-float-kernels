@@ -43,6 +43,7 @@ fi
 cd "$lean"
 log "toolchain $(cat lean-toolchain)"
 log "fetching FloatLib and TorchLean (pinned in lakefile.lean) and the Mathlib build cache"
+python3 "$here/scripts/fetch-pinned-deps.py"
 lake exe cache get
 log "building FloatLib, the contract and the bench against the incumbent"
 mkdir -p work
