@@ -1,21 +1,23 @@
-# FloatLib kernel competition
+# TorchLean kernel competition (on FloatLib)
 
 ## Quick Summary
 
-- A proof-gated speed competition on [FloatLib](https://github.com/lean-dojo/FloatLib)'s verified floating-point kernels. A miner submits one Lean file: a binary32 addition `Submission.add` and a proof that it equals `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the Lean kernel, audits axioms, then times the kernel against the incumbent. Lower time wins.
-- The incumbent is FloatLib's own certified kernel, `ExecFloat.add`. The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog` 0.53x); an unproved textbook adder reaches **0.40x**.
-- **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected. This README is the overview for operators and reviewers.
-- Five slots share one gate: binary32 `add` (the main one; best proven 0.50x), `mul` (best proven `mul/fast`, 0.55x), `fma`, `div` and `sqrt`, each with its own pinned obligation, incumbent and operand classes (`gate.py --slot mul|fma|div|sqrt`). The validator service accepts all five, and all five pay: the competition's share is split equally across them, each slot's admitted leader taking its fifth.
-- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 34 expected verdicts across the five slots (about 15 minutes).
+- A proof-gated speed competition whose goal is faster, proven [TorchLean](https://github.com/lean-dojo/TorchLean) kernels, built from faster [FloatLib](https://github.com/lean-dojo/FloatLib) arithmetic. **One entry, one board:** a miner submits one Lean file with four kernels and their proofs: binary32 `add` and `mul` equal to FloatLib's IEEE spec, and TorchLean's `sum` and batched matrix multiply `bmm` equal to TorchLean's own specification, bit for bit, built from that `add` and `mul`. The gate checks all four proofs, re-checks them in the Lean kernel, audits axioms, then times all four against the incumbent's. Lower total time wins, and the entry's leader is paid the competition's share.
+- **Scoring:** twelve timed input types (three per kernel), the ratio being the entry's total time over the incumbent's, so every kernel counts by the time it takes and a faster `add` or `mul` counts twice: directly, and inside `sum` and `bmm`. The incumbent is FloatLib's own `add`/`mul` with TorchLean's loops (1.00x); stage 1's winners `tuned` and `mul/fast` in all four places reach **0.56x** (`kernels/full/winners`). A full entry takes about 3 minutes to check.
+- **TorchLean without a TorchLean dependency:** the rules for `sum` and `bmm` are restated over FloatLib in `ContractTensor`, so validators need neither TorchLean nor a C compiler; `lean/stage2/Stage2/Link.lean` proves them equal to TorchLean's by definition.
+- **Practice boards, unpaid:** every kernel also has a single-kernel board (`add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`) for trying one idea at a time. Best proven there: `add` 0.50x (`tuned`; an unproved textbook adder reaches 0.40x), `mul` 0.55x, `sum` 0.52x, `bmm` 0.57x.
+- **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected; section 14 covers the TorchLean slots. This README is the overview for operators and reviewers.
+- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 43 expected verdicts across the full entry and the practice boards (about 30 minutes).
 - A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                        # 34/34 cases as expected = ready
-.venv/bin/python gate.py kernels/add/fastlog        # intake, policy, statement, kernel, axioms, score
-.venv/bin/python gate.py --bench my-kernel          # time an unproved kernel; never a verdict
+.venv/bin/python selftest.py                        # 43/43 cases as expected = ready
+.venv/bin/python gate.py kernels/full/winners       # a full entry: add, mul, sum, bmm (the default slot)
+.venv/bin/python gate.py --slot add kernels/add/fastlog   # one kernel on its practice board
+.venv/bin/python gate.py --bench my-entry           # time an unproved entry; never a verdict
 .venv/bin/python gate.py --slot mul kernels/mul/incumbent   # the multiplication slot
 ```
 
@@ -98,6 +100,10 @@ No run of the incumbent against itself came near the 3% bar (closest 0.993, abou
 deviations away), and `fastlog` cleared it every time. Single classes vary more than the total
 (incumbent self-ratio per class 0.98 to 1.02), which is why the score sums all three.
 
+That study measured the `add` board, the one that paid then. The paid board is now the full
+entry; `tools/timing_study.py` runs on it by default (`STUDY_SLOT` picks another board), and it
+must be re-run there, and on the validator's own machine, before the bar is final.
+
 `lake build micro && lean/.lake/build/bin/micro` breaks one addition down on the same operands:
 
 | operands | loop only | host FPU (unchecked) | certified word kernel | `ExecFloat.add` | textbook adder |
@@ -124,10 +130,10 @@ directory itself and names them `floatlib-*`, so they sit beside another competi
 
 | process | what it does |
 |---|---|
-| `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is add; `floatlib-mul`, `-fma`, `-div`, `-sqrt`): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`; plus `GET /health`, `GET /ready` |
+| `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is the full entry; `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm` the practice boards): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`; plus `GET /health`, `GET /ready` |
 | `floatlib-gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, writes their `Kernel.lean` from the store, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
 | `floatlib-chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
-| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores every slot's board (each slot's admitted leader takes an equal fifth of the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and records the vector, its per-hotkey lines and the published snapshot; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
+| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose admitted leader takes the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and records the vector, its per-hotkey lines and the published snapshot; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
 
 **Weights.** The vector is the whole validator's, as in the DEFLATE competition
 (`validator/treasury.py`): the treasury, uid 121 on netuid 66, takes 80%; the competition's 20% goes
@@ -210,14 +216,31 @@ on every push and pull request, and nightly (or on demand) the whole `setup.sh`,
 test and the self-test. A hosted runner has no user systemd session, so that job lifts the gate's
 memory caps; everything else runs as on a validator.
 
-## Stage 2 draft: tensor kernels
+## The TorchLean slots: `sum` and `bmm`
 
-Stage 2 adds tensor slots next to stage 1's scalar ones: a miner submits a faster `sum` or
-batched matmul over binary32 and a Lean proof that it equals TorchLean's reference. It reuses the
-stage-1 gate model (fixed statement, kernel replay, allowed axioms, timed against an incumbent);
-`lean/stage2/` holds the draft contract, kernels and measurements. It shares the `lean/` workspace,
-but only its targets import TorchLean and the gate never builds them, so validators need neither
-TorchLean's build nor a C compiler. Nothing here is wired into `gate.py` yet.
+The competition's goal. A miner submits a faster `sum` or batched matmul (`bmm`) over binary32 and a
+Lean proof that it equals TorchLean's reference, bit for bit, accumulation order included. The gate
+model is stage 1's (fixed statement, kernel replay, allowed axioms, timed against an incumbent);
+MANUAL section 14 is the miner's guide.
+
+**Rules without a TorchLean dependency.** `lean/contract/ContractTensor.lean`, the one module a
+`sum` or `bmm` submission may import, restates TorchLean's `reduceSumLeftSpec` and `bmmSpec` (with
+its index helpers and `getD`) over FloatLib, so the gate and validators need neither TorchLean nor a
+C compiler. `lean/stage2/Stage2/Link.lean` proves each restated rule equal to TorchLean's by
+definition, and that passing the gate's check is meeting TorchLean's own obligation;
+`tests/test_torchlean_link.py` keeps that proof building. `Contract.lean` stays untouched: the
+scalar slots must compile exactly as calibrated.
+
+**Timing.** One sweep is 500,000 scalar steps, as for every slot: `sum` adds 500 vectors of 1,000
+elements (`lean/bench/BenchTensor.lean`); `bmm` multiplies 2 batches of 50×100 by 100×50 matrices,
+500,000 multiply-adds (`lean/bench/BenchBmm.lean`). Both are timed on dense, ReLU-like (half
+zeros) and wide-range data.
+
+**Ladder.** The incumbents fold FloatLib's own `add`/`mul` (1.00x). `sum/tuned` (0.52x) and
+`bmm/fast` (0.57x) are stage 1's winners inside TorchLean's loops, proved by composition alone.
+The `-wrong` fixtures compute the same values in another order and cannot be proved.
+
+The sections below are the research behind these slots (`lean/stage2/`, built with TorchLean).
 
 ### The contract
 
@@ -304,10 +327,11 @@ Spikes run outside this repo (2026-09-28/29), kept here as findings; their code 
 
 ### Open decisions
 
-- Reward split across the five slots, and whether stage 2 opens only after stage 1 has run.
-- The timed data classes and their weights.
-- When a stage-1 winner is promoted, the stage-2 incumbent is rebuilt from it; the gate needs a
-  rule for that.
+- The timed data classes: measured TorchLean activations and weights in place of today's
+  synthetic dense, ReLU-like and wide data.
+- Whether a promoted stage-1 winner should also become the TorchLean slots' incumbent (today they
+  start from FloatLib's own kernels, and miners carry stage-1 winners into their entries).
+- The next TorchLean kernels, once its users say which ones matter.
 
 ## Layout
 
@@ -319,12 +343,20 @@ selftest.py              the environment test: every kernel in kernels/ against 
 fingerprint.py           the verifier fingerprint stamped on every verdict
 
 lean/                    the Lean workspace; FloatLib pinned at 0d91825, nothing in it edited
-  contract/              Contract.lean: Binary32 and the per-slot obligations (the pinned statement)
-  verify/                Verify, VerifyMul, VerifyFma: the gate's statement check and axiom report
-  bench/                 the shared timing core, one bench binary per slot, Micro (the cost breakdown)
-  stage2/                the stage-2 draft against TorchLean's specs (not built by the gate)
+  contract/              Contract.lean: Binary32 and the scalar slots' obligations; ContractTensor.lean:
+                         the TorchLean slots' rules (sumSpec, bmmSpec), restated over FloatLib
+  verify/                one statement check and axiom report per slot: VerifyFull (the full entry),
+                         Verify (add), VerifyMul, VerifyFma, VerifyDiv, VerifySqrt, VerifySum, VerifyBmm
+  bench/                 the shared timing core, one bench binary per slot, BenchDivSqrt and
+                         BenchTensor, BenchBmm (the newer slots' classes, each in its own module),
+                         Micro (the cost breakdown)
+  stage2/                TorchLean: the link proving the sum and bmm rules are TorchLean's, and the
+                         research kernels and benchmarks behind them
+                         (needs a C compiler; the gate never builds it)
 kernels/                 every kernel the gate is tested on, and expected.tsv (their expected verdicts)
-  add/ mul/ fma/         per slot: the incumbent, the ladder of proven faster kernels, wrong proofs
+  full/                  the full entry: incumbent, stage 1's winners in all four places, a wrong one
+  add/ mul/ fma/ div/    per practice board: the incumbent, the ladder of proven faster kernels,
+  sqrt/ sum/ bmm/        wrong proofs
   exploits/              one attack per file, each rejected
 
 miner/                   the miner client (submit.py: submit, status, report, leaderboard) and its signer (sig.py)
@@ -357,7 +389,7 @@ kernel under test), `pinned/` (each slot's incumbent binary), `logs/`, `results/
 ## Status
 
 - Working: the gate, the timing, the self-test, the manual, three proven faster kernels, and the validator service (API, gate worker, store, chain workers), tested live end to end.
-- To decide: the rewards (today an equal fifth of the competition's share per slot, king of the hill in each), the proposed 3% promotion bar and the statistical admission rule in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
+- To decide: the rewards (today the full entry's leader takes the competition's share; the practice boards are unpaid), the proposed 3% promotion bar and the statistical admission rule in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
 - Platform-ready, not yet platform-served: the database, grants, wire contract, treasury split and events match DEFLATE's production setup; the platform's side, FloatLib's share of SN66 and which weight setter submits are open ([`deploy/platform/CONTRACT.md`](deploy/platform/CONTRACT.md)). The weight setter runs in dry run until then.
 - Next scalar slots follow the same shape, one obligation per operation and format: binary64.
-- Stage 2 (tensor kernels over TorchLean's specs) is a draft in `lean/stage2/`: contract, proved kernels and measurements, not yet in the gate (see [Stage 2 draft](#stage-2-draft-tensor-kernels)).
+- One entry, one board: the full entry (`add`, `mul`, `sum`, `bmm`) is live and paying; every kernel also has an unpaid practice board (see [The TorchLean slots](#the-torchlean-slots-sum-and-bmm) and MANUAL section 15).

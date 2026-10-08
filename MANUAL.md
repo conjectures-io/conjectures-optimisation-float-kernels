@@ -1,10 +1,12 @@
-# Mining the FloatLib binary32 slots (add, mul, fma, div, sqrt) - the manual
+# Mining the full entry: FloatLib add and mul, TorchLean sum and bmm - the manual
 
 ## Quick Summary
 
+- **One entry, one board.** The paid entry is one `Kernel.lean` with four kernels and their proofs: binary32 `add` and `mul` equal to FloatLib's IEEE spec, and TorchLean's `sum` and batched matrix multiply `bmm` equal to TorchLean's specification, built from that `add` and `mul`. All four are timed together, the ratio is the total time against the incumbent's, and the leader is paid the competition's share (section 15). The goal is faster, proven TorchLean kernels; faster FloatLib arithmetic is how you get them.
+- **Practice boards.** Every kernel also has its own unpaid board (`--slot add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`), the quickest way to try one idea. Sections 1 to 11 teach the gate on the `add` board; sections 13 and 14 cover the other kernels; section 15 puts them together.
 - You submit one Lean file, `Kernel.lean`: a binary32 addition `Submission.add` and a proof `Submission.add_spec` that it equals FloatLib's reference `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the kernel, audits axioms, then times your kernel against the incumbent. Lower time wins.
 - The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
-- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 34 expected verdicts in about 15 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
+- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 43 expected verdicts in about 30 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
 - The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror`, `fastlog` and `tuned` are four accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
 - Four more slots, binary32 `mul`, `fma`, `div` and `sqrt`, run on the same gate with `--slot` (section 13). `kernels/mul/fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma`, `div` or `sqrt` yet.
 - Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
@@ -12,10 +14,10 @@
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                                # 34/34 cases as expected = ready
+.venv/bin/python selftest.py                                # 43/43 cases as expected = ready
 cp -r kernels/add/textbook-unproved my-kernel               # the fast adder, one sorry left
-.venv/bin/python gate.py --bench my-kernel                  # speed only, proof not checked
-.venv/bin/python gate.py my-kernel                          # the real gate: all six stages
+.venv/bin/python gate.py --slot add --bench my-kernel       # speed only, proof not checked
+.venv/bin/python gate.py --slot add my-kernel               # the real gate: all six stages
 ```
 
 ## 1. Set up and test the environment
@@ -63,7 +65,7 @@ policy hold on their own. A healthy machine ends with:
 [selftest] ok   mul/incumbent          mul  gate
 ...
 [selftest] ok   fma/wrong              fma  gate
-[selftest] 34/34 cases as expected
+[selftest] 43/43 cases as expected
 ```
 
 Exit code 0 means the toolchain, the build, the sandbox, the kernel re-check and the timing all
@@ -86,7 +88,8 @@ run and rebuilds it whenever the bench, the contract, the lakefile or the toolch
 
 ## 2. What you submit
 
-One directory with exactly one file, UTF-8 text:
+On the `add` practice board, which these sections use to teach the gate (the paid full entry
+holds four such kernels in one file: section 15), one directory with exactly one file, UTF-8 text:
 
 ```
 my-kernel/
@@ -152,7 +155,7 @@ and a new rounding proof.
 ## 4. How to measure
 
 ```bash
-.venv/bin/python gate.py --bench my-kernel      # intake, build, score; no policy, no proof check
+.venv/bin/python gate.py --slot add --bench my-kernel      # intake, build, score; no policy, no proof check
 ```
 
 ```
@@ -309,12 +312,12 @@ The policy runs on the raw text, comments included, so keep these words out of y
 ```bash
 # output abridged to the key lines
 cp -r kernels/add/textbook-unproved my-kernel
-.venv/bin/python gate.py --bench my-kernel
+.venv/bin/python gate.py --slot add --bench my-kernel
 #   [bench] my-kernel passed=True stage=score ratio=0.397 (UNPROVED - bench only, not a verdict)
-.venv/bin/python gate.py my-kernel
+.venv/bin/python gate.py --slot add my-kernel
 #   [policy] REJECTED my-kernel: banned name 'sorry' at line 63
 # ... prove the fast path, delete the sorry ...
-.venv/bin/python gate.py my-kernel
+.venv/bin/python gate.py --slot add my-kernel
 #   [intake] ok  [policy] ok  [statement] ok  [kernel] ok  [axioms] ok
 #   [score] ratio 0.40 of the incumbent over all timed classes
 #   [gate] my-kernel passed=True stage=score ratio=0.40
@@ -352,27 +355,27 @@ platform's message, so the same client will work against conjectures.io once it 
 ```bash
 .venv/bin/pip install -r requirements/miner.txt         # once: the client's signing and HTTP libraries
 python miner/submit.py submit my-kernel --hotkey ~/.bittensor/wallets/<w>/hotkeys/<h> --url http://<validator>:9300
-#   (add --slot mul or --slot fma for the other slots; the default is add)
-#   submission 12 (add) queued  digest f5e2f885...
+#   (the default slot is full, the paid entry; --slot add|mul|... for a practice board)
+#   submission 12 (full) queued  digest f5e2f885...
 python miner/submit.py status 12 --url http://<validator>:9300
-#   submission 12 (add)  state accepted
+#   submission 12 (full)  state accepted
 #   stage score
-#   time vs incumbent 0.5347x (lower is faster)
+#   time vs incumbent 0.5547x (lower is faster)
 python miner/submit.py report 12 --url http://<validator>:9300    # the gate's full verdict
-python miner/submit.py leaderboard --url http://<validator>:9300    # --slot mul|fma|div|sqrt for the others
+python miner/submit.py leaderboard --url http://<validator>:9300    # --slot add|mul|... for a practice board
 #   rank    ratio qualifies       admission  hotkey
-#      1   0.5347       yes          leader  5Grw...  <- paid
+#      1   0.5547       yes          leader  5Grw...  <- leader, paid
 ```
 
-Each slot is its own competition slug: `floatlib` is the add board, `floatlib-mul`,
-`floatlib-fma`, `floatlib-div` and `floatlib-sqrt` the others. Every endpoint below sits under `/v1/competitions/<slug>`.
+Each slot is its own competition slug: `floatlib` is the full entry, `floatlib-add`,
+`floatlib-mul`, `floatlib-fma`, `floatlib-div`, `floatlib-sqrt`, `floatlib-sum` and `floatlib-bmm` the practice boards. Every endpoint below sits under `/v1/competitions/<slug>`.
 
 | endpoint | what it does |
 |---|---|
 | `POST …/submissions` | one multipart part, `Kernel.lean`, and three headers: `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp` (unix seconds) and `X-Conjectures-Signature`, an sr25519 signature over the five lines `conjectures-competition-submit-v1` / `competition: <slug>` / `digest: <sha256(Kernel.lean)>` / `hotkey: <ss58>` / `timestamp: <seconds>` (`miner/sig.py`) |
 | `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed) |
 | `GET …/submissions/{id}/report` | the gate's full verdict JSON: every stage it reached and why it stopped |
-| `GET …/leaderboard` | the slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), and `leader` the one submission paid |
+| `GET …/leaderboard` | the slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), `leader` the board's leading submission, and `pays` whether this board pays it (only the full entry's does) |
 | `GET /health` | liveness, queue length, the promotion bar |
 
 **What the service enforces:**
@@ -382,14 +385,14 @@ Each slot is its own competition slug: `floatlib` is the add board, `floatlib-mu
 - The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
 - A signature is bound to its slot's slug: one made for `floatlib` (add) does not verify for `floatlib-mul`, and the other way round, nor for any other competition on the platform.
 - Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `add`, `mul` or `fma`.)
-- **Every slot pays, equally.** The competition's share is split into five equal parts, one per slot (`add`, `mul`, `fma`, `div`, `sqrt`), and each slot's admitted leader receives its part. A slot without a leader leaves its part to the treasury, and a hotkey leading two slots receives both parts.
+- **One board pays: the full entry.** Its admitted leader receives the competition's share; without a leader, the share goes to the treasury. The practice boards are ranked and shown, but unpaid.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
 - **A verdict counts only under the verifier that gave it.** When the validator updates its gate, contract or bench, older accepted submissions leave the board until the operator re-verifies them, at no cost to you: a re-acceptance reuses the registration already spent.
 
 **Round rules (proposed, not final):**
 - **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin.
 - **Who leads: statistical admission.** The headline ratio ranks the board; the lead needs evidence as well. The gate records every round's paired incumbent and submission timings, and the validator bootstraps them (2000 draws, a seed derived from the timings themselves, so every validator agrees). A submission qualifies when its ratio is at or below the bar *and* its 5th-percentile gain over the incumbent is positive. Taken in submission order, a qualifying submission takes the lead only if its 5th-percentile gain over the current leader is positive too. So a later copy of the leader, or the same kernel with one lucky round, cannot take the lead; a genuinely faster kernel can. This is the rule the DEFLATE competition uses.
-- **Emission:** a placeholder until rewards are announced. As in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; within the competition's share each slot's admitted leader receives an equal fifth, and whatever no miner earns goes to the treasury.
+- **Emission:** a placeholder until rewards are announced. As in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; the full entry's admitted leader receives the competition's share, and whatever no miner earns goes to the treasury.
 - **Later slots** use the same shape, one obligation per operation and format: binary64 next.
 
 ## 13. The other slots: multiplication, fused multiply-add, division and square root
@@ -452,4 +455,107 @@ every class on the reference machine, and no faster proven kernel exists yet. Bo
 word kernel also normalises with the bit-at-a-time `UInt64.log2` that `fastlog` replaced, so that
 lemma is the first thing to try there; `div` takes its own quotient path, where nobody has
 measured yet where the time goes.
+
+## 14. The TorchLean kernels: `sum` and `bmm`
+
+The heart of the full entry (section 15), each with its own practice board. Everything above applies; what changes is the shape of the kernel, the module you
+import, and the rule you must meet.
+
+| slot | kernel you define | theorem you prove | gate statement | incumbent |
+|---|---|---|---|---|
+| `sum` | `Submission.sum {n} (x : Vector Binary32 n) : Binary32` | `sum_spec : ∀ n (x : Vector Binary32 n), sum x = sumSpec x.get` | `SumObligation` | left fold of `ExecFloat.add` |
+| `bmm` | `Submission.bmm (batch m n p : Nat) (A : Vector Binary32 (batch*m*n)) (B : Vector Binary32 (batch*n*p)) : Vector Binary32 (batch*m*p)` | `bmm_spec : ∀ batch m n p A B, (bmm batch m n p A B).get = bmmSpec batch m n p A.get B.get` | `BmmObligation` | `ExecFloat.add`/`mul` in `bmmSpec`'s loop |
+
+```bash
+.venv/bin/python gate.py --slot bmm --bench my-bmm     # time an unproved matmul
+.venv/bin/python gate.py --slot bmm kernels/bmm/fast   # the full gate on the bmm slot
+python miner/submit.py submit my-bmm --hotkey <file> --url <validator> --slot bmm
+```
+
+**The rules are TorchLean's.** A `sum` or `bmm` submission imports `ContractTensor` and nothing
+else (it brings `Contract` with it). Its `sumSpec` is TorchLean's `reduceSumLeftSpec`: add the
+elements left to right from +0 with exact IEEE addition. Its `bmmSpec` is TorchLean's `bmmSpec`:
+row-major batched matrix multiply, every output `C[b,i,j]` a left fold over `k` from +0 of
+`add acc (mul A[b,i,k] B[b,k,j])`, reading out-of-range indices as +0 (`getD`).
+`lean/stage2/Stage2/Link.lean` proves both are TorchLean's own definitions, so a kernel the gate
+accepts is proved against TorchLean itself. The order is part of the rule: every addition
+rounds, so another order gives other bits, and `kernels/sum/wrong` and `kernels/bmm/wrong` (the same
+values summed backwards) cannot be proved.
+
+**Timing.** Each sweep is 500,000 scalar steps, as for every slot:
+
+| slot | shape | classes |
+|---|---|---|
+| `sum` | 500 vectors of 1,000 elements | `dense` (near one, random signs), `relu` (about half +0, rest positive), `wide` (random signs over 50 binades) |
+| `bmm` | 2 batches of 50×100 by 100×50 matrices (500,000 multiply-adds) | `dense` (both near one), `relu` (`A` half +0, as activations after a ReLU), `wide` (both over 50 binades) |
+
+**The ladder so far.**
+
+| kernel | ratio | how |
+|---|---|---|
+| `sum/incumbent`, `bmm/incumbent` | 1.00x | FloatLib's `add`/`mul` in TorchLean's loop |
+| `sum/tuned` | **0.52x** | stage 1's `tuned` addition copied in with its proof, a ten-line proof on top |
+| `bmm/fast` | **0.57x** | `tuned` and `mul/fast` copied in, each in its own namespace; proof by composition |
+
+To build on a stage-1 winner, copy it into your file, in a namespace of its own if you use two,
+as `kernels/bmm/fast` does: you may import only `ContractTensor`.
+
+**Where the room is.** The stage-1 kernels are weakest on zeros: `bmm/fast` reaches 0.52x on
+`dense` but only 0.68x on `relu`, `sum/tuned` 0.47x against 0.71x. Real network data is full of
+zeros, and an unproved matmul that skips `acc + (±0 · b)` measured about 0.48x of the proved one
+on ReLU data. Such a shortcut is allowed if you prove it exact: careful, `-0 + +0 = +0` in IEEE, so
+a skip is only safe when `b` is finite and `acc` is finite and nonzero. Faster scalar kernels from
+stage 1 carry over directly, too.
+
+**Rewards.** `sum` and `bmm` are practice boards; they pay as part of a full entry (section 15).
+
+## 15. The full entry: the one paid board
+
+Everything comes together here. One `Kernel.lean`, `import ContractTensor`, defining all four
+kernels with their proofs, under the names the earlier sections use:
+
+| kernel | theorem | rule |
+|---|---|---|
+| `Submission.add` | `add_spec` | FloatLib's `ExecFloat.Spec.add` (section 2) |
+| `Submission.mul` | `mul_spec` | FloatLib's `ExecFloat.Spec.mul` (section 13) |
+| `Submission.sum` | `sum_spec` | TorchLean's `reduceSumLeftSpec` (section 14) |
+| `Submission.bmm` | `bmm_spec` | TorchLean's `bmmSpec` (section 14) |
+
+The gate proves them in one statement,
+`Obligation Submission.add ∧ MulObligation Submission.mul ∧ SumObligation Submission.sum ∧
+BmmObligation Submission.bmm`, so one wrong kernel refuses the whole entry
+(`kernels/full/wrong` sums backwards and is refused at the statement stage).
+
+```bash
+cp -r kernels/full/winners my-entry                    # stage 1's winners in all four places
+.venv/bin/python gate.py --bench my-entry              # time it (full is the default slot)
+.venv/bin/python gate.py my-entry                      # the real gate, about 3 minutes
+python miner/submit.py submit my-entry --hotkey <file> --url <validator>
+```
+
+**Scoring.** Twelve timed input types, three per kernel and the same as the practice boards':
+`add:near-one`, `add:wide-gap`, `add:cancel`, `mul:near-one`, `mul:spread`, `mul:tiny`,
+`sum:dense`, `sum:relu`, `sum:wide`, `bmm:dense`, `bmm:relu`, `bmm:wide`, each 500,000 steps,
+plus an untimed raw set per kernel. The ratio is your total time over the incumbent's total, so
+each kernel counts by the time it takes (`bmm` the most, at about 75 ns a step), and the 3% bar
+and statistical admission apply to the total as on every board.
+
+**Build `sum` and `bmm` from your own `add` and `mul`.** Nothing forces it, but it is how a better
+`add` or `mul` pays twice: once on its own input types, and again inside `sum` and `bmm`, which
+spend most of their time in it. The proofs carry over: once `add = ExecFloat.add` and
+`mul = ExecFloat.mul` (from `add_spec` and `mul_spec`), the `sum` and `bmm` proofs are the
+incumbent's unchanged; `kernels/full/winners` shows the pattern, with stage 1's `tuned` and
+`mul/fast` each in a namespace of its own.
+
+**The ladder so far.**
+
+| entry | ratio |
+|---|---|
+| `kernels/full/incumbent`: FloatLib's `add`/`mul`, TorchLean's loops | 1.00x |
+| `kernels/full/winners`: `tuned` and `mul/fast`, the same loops on top | **0.56x** |
+
+**Where to look.** Everything in sections 6, 7, 13 and 14: a faster `add` or `mul` (below 0.50x
+needs a new rounding argument), and exact shortcuts in `sum` and `bmm` on zero-heavy data
+(proved, as section 14 warns about signed zeros). Try each idea on its practice board first; a
+full entry takes about three minutes to check against one minute for a single kernel.
 
