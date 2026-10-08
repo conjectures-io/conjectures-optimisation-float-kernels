@@ -23,8 +23,8 @@ from service.settings import PROMOTION_BAR
 # The scoring rule a published snapshot was computed under; bump it when the rule changes.
 POLICY_VERSION = "king-of-the-hill-full-entry-v1"
 
-# The slots that pay, and each one's part of the competition's budget: equal. Listed, not taken
-# from db.SLOTS, so a slot added later pays only once it is added here on purpose.
+# The boards that pay and each one's part of the competition's budget, listed here rather than taken
+# from db.SLOTS so a board pays only once it is added on purpose.
 PAYING_SLOTS: tuple[str, ...] = ("full",)
 SLOT_SHARES: dict[str, float] = {slot: 1.0 / len(PAYING_SLOTS) for slot in PAYING_SLOTS}
 
@@ -101,10 +101,9 @@ def score_board(
     config: ScoringConfig,
     leader: ScoredSubmission | None,
 ) -> list[HotkeyScore]:
-    # One slot: the admitted leader's hotkey takes the winner share of the slot's part (see
-    # admission.py): the fastest headline ratio alone does not pay, so a lucky copy cannot unseat
-    # the submission it copied. Its line names the leading submission; every other hotkey's names
-    # its best, fastest first.
+    # One board: the admitted leader's hotkey takes the winner share of the board's part (see
+    # admission.py), so a lucky copy cannot unseat what it copied, and every other hotkey's line
+    # names its best submission, fastest first.
     part = SLOT_SHARES.get(slot, 0.0) * config.winner_share
     scores = []
     for row in best_per_hotkey:
@@ -137,9 +136,8 @@ def publication(
     computed_at: dt.datetime,
 ) -> dict[str, object]:
     # The scoring one weight set was computed from, as JSON the platform serves unchanged: the
-    # policy, and per slot its share, its leader, every competitor's line and each submission's
-    # admission outcome. Weights are fractions of the competition's budget; `competition_share`
-    # turns them into the validator's.
+    # policy and, per board, its share, leader, lines and admission outcomes, in fractions of the
+    # competition's budget that `competition_share` scales to the validator's.
     slots: dict[str, object] = {}
     for board in boards:
         outcome = {d.submission_id: d.outcome for d in board.decisions}

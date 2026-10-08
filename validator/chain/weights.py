@@ -13,7 +13,7 @@ class WeightChain(Protocol):
     # What the weight setter needs from the chain; finney.py is the real one.
 
     def params(self, netuid: int) -> SubnetParams:
-        # Our uid plus the subnet's tempo and rate limit. Raises if not registered.
+        # Our uid plus the subnet's tempo and rate limit, raising if we are not registered.
         ...
 
     def current_block(self) -> int:

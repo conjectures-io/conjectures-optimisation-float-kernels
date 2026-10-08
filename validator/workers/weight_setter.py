@@ -67,9 +67,9 @@ class WeightSetterConfig:
     wallet_hotkey: str = "default"
     wallet_path: str = "~/.bittensor/wallets"
 
-    # Burn mode's destination for the competition's share, and, off mainnet with no
-    # WEIGHT_TREASURY_UID, the treasury's. Defaults to the treasury uid, so on netuid 66 burn
-    # mode pays the treasury the whole vector.
+    # Burn mode's destination for the competition's share (and, off mainnet without
+    # WEIGHT_TREASURY_UID, the treasury's), defaulting to the treasury uid so on netuid 66 burn mode
+    # pays the treasury everything.
     burn_uid: int = TREASURY_UID
     # Burn the competition's share, ignoring the scores, for a paused or not-yet-open round;
     # the treasury is still paid its share.
@@ -79,7 +79,7 @@ class WeightSetterConfig:
     set_margin: int = 12
     # Idle sleep between ticks; about one block.
     poll_seconds: float = 12.0
-    # Compute and record the vector, but do not submit it. On unless WEIGHT_DRY_RUN=0.
+    # Compute and record the vector without submitting it, on unless WEIGHT_DRY_RUN=0.
     dry_run: bool = True
     # Off mainnet only: where the treasury share goes (default: the burn uid).
     treasury_override: int | None = None
@@ -160,9 +160,9 @@ def plan_for(
     config: WeightSetterConfig,
     scoring_config: reward.ScoringConfig,
 ) -> tuple[WeightPlan, reward.Scoring | None, dict[str, object] | None]:
-    # The validator's vector, the scoring behind it and its published snapshot. Scoring that
-    # raises pays the treasury everything this epoch instead of failing the tick: a failed tick
-    # sets nothing, and an epoch with no weight set cannot be made up later.
+    # The validator's vector, its scoring and its published snapshot, where scoring that raises pays
+    # the treasury everything rather than failing the tick, since an epoch with no weight set cannot
+    # be made up.
     treasury, missing = resolve_treasury(
         meta,
         netuid=config.netuid,

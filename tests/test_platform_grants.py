@@ -43,7 +43,7 @@ TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFEREN
 
 
 def test_every_table_the_grants_name_is_one_the_models_define() -> None:
-    # Table grants only: `GRANT ... ON <tables> TO`, not ON SCHEMA / SEQUENCE / ALL ... IN.
+    # Table grants only (`GRANT ... ON <tables> TO`), never on a schema, a sequence or `ALL ... IN`.
     clauses = re.findall(
         r"\bGRANT\s+[A-Z, ]+\s+ON\s+(?!SCHEMA\b|SEQUENCE\b|ALL\b)([a-z_,\s]+?)\s+TO\s+" + ROLE,
         GRANTS.read_text(),
@@ -55,10 +55,8 @@ def test_every_table_the_grants_name_is_one_the_models_define() -> None:
 
 @pytest.fixture
 def migrated(database_url: str) -> Iterator[sa.Engine]:
-    # A scratch database built by the revisions, with the role present on the cluster.
-    #
-    #     Roles are cluster-wide, so an existing `platform_api` (a developer's own) is used and
-    #     left in place; one this fixture creates is dropped again, after its database.
+    # A scratch database built by the revisions, reusing a cluster-wide `platform_api` role if one
+    # exists and dropping one it created after its database.
     base, _ = database_url.rsplit("/", 1)
     name = f"conjectures_grants_{uuid.uuid4().hex[:8]}"
     admin = sa.create_engine(f"{base}/postgres", isolation_level="AUTOCOMMIT")

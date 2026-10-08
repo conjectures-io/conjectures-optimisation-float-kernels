@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 
 def now() -> datetime:
-    # UTC now. Monkeypatched in tests to make submission ordering deterministic.
+    # UTC now, monkeypatched in tests to make submission ordering deterministic.
     return datetime.now(timezone.utc)
 
 

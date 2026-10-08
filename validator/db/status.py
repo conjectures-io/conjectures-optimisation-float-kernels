@@ -14,8 +14,8 @@ class SubmissionState(StrEnum):
     ACCEPTED = "accepted"
     # Gate exit 1: the submission was refused, and a corrected one may be sent for free.
     REJECTED = "rejected"
-    # The gate crashed on this submission SERVICE_MAX_GATE_ERRORS times; given up, never charged.
-    # (A crash below the cap, or no verdict at all, requeues it instead.)
+    # The gate crashed on this submission SERVICE_MAX_GATE_ERRORS times, so it is given up uncharged
+    # (fewer crashes, or no verdict, requeue it instead).
     ERROR = "error"
 
 

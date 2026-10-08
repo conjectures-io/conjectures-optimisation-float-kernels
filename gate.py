@@ -137,9 +137,8 @@ SLOTS = {
 ELAN = Path.home() / ".elan"
 LAKE = str(ELAN / "bin" / "lake")
 
-# The only environment a sandboxed build or bench inherits: the toolchain and the locale, never
-# the validator's secrets (POSTGRES_PASSWORD, DATABASE_URL, wallet vars) or anything else it runs
-# with. The bench's BENCH_* are passed in on top as `env_extra`.
+# The only environment a sandboxed build or bench inherits (the toolchain and the locale, plus the
+# bench's BENCH_* via `env_extra`), never the validator's secrets.
 _ENV_PASS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR")
 _ENV_PREFIX = ("ELAN", "LEAN", "LAKE")
 
@@ -162,14 +161,13 @@ _PAIRS = int(os.environ.get("BENCH_PAIRS", "500000"))
 _ROUNDS = int(os.environ.get("BENCH_ROUNDS", "25"))
 # 0 runs builds and benches without bwrap, for hosts that cannot create user namespaces.
 _SANDBOX = os.environ.get("GATE_SANDBOX", "1") != "0"
-# The core both benches run on; pinning halves timing noise. Empty runs them unpinned.
+# The core both benches run on, which halves timing noise; empty runs them unpinned.
 _BENCH_CPU = os.environ.get("BENCH_CPU", "3")
 _BUILD_TIMEOUT = 1800
 _BENCH_TIMEOUT = 300
 _MAX_BYTES = 256_000
-# Memory caps, in MB, for the systemd scope every sandboxed command runs in: builds and kernel
-# checks (measured peak ~1 GB) and bench processes (~20 MB). Swap is capped at zero too, or a
-# runaway process would spill into swap instead of being killed. 0 lifts both caps.
+# Memory and swap caps in MB for the systemd scope of every sandboxed command (builds peak near 1
+# GB, benches near 20 MB), so a runaway is killed rather than swapping; 0 lifts both.
 _BUILD_MEMORY_MB = int(os.environ.get("GATE_BUILD_MEMORY_MB", "4096"))
 _BENCH_MEMORY_MB = int(os.environ.get("GATE_BENCH_MEMORY_MB", "512"))
 # Processes per scope; Lean spawns a handful, a fork bomb far more.
@@ -253,12 +251,9 @@ def run(
     env_extra: dict | None = None,
     memory_mb: int = _BUILD_MEMORY_MB,
 ):
-    # Runs `cmd` in bwrap with no network, a throwaway Lake config and a minimal environment,
-    # inside a systemd scope capped at `memory_mb`; `build` sets the build mount. The real HOME
-    # (the validator's wallet) and the repo root (its .env, its stored submissions) are hidden
-    # behind tmpfs; only the toolchain, the Lean workspace and the pinned incumbents are put back,
-    # read-only, so no build-time file read can reach a secret. `pinned` is absent until the first
-    # pin, hence the -try.
+    # Runs `cmd` in bwrap with no network, a minimal environment and a `memory_mb` scope, HOME and
+    # the repo root hidden behind tmpfs and only the toolchain, the Lean workspace and `pinned`
+    # (absent before the first pin, hence -try) put back read-only, so no build can read a secret.
     home, pinned = Path.home(), HERE / "pinned"
     box = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     box += ["--tmpfs", str(home), "--ro-bind", str(ELAN), str(ELAN)]
@@ -502,8 +497,8 @@ BENCH_STAGES = [("intake", intake), ("statement", statement), ("score", score)]
 
 
 def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> Verdict:
-    # Gates one submission on a fresh build layer, which is dropped afterwards. A verifier edited
-    # mid-run makes the verdict nobody's: a validator error, not a rejection.
+    # Gates one submission on a throwaway build layer, where a verifier edited mid-run makes a
+    # validator error rather than a rejection.
     fingerprint = verifier.current()
     v = Verdict(
         submission=sub_dir.name,

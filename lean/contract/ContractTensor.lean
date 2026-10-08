@@ -18,9 +18,9 @@ open FloatLib.Floats
 /-- The +0 a sum starts from. -/
 abbrev posZero : Binary32 := ExecFloat.Binary.zero false
 
-/-- The sum slot's reference: TorchLean's `reduceSumLeftSpec`, a left fold of `ExecFloat.add` from
-+0 over the buffer's indices in order. Restated here so the gate needs no TorchLean;
-`lean/stage2/Stage2/Link.lean` proves it is TorchLean's own definition. -/
+/-- The sum slot's reference, TorchLean's `reduceSumLeftSpec` (a left fold of `ExecFloat.add` from
++0 in index order), restated so the gate needs no TorchLean; `lean/stage2/Stage2/Link.lean` proves
+it is TorchLean's own definition. -/
 def sumSpec {n : Nat} (x : Fin n → Binary32) : Binary32 :=
   (List.finRange n).foldl (fun acc i => ExecFloat.add acc (x i)) posZero
 

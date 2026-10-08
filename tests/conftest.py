@@ -111,7 +111,8 @@ def store(database_url, clock):
 
 
 def register(store, hotkey: str, *, uid: int = 0, block: int = 1000) -> int:
-    # Insert one registration row (one submission slot), as the chain watcher would. Returns its id.
+    # Insert one registration row (one submission slot), as the chain watcher would, and return its
+    # id.
     with store_pkg.session_scope(store.sessions) as session:
         row = models.Registration(
             uid=uid,

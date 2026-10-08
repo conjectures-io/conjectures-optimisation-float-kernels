@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 9300
-    # Where each submission's Kernel.lean is written. Everything else is in Postgres.
+    # Where each submission's Kernel.lean is written; everything else is in Postgres.
     files: Path = VALIDATOR / ".work/submissions"
 
     # Signed writes allowed per hotkey per minute, counted in Postgres.

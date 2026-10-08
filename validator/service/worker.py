@@ -105,8 +105,8 @@ def run_gate(
 
 
 def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> str:
-    # Gate one claimed submission. No verdict (the gate failed before reaching it) requeues it
-    # uncharged; a verdict with an undefined exit (a stage crashed on it) counts toward the cap.
+    # Gate one claimed submission: no verdict requeues it uncharged, and a verdict with an undefined
+    # exit (a stage crashed on it) counts toward the error cap.
     logger.info(f"[worker] verifying submission {sub.id} slot={sub.slot} ({sub.hotkey[:8]}…)")
     events = get_events()
     who = {"submission_id": sub.id, "hotkey": sub.hotkey, "slot": sub.slot}
@@ -207,8 +207,8 @@ def sweep(store: db.Store, settings: Settings) -> None:
 
 
 def backoff(errors: int) -> float:
-    # The pause after `errors` consecutive validator errors: doubling from idle, capped.
-    # The exponent is capped too: a days-long outage must not overflow the float.
+    # The pause after `errors` consecutive validator errors, doubling from idle up to a cap, with
+    # the exponent capped too so a days-long outage cannot overflow the float.
     return min(IDLE_SECONDS * 2 ** min(errors, 16), MAX_BACKOFF_SECONDS)
 
 

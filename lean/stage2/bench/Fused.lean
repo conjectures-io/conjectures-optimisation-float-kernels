@@ -178,8 +178,9 @@ def mm4 (s : Nat) (A B : Array UInt32) : Array UInt32 := Id.run do
 
 def hashW (xs : Array UInt32) : UInt32 := xs.foldl (fun h x => (h ^^^ x) * 16777619) 0
 
-/-- `mm1`, skipping the step when `a` is ±0, `b` is finite and `acc` is finite nonzero: the product
-is a signed zero and adding it leaves `acc` unchanged. Unproved; checksums must still agree. -/
+/-- `mm1` skipping the step when `a` is ±0, `b` is finite and `acc` is finite nonzero, since the
+product is then a signed zero that leaves `acc` unchanged (unproved, so checksums must still
+agree). -/
 def mmSkip (s : Nat) (A B : Array UInt32) : Array UInt32 := Id.run do
   let mut C : Array UInt32 := Array.mkEmpty (s * s)
   for i in [0:s] do

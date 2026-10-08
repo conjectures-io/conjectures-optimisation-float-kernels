@@ -15,10 +15,9 @@ class SetDecision:
 
 
 def blocks_until_next_epoch(current_block: int, tempo: int, last_epoch_block: int) -> int:
-    # Blocks to the subnet's next epoch, in 1..tempo, anchored on the chain's own record of the
-    # last one (LastMechansimStepBlock), which recurs every `tempo` blocks. The textbook
-    # `tempo - (block + netuid + 1) % (tempo + 1)` assumes a 361-block cycle offset by the netuid;
-    # SN66 steps every 360, so that formula ran 85-91 blocks late (seen by DEFLATE, 2026-09-28).
+    # Blocks to the subnet's next epoch, in 1..tempo, anchored on the chain's last step
+    # (LastMechansimStepBlock) because the textbook `tempo - (block + netuid + 1) % (tempo + 1)` ran
+    # 85-91 blocks late on SN66 (seen by DEFLATE, 2026-09-28).
     if tempo <= 0:
         return 0
     return tempo - (current_block - last_epoch_block) % tempo

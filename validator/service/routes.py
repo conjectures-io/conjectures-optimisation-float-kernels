@@ -120,9 +120,9 @@ async def submit(
     timestamp: int = Header(..., alias="X-Conjectures-Timestamp"),
     kernel: UploadFile = File(..., alias="Kernel.lean"),
 ) -> schemas.SubmitAccepted:
-    # Accept a signed Kernel.lean, cheapest checks first; resubmitting a file returns its id.
-    # Signed fields travel as headers, as on the platform: a header-only request is not one a
-    # browser can send cross-site, so no page can submit with a miner's leaked signature.
+    # Accept a signed Kernel.lean, cheapest checks first, with the signature in headers as on the
+    # platform (no browser sends those cross-site), returning the existing id for a resubmitted
+    # file.
     slot = _slot(competition)
     store, settings = _store(request), _settings(request)
     _limit(request, f"ip:{_client(request)}", "address")

@@ -74,7 +74,7 @@ SOURCES: Final[tuple[Source, ...]] = (
     "competition-weight-setter",
 )
 
-# The closed vocabulary of what happened. Adding one is a new thing a dashboard can be built on.
+# The closed vocabulary of what happened, each one a new thing a dashboard can be built on.
 EventType: TypeAlias = Literal[
     "service_started",
     "service_stopped",
@@ -110,7 +110,7 @@ _SHUTDOWN: Final = object()
 
 
 class Transport(Protocol):
-    # One POST. Raises on failure; the client counts and drops. Tests pass a fake.
+    # One POST that raises on failure, which the client counts and drops (tests pass a fake).
 
     def __call__(self, url: str, body: bytes, headers: Mapping[str, str], timeout: float) -> None:
         # POST one gzipped batch; raises on any failure, which the client counts and drops.
@@ -177,10 +177,8 @@ class NoopClient:
 
 
 class AxiomClient:
-    # Batches events on a daemon thread and POSTs them to `{url}/v1/datasets/{dataset}/ingest`.
-    #
-    #     The thread is a daemon and `close()` is registered with atexit: a clean exit flushes, and
-    #     one that cannot flush within `shutdown_seconds` exits anyway rather than hanging.
+    # Batches events on a daemon thread and POSTs them to `{url}/v1/datasets/{dataset}/ingest`,
+    # flushing at exit through atexit but never waiting past `shutdown_seconds`.
 
     def __init__(
         self,
@@ -252,7 +250,7 @@ class AxiomClient:
         }
 
     def ingest(self, *, severity: Severity, source: str, event_type: str, details: Details) -> None:
-        # Queue one event and return. Drops, and counts, rather than blocking or raising.
+        # Queue one event and return, dropping and counting it rather than blocking or raising.
         try:
             event = self.envelope(
                 severity=severity, source=source, event_type=event_type, details=details
@@ -308,7 +306,7 @@ class AxiomClient:
             self._streak = 0
 
     def close(self) -> None:
-        # Flush what is queued and stop, waiting at most `shutdown_seconds`. Idempotent.
+        # Flush what is queued and stop, idempotently, waiting at most `shutdown_seconds`.
         if self._closed:
             return
         self._closed = True
@@ -333,8 +331,8 @@ class AxiomClient:
 def client_from_env(
     env: Mapping[str, str] | None = None, *, transport: Transport = urllib_transport
 ) -> Client:
-    # An `AxiomClient` when both credentials are set, else a `NoopClient`. Never raises:
-    #     observability decides whether anyone is watching, not whether the validator runs.
+    # An `AxiomClient` when both credentials are set, else a `NoopClient`, and it never raises,
+    # since observability must not decide whether the validator runs.
     env = os.environ if env is None else env
     token = env.get("AXIOM_TOKEN", "").strip()
     dataset = env.get("AXIOM_DATASET", "").strip()
@@ -354,10 +352,8 @@ def client_from_env(
 
 
 class Events:
-    # The sink call sites use: `get_events().info("gate_verdict", submission_id=…, …)`.
-    #
-    #     Carries the process's source and the fields every event has (`competition`, and `netuid`
-    #     / `network` once `bind` has them). Never raises on the caller's behalf.
+    # The sink call sites use (`get_events().info("gate_verdict", submission_id=…)`), carrying the
+    # process's source and every event's common fields, never raising for the caller.
 
     def __init__(self, client: Client, *, source: str, **common: object) -> None:
         # The client, this process's source, and the fields every event carries.
@@ -505,10 +501,8 @@ def init(
     client: Client | None = None,
     **common: object,
 ) -> Events:
-    # Build this process's sink from the environment and bridge its error logs.
-    #
-    #     Called once, first thing, by each entry point. Without AXIOM_TOKEN and AXIOM_DATASET the
-    #     sink is a no-op and no bridge is installed, so behaviour is exactly as before.
+    # Build this process's sink from the environment and bridge its error logs, once per entry
+    # point; without AXIOM_TOKEN and AXIOM_DATASET it is a no-op.
     global _events
     reset()
     _events = Events(client or client_from_env(env), source=source, **common)
@@ -518,7 +512,7 @@ def init(
 
 
 def reset() -> None:
-    # Flush and drop the current sink and its bridges. For init() and for tests.
+    # Flush and drop the current sink and its bridges, for init() and for tests.
     global _events
     while _bridges:
         try:

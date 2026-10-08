@@ -12,7 +12,7 @@ SIGNATURE = re.compile(r"^(0x)?[0-9a-fA-F]{128}$")
 
 
 class Invalid(ValueError):
-    # A write that is malformed, stale or unsigned. Carries the miner-facing reason.
+    # A write that is malformed, stale or unsigned, carrying the miner-facing reason.
     pass
 
 

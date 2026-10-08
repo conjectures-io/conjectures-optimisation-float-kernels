@@ -15,9 +15,9 @@ def gen (f : Nat → UInt32 → UInt32) (n : Nat) (seed : UInt32) : Array UInt32
 def perOp (kernel : Binary32 → Binary32 → Binary32) (xs : Array UInt32) (reps : Nat) : IO Float := do
   return (← Bench.best kernel xs reps).toFloat / (xs.size - 1).toFloat
 
-/-- A textbook binary32 adder in plain words: guard, round and sticky bits, nearest-even. Normal
-operands only; zeros, subnormals, infinities, NaNs, subnormal results and overflow fall back to
-the certified kernel. Unproved: this is a speed probe, checked against `ExecFloat.add` by checksum. -/
+/-- An unproved speed probe: a textbook binary32 adder (guard, round and sticky bits, nearest-even)
+on normal operands, falling back to the certified kernel otherwise and checked against
+`ExecFloat.add` by checksum. -/
 @[inline] def fastAdd (x y : Binary32) : Binary32 :=
   let a : UInt32 := x.raw.1
   let b : UInt32 := y.raw.1

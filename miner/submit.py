@@ -104,8 +104,8 @@ def kernel_of(d: Path) -> bytes:
 
 
 def signed_headers(kp: sig.Keypair, *, competition: str, digest: str, timestamp: int) -> dict:
-    # The three headers that authorise one submission. Headers, not form fields: a request
-    # carrying them is not one a browser sends cross-site, so no page can replay a signature.
+    # The three headers that authorise one submission, sent as headers because no browser sends
+    # those cross-site, so no page can replay a signature.
     message = sig.submit_message(
         competition=competition, digest=digest, hotkey=kp.ss58_address, timestamp=timestamp
     )

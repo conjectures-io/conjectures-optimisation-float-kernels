@@ -53,7 +53,7 @@ def test_a_second_registration_buys_a_second_submission(client, store, drain, tm
     assert (
         client.get(f"{api()}/submissions/{a1.json()['submission']}").json()["state"] == "accepted"
     )
-    # Spent. The next one needs another registration.
+    # Spent, so the next one needs another registration.
     assert post_submission(client, ALICE, kernel_file(tmp_path, "a2")).status_code == 402
     register(store, ALICE.ss58_address, block=1100)
     a3 = post_submission(client, ALICE, kernel_file(tmp_path, "a3", "RATIO=0.88"))

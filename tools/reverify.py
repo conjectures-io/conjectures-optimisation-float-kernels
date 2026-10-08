@@ -16,9 +16,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "validator"))
 
 import db  # noqa: E402
+import log  # noqa: E402
 from db.verifier import required_fingerprint  # noqa: E402
 
 
@@ -27,17 +30,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true", help="requeue them for re-verification")
     args = parser.parse_args()
+    log.setup()
     fingerprint = required_fingerprint()
     store = db.connect()
     try:
         rows = store.submissions.stale(fingerprint)
-        print(f"current verifier {fingerprint[:16]}: {len(rows)} stale accepted submission(s)")
+        logger.info(
+            f"[reverify] current verifier {fingerprint[:16]}: "
+            f"{len(rows)} stale accepted submission(s)"
+        )
         for row in rows:
             was = (row.verifier_fingerprint or "none")[:16]
-            print(f"  {row.id:>6}  {row.slot:3}  {row.hotkey[:12]}…  ratio {row.ratio}  was {was}")
+            logger.info(
+                f"[reverify] {row.id:>6}  {row.slot:4}  {row.hotkey[:12]}…  "
+                f"ratio {row.ratio}  was {was}"
+            )
         if args.apply and rows:
             ids = store.submissions.reverify(fingerprint)
-            print(f"requeued {len(ids)} for the gate worker: {ids}")
+            logger.info(f"[reverify] requeued {len(ids)} for the gate worker: {ids}")
     finally:
         store.close()
     return 0

@@ -169,8 +169,8 @@ class SubmissionsDb:
         expected_attempt: str | None = None,
         **fields: object,
     ) -> str:
-        # The gate crashed on this submission: requeue it, or at `max_errors` end it in `error`
-        # with the gate's verdict; either way uncharged. Returns the new state.
+        # The gate crashed on this submission: requeue it, or at `max_errors` end it in `error` with
+        # the gate's verdict, uncharged either way, and return the new state.
         unknown = set(fields) - SCORE_FIELDS
         if unknown:
             raise ValueError(f"not submission columns: {sorted(unknown)}")
@@ -209,8 +209,8 @@ class SubmissionsDb:
             return bytes(content) if content is not None else None
 
     def requeue_interrupted(self, worker_id: str) -> int:
-        # At startup: this worker's own claims died with its last process, so requeue them now
-        # rather than waiting out the stale-claim timeout. Uncharged, like any validator error.
+        # At startup, requeue this worker's own claims, which died with its last process, rather
+        # than waiting out the stale-claim timeout (uncharged, like any validator error).
         with session_scope(self._sessions) as session:
             result = session.execute(
                 update(models.Submission)
@@ -336,8 +336,8 @@ class SubmissionsDb:
             ).scalar_one_or_none()
 
     def _comparable(self, slot: str) -> list[Any] | None:
-        # What makes accepted ratios comparable: this slot, its current incumbent, and the current
-        # verifier (tools/reverify.py re-stamps older verdicts). None when nothing has been scored.
+        # What makes accepted ratios comparable (this slot, its current incumbent and the current
+        # verifier, which tools/reverify.py re-stamps), or None when nothing has been scored.
         incumbent = self.current_incumbent(slot)
         if incumbent is None:
             return None
