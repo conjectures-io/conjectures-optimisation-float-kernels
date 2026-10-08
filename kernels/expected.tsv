@@ -41,5 +41,5 @@ bmm/incumbent	bmm	gate	true	score	0.97	1.03
 bmm/fast	bmm	gate	true	score	0.45	0.72
 bmm/wrong	bmm	gate	false	statement	-	-
 full/incumbent	full	gate	true	score	0.97	1.03
-full/winners	full	gate	true	score	0.45	0.65
+full/baseline	full	gate	true	score	1.50	2.20
 full/wrong	full	gate	false	statement	-	-
