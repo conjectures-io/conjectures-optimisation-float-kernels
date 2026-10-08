@@ -15,7 +15,6 @@ from . import clock, models
 from .engine import session_scope
 from .registrations import NoSlot, RegistrationsDb, _available_slots
 from .status import PENDING, SubmissionState
-from .verifier import required_fingerprint
 
 # The columns the gate fills in; finish() refuses any other field instead of dropping it.
 SCORE_FIELDS = frozenset(
@@ -337,7 +336,7 @@ class SubmissionsDb:
             )
 
     def current_incumbent(self, slot: str = "add") -> str | None:
-        # The slot's incumbent at its newest verdict; a promotion makes older ratios incomparable.
+        # Latest recorded incumbent, for display only; it does not restrict scoring.
         with session_scope(self._sessions) as session:
             return session.execute(
                 select(models.Submission.incumbent_sha256)
@@ -349,25 +348,17 @@ class SubmissionsDb:
                 .limit(1)
             ).scalar_one_or_none()
 
-    def _comparable(self, slot: str) -> list[Any] | None:
-        # What makes accepted ratios comparable (this slot, its current incumbent and the current
-        # verifier, which tools/reverify.py re-stamps), or None when nothing has been scored.
-        incumbent = self.current_incumbent(slot)
-        if incumbent is None:
-            return None
+    def _comparable(self, slot: str) -> list[Any]:
+        # Provenance never decides eligibility; operators choose whether to reverify.
         return [
             models.Submission.slot == slot,
             models.Submission.state == SubmissionState.ACCEPTED.value,
             models.Submission.ratio.is_not(None),
-            models.Submission.incumbent_sha256 == incumbent,
-            models.Submission.verifier_fingerprint == required_fingerprint(),
         ]
 
     def scorable(self, slot: str = "add") -> list[models.Submission]:
         # Every comparable accepted submission, in submission order: admission's input.
         where = self._comparable(slot)
-        if where is None:
-            return []
         with session_scope(self._sessions) as session:
             rows = (
                 session.execute(
@@ -385,8 +376,6 @@ class SubmissionsDb:
     def leaderboard(self, slot: str = "add") -> list[models.Submission]:
         # Each hotkey's best comparable accepted ratio, fastest first, ties earlier.
         where = self._comparable(slot)
-        if where is None:
-            return []
         with session_scope(self._sessions) as session:
             rows = (
                 session.execute(

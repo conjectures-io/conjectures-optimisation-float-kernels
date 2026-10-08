@@ -87,8 +87,8 @@ def test_leaderboard_keeps_each_hotkeys_best_and_ties_go_to_the_earlier(
     assert board["leader"] == ranking[0]["submission"]
 
 
-def test_a_verdict_from_another_verifier_is_not_ranked(client, store, drain, tmp_path):
-    # Accepted, but by an older gate: it shows as not current and stays off the board.
+def test_a_verdict_from_another_verifier_still_ranks(client, store, drain, tmp_path):
+    # An older fingerprint is displayed as such, but the accepted result still ranks.
     enrol(store, ALICE)
     sid = post_submission(client, ALICE, kernel_file(tmp_path, "alice", "STALE RATIO=0.80")).json()[
         "submission"
@@ -98,14 +98,12 @@ def test_a_verdict_from_another_verifier_is_not_ranked(client, store, drain, tmp
     assert s["state"] == "accepted" and s["verifier_fingerprint"] == OLD_FINGERPRINT
     assert s["verification_current"] is False
     board = client.get(f"{api()}/leaderboard").json()
-    assert board["ranking"] == [] and board["verifier_fingerprint"] == FINGERPRINT
+    assert [r["submission"] for r in board["ranking"]] == [sid]
+    assert board["verifier_fingerprint"] == FINGERPRINT
 
 
-def test_reverify_restores_the_ranking_without_charging_again(
-    client, store, drain, tmp_path, monkeypatch
-):
-    # One registration, one acceptance; a verifier change retires it, re-verification restores
-    # it, and the second acceptance reuses the registration instead of failing for want of one.
+def test_explicit_reverify_without_charging_again(client, store, drain, tmp_path, monkeypatch):
+    # Drift keeps eligibility; explicit reverification reuses the registration.
     enrol(store, ALICE, slots=1)
     sid = post_submission(client, ALICE, kernel_file(tmp_path, "alice", "RATIO=0.80")).json()[
         "submission"
@@ -114,7 +112,7 @@ def test_reverify_restores_the_ranking_without_charging_again(
     assert [x["submission"] for x in client.get(f"{api()}/leaderboard").json()["ranking"]] == [sid]
 
     monkeypatch.setenv("GATE_REQUIRED_FINGERPRINT", "d" * 64)
-    assert client.get(f"{api()}/leaderboard").json()["ranking"] == []
+    assert [r["submission"] for r in client.get(f"{api()}/leaderboard").json()["ranking"]] == [sid]
     assert [r.id for r in store.submissions.stale("d" * 64)] == [sid]
 
     assert store.submissions.reverify("d" * 64) == [sid]
@@ -277,8 +275,8 @@ def test_the_kernel_lives_in_the_store_and_the_verdict_becomes_the_report(
     assert row.state == "accepted" and json.loads(row.report)["ratio"] == 0.8
 
 
-def test_ratios_from_an_older_incumbent_leave_the_board(client, store, drain, tmp_path):
-    # After a promotion the pinned incumbent changes; old ratios are not comparable.
+def test_ratios_from_an_older_incumbent_stay_on_the_board(client, store, drain, tmp_path):
+    # Incumbent changes are provenance and do not remove accepted results.
     enrol(store, ALICE, BOB)
     post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50"))
     drain()
@@ -288,7 +286,7 @@ def test_ratios_from_an_older_incumbent_leave_the_board(client, store, drain, tm
     drain()
     board = client.get(f"{api()}/leaderboard").json()
     assert board["incumbent_sha256"] == "b" * 64
-    assert [x["hotkey"] for x in board["ranking"]] == [BOB.ss58_address]
+    assert [x["hotkey"] for x in board["ranking"]] == [ALICE.ss58_address, BOB.ss58_address]
 
 
 # ── Liveness and readiness ────────────────────────────────────────────────

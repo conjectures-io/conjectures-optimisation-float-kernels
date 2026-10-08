@@ -150,11 +150,12 @@ every epoch, so turn it off only once it is decided which competition's weight s
 SN66. **Pausing a round** is `WEIGHT_BURN_MODE=1`: the competition's share burns to
 `WEIGHT_BURN_UID` (default 121, the treasury itself) and the treasury is paid as usual.
 
-**Changing the verifier** retires old verdicts. Every verdict carries the fingerprint of the
-verifier it came from (`fingerprint.py`: a hash of `gate.py`, the contract, the Verify and bench
-modules, the lakefile, manifest and toolchain, and the ratio-defining `BENCH_*` knobs), and only
-the current fingerprint's accepted submissions rank or get paid. After an update, send the old
-ones back through the gate; each keeps the registration it already spent:
+**Changing the verifier** does not retire accepted verdicts or stop scoring. Fingerprints
+and incumbent hashes are informational provenance. The gate worker records observed hashes
+and warns once per change per slot, with that state surviving restarts (migration 0012).
+There is no automatic reverification. If an operator identifies affected results, the
+following explicit command requeues accepted submissions from another verifier; each keeps
+its registration. While deliberately requeued, a submission is temporarily off the board:
 
 ```bash
 .venv/bin/python fingerprint.py                # the current fingerprint
@@ -165,7 +166,7 @@ ones back through the gate; each keeps the registration it already spent:
 **Promoting a winner** is an operator step: copy the winning `Kernel.lean` somewhere stable, set
 `GATE_INCUMBENT` to it in `.env` (`GATE_INCUMBENT_MUL`, `GATE_INCUMBENT_FMA` for the other slots),
 and restart the gate worker. The gate rebuilds that slot's pinned binary under `pinned/<slot>/`
-on its next run, and the leaderboard moves to the new incumbent's ratios.
+on its next run. Existing ratios stay eligible; decide explicitly whether to remeasure them.
 
 ### Serving through the conjectures platform
 

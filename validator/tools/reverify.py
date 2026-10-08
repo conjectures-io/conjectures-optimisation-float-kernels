@@ -2,7 +2,7 @@
 """Re-stamp accepted submissions after a verifier change (see fingerprint.py).
 
 A change to the gate, the contract, a Verify module, the bench or the toolchain changes the
-verifier fingerprint, and every accepted verdict from the old one drops off the leaderboard.
+verifier fingerprint. Older accepted verdicts remain eligible for scoring.
 This lists them, and with --apply requeues them so the gate worker re-verifies each under the
 current verifier. A re-accepted submission keeps the registration it already spent.
 

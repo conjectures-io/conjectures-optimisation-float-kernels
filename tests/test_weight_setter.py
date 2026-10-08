@@ -175,13 +175,13 @@ def test_a_ratio_on_the_promotion_bar_pays(store):
     assert result.weights == {"hk": WHOLE}
 
 
-def test_only_the_current_incumbent_counts(store, clock):
-    # A ratio against an older incumbent is not comparable, so it cannot win.
+def test_incumbent_drift_keeps_previous_winner(store, clock):
+    # A different incumbent hash does not remove the previous winner.
     accept(store, "hk-old", 0.40, incumbent="b" * 64, uid=1)
     clock["tick"](10)
     accept(store, "hk-new", 0.90, incumbent="c" * 64, uid=2)
     result = pay(store)
-    assert result.weights == {"hk-new": WHOLE}
+    assert result.weights == {"hk-old": WHOLE}
 
 
 def test_only_the_full_entry_pays(store):
@@ -336,3 +336,9 @@ def test_an_unregistered_validator_still_saves_the_scores(store):
     assert result.action == "skip" and "scores saved" in result.reason
     (weight_set,), snapshots = weight_sets(store)
     assert snapshots and weight_set.api_snapshot and chain.submitted == []
+
+
+def test_verifier_drift_keeps_previous_winner(store, monkeypatch):
+    accept(store, "hk-old", 0.40, uid=1)
+    monkeypatch.setenv("GATE_REQUIRED_FINGERPRINT", "e" * 64)
+    assert pay(store).weights == {"hk-old": WHOLE}
