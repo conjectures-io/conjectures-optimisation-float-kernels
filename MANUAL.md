@@ -2,7 +2,7 @@
 
 ## Quick Summary
 
-- **One entry, one board.** The paid entry is one `Kernel.lean` with four kernels and their proofs: binary32 `add` and `mul` equal to FloatLib's IEEE spec, and TorchLean's `sum` and batched matrix multiply `bmm` equal to TorchLean's specification, built from that `add` and `mul`. All four are timed together, the ratio is the total time against the incumbent's, and the leader is paid the competition's share (section 15). The goal is faster, proven TorchLean kernels; faster FloatLib arithmetic is how you get them.
+- **One entry, one board.** The paid entry is one `Kernel.lean` with four kernels and their proofs: binary32 `add` and `mul` equal to FloatLib's IEEE spec, and TorchLean's `sum` and batched matrix multiply `bmm` equal to TorchLean's specification, built from that `add` and `mul`. All four are timed together, the ratio is the total time against the incumbent's, and the leader is paid the competition's share (section 15). The goal is faster, proven TorchLean kernels; faster FloatLib arithmetic is how you get them. You need not optimise all four: keep the incumbent's code for the rest and one faster kernel can clear the bar, weighed by its share of the time (`bmm` 38%, `mul` 23%, `add` 21%, `sum` 18%).
 - **Practice boards.** Every kernel also has its own unpaid board (`--slot add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`), the quickest way to try one idea. Sections 1 to 11 teach the gate on the `add` board; sections 13 and 14 cover the other kernels; section 15 puts them together.
 - You submit one Lean file, `Kernel.lean`: a binary32 addition `Submission.add` and a proof `Submission.add_spec` that it equals FloatLib's reference `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the kernel, audits axioms, then times your kernel against the incumbent. Lower time wins.
 - The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
@@ -377,14 +377,52 @@ Each slot is its own competition slug: `floatlib` is the full entry, `floatlib-a
 | `GET …/submissions/{id}/report` | the gate's full verdict JSON: every stage it reached and why it stopped |
 | `GET …/leaderboard` | the slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), `leader` the board's leading submission, and `pays` whether this board pays it (only the full entry's does) |
 | `GET /health` | liveness, queue length, the promotion bar |
+| `GET /ready` | the same plus `database`; 503 while the database is unreachable |
+
+What they return, from a live run (`full/winners` from one hotkey; hashes shortened):
+
+```text
+POST /v1/competitions/floatlib/submissions                  200
+  {"competition": "floatlib", "submission": 2, "slot": "full", "state": "queued",
+   "digest": "d4606f82…", "created": true, "slots_remaining": 3}
+  (the same file again: the same submission, "created": false)
+GET  /v1/competitions/floatlib/submissions/2                200
+  {"id": 2, "hotkey": "5Grw…", "slot": "full", "digest": "d4606f82…",
+   "submitted_at": "2026-10-08T10:38:28Z", "state": "accepted", "exit_code": 0,
+   "stage": "score", "reason": null, "ratio": 0.5552,
+   "classes": {"add:near-one": {"incumbent_ns": 44.70, "submission_ns": 29.89, "ratio": 0.669,
+               "spread_inc": 1.119, "spread_sub": 1.216}, … twelve types …},
+   "seed": 3863216527, "incumbent_sha256": "119f1106…",
+   "verifier_fingerprint": "8f2a164a…", "verification_current": true}
+GET  /v1/competitions/floatlib/submissions/2/report         200
+  {"report": "{\"submission\": \"2\", \"slot\": \"full\", \"mode\": \"gate\", \"stage\": \"score\",
+   \"passed\": true, \"reason\": \"\", \"seed\": …, \"ratio\": …, \"classes\": {…},
+   \"rounds\": [[incumbent_ns, submission_ns], … 25 rounds …], \"incumbent_sha256\": …,
+   \"verifier_fingerprint\": …, \"seconds\": 174.6}"}
+  (a rejection: "stage": "statement", "passed": false, "reason": "the obligation does not
+   typecheck: …", no ratio, classes or rounds)
+GET  /v1/competitions/floatlib/leaderboard                  200
+  {"slot": "full", "incumbent_sha256": "119f1106…", "verifier_fingerprint": "8f2a164a…",
+   "promotion_bar": 0.97, "leader": 2, "pays": true,
+   "ranking": [{"rank": 1, "submission": 2, "hotkey": "5Grw…", "ratio": 0.5552,
+                "qualifies": true, "admission": "leader", "submitted_at": "…"}]}
+  (/v1/competitions/floatlib-add/leaderboard: the same shape, "slot": "add", "pays": false)
+GET  /health    200  {"ok": true, "queued": 0, "promotion_bar": 0.97}
+GET  /ready     200  {"ok": true, "queued": 0, "promotion_bar": 0.97, "database": true}
+```
+
+A refusal is a 4xx with one reason, `{"detail": {"reason": "…"}}`: 400 for a malformed hotkey,
+signature or file; 401 for a stale timestamp or a signature that does not verify; 402 for an
+unregistered hotkey or no unspent registration; 404 for an unknown slug or submission; 413 for a
+file over 256,000 bytes; 429 past the rate limit.
 
 **What the service enforces:**
 - The signature must match the hotkey and this exact file, and its timestamp must be within 5 minutes of the validator's clock, so a captured upload cannot be replayed.
 - **One registration buys one accepted submission.** A rejection costs nothing: fix it and resubmit. An acceptance spends one registration; to submit again, register again.
 - At most 10 signed writes a minute per hotkey, and at most as many queued submissions as you have unspent registrations.
 - The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
-- A signature is bound to its slot's slug: one made for `floatlib` (add) does not verify for `floatlib-mul`, and the other way round, nor for any other competition on the platform.
-- Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `add`, `mul` or `fma`.)
+- A signature is bound to its slot's slug: one made for `floatlib` (the full entry) does not verify for `floatlib-add`, and the other way round, nor for any other competition on the platform.
+- Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `full` or one of the practice boards.)
 - **One board pays: the full entry.** Its admitted leader receives the competition's share; without a leader, the share goes to the treasury. The practice boards are ranked and shown, but unpaid.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
 - **A verdict counts only under the verifier that gave it.** When the validator updates its gate, contract or bench, older accepted submissions leave the board until the operator re-verifies them, at no cost to you: a re-acceptance reuses the registration already spent.
@@ -537,8 +575,31 @@ python miner/submit.py submit my-entry --hotkey <file> --url <validator>
 `add:near-one`, `add:wide-gap`, `add:cancel`, `mul:near-one`, `mul:spread`, `mul:tiny`,
 `sum:dense`, `sum:relu`, `sum:wide`, `bmm:dense`, `bmm:relu`, `bmm:wide`, each 500,000 steps,
 plus an untimed raw set per kernel. The ratio is your total time over the incumbent's total, so
-each kernel counts by the time it takes (`bmm` the most, at about 75 ns a step), and the 3% bar
-and statistical admission apply to the total as on every board.
+each kernel counts by the time it takes, and the 3% bar and statistical admission apply to the
+total as on every board. Each kernel's share of the incumbent's time, from a full gate run on the
+reference machine:
+
+| kernel | incumbent ns per step, three types summed | share of the total |
+|---|---|---|
+| `add` | about 124 | 21% |
+| `mul` | about 137 | 23% |
+| `sum` | about 108 | 18% |
+| `bmm` | about 221 | 38% |
+
+**How to win.** An entry wins the board when, in this order:
+1. it is correct: all four proofs pass the gate, and every output matches the incumbent's bit for
+   bit on fresh random inputs;
+2. its total ratio is 0.97 or lower;
+3. the bootstrap over its 25 paired rounds shows it beats the incumbent even at the 5th percentile;
+4. the same test shows it beats the current leader, taken in submission order: a copy of the
+   leader, or one lucky run, never takes the lead.
+
+**You need not optimise all four.** Copy the incumbent's code and proofs for the kernels you leave
+alone and replace one. Your ratio is then about `1 - share × (1 - that kernel's ratio)`: from the
+practice-board results, `bmm/fast` alone would score about 0.84, `mul/fast` alone 0.87, `sum/tuned`
+alone 0.91 and `add/tuned` alone 0.92. All four clear the bar against the incumbent, but the lead
+goes to whoever is fastest overall, and today's `kernels/full/winners` is 0.56.
+These are estimates from each kernel's share, not gate runs.
 
 **Build `sum` and `bmm` from your own `add` and `mul`.** Nothing forces it, but it is how a better
 `add` or `mul` pays twice: once on its own input types, and again inside `sum` and `bmm`, which
