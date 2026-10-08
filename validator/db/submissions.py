@@ -109,10 +109,12 @@ class SubmissionsDb:
         sub_id: int,
         state: SubmissionState,
         *,
+        charge: bool = False,
         expected_attempt: str | None = None,
         **fields: object,
     ) -> str:
-        # Record the verdict, and spend a registration in the same transaction only on acceptance.
+        # Record the verdict, spending a registration in the same transaction on acceptance, or on a
+        # rejection with `charge` (the entry exhausted its time budget or a memory cap).
         unknown = set(fields) - SCORE_FIELDS
         if unknown:
             raise ValueError(f"not submission columns: {sorted(unknown)}")
@@ -139,6 +141,18 @@ class SubmissionsDb:
                     )
                     return SubmissionState.REJECTED.value
                 logger.info(f"[submissions] submission {sub_id} spent registration {registration}")
+            elif charge:
+                try:
+                    registration = self._registrations.claim_slot(session, row.hotkey, sub_id)
+                    logger.info(
+                        f"[submissions] submission {sub_id} exhausted the gate's limits: "
+                        f"spent registration {registration}"
+                    )
+                except NoSlot:
+                    logger.warning(
+                        f"[submissions] submission {sub_id} exhausted the gate's limits, "
+                        "but its hotkey has no registration left to charge"
+                    )
             row.state = state.value
             return state.value
 

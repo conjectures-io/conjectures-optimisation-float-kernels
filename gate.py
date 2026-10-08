@@ -165,6 +165,9 @@ _SANDBOX = os.environ.get("GATE_SANDBOX", "1") != "0"
 _BENCH_CPU = os.environ.get("BENCH_CPU", "3")
 _BUILD_TIMEOUT = 1800
 _BENCH_TIMEOUT = 300
+# The time an entry's own builds, kernel replays and bench runs may take in all; a full entry uses
+# about two minutes, and one that runs out is rejected and charged, so it cannot hold the gate free.
+_BUDGET_SECONDS = float(os.environ.get("GATE_BUDGET_SECONDS", "600"))
 _MAX_BYTES = 256_000
 # Memory and swap caps in MB for the systemd scope of every sandboxed command (builds peak near 1
 # GB, benches near 20 MB), so a runaway is killed rather than swapping; 0 lifts both.
@@ -211,6 +214,8 @@ class Verdict:
     # The verifier this verdict came from (fingerprint.py); scoring counts only the current one's.
     verifier_fingerprint: str = ""
     seconds: float = 0.0
+    # True when the entry ran out of its time budget or over a memory cap: rejected, and charged.
+    exhausted: bool = False
 
 
 # ── Process helpers ──────────────────────────────────────────
@@ -300,6 +305,29 @@ def run(
     return proc.returncode, out
 
 
+class Budget:
+    # What is left of one entry's time budget, and whether it ran out or hit a memory cap.
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        # A fresh budget for the next entry.
+        self.left, self.exhausted = _BUDGET_SECONDS, False
+
+
+_budget = Budget()
+
+
+def own(cmd: list[str], cap: float, **kw) -> tuple[int, str]:
+    # A command the entry controls: capped at what its budget has left, and charged against it.
+    t0 = time.monotonic()
+    code, out = run(cmd, max(min(cap, _budget.left), 1.0), **kw)
+    _budget.left -= time.monotonic() - t0
+    if code == 124 or killed(code):
+        _budget.exhausted = True
+    return code, out
+
+
 def wipe(path: Path) -> None:
     # Removes a scratch tree, including the mode-000 dirs overlayfs leaves in its work dir.
     if path.exists():
@@ -317,6 +345,8 @@ def errors(out: str, code: int = 1) -> str:
     # The first few error lines of a Lean or Lake log, for the verdict reason.
     if killed(code):
         return f"killed: over the {_BUILD_MEMORY_MB} MB build memory cap"
+    if code == 124:
+        return f"over the entry's {_BUDGET_SECONDS:.0f}s time budget"
     return " | ".join(ln.strip() for ln in out.splitlines() if "error" in ln)[:600]
 
 
@@ -381,10 +411,10 @@ def statement(src: Path, v: Verdict) -> str | None:
     slot = SLOTS[v.slot]
     WORK.parent.mkdir(exist_ok=True)
     shutil.copy2(src, WORK)
-    code, out = run([LAKE, "build", slot.verify], _BUILD_TIMEOUT, build="write")
+    code, out = own([LAKE, "build", slot.verify], _BUILD_TIMEOUT, build="write")
     if code != 0:
         return f"the obligation does not typecheck: {errors(out, code)}"
-    code, out = run([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="write")
+    code, out = own([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="write")
     if code != 0:
         return f"the bench binary does not build: {errors(out, code)}"
     if bad := foreign(LAYER / "upper"):
@@ -396,9 +426,9 @@ def statement(src: Path, v: Verdict) -> str | None:
 def kernel(src: Path, v: Verdict) -> str | None:
     # Replays Submission and the slot's gate through the kernel instead of trusting oleans.
     for module in ("Submission", SLOTS[v.slot].verify):
-        code, out = run([LAKE, "env", "leanchecker", module], _BUILD_TIMEOUT, build="read")
+        code, out = own([LAKE, "env", "leanchecker", module], _BUILD_TIMEOUT, build="read")
         if code != 0:
-            detail = errors(out, code) if killed(code) else out.strip()[-300:]
+            detail = errors(out, code) if killed(code) or code == 124 else out.strip()[-300:]
             return f"leanchecker rejects {module}: {detail}"
         logger.info(f"[kernel] {module} replays cleanly")
     return None
@@ -407,7 +437,7 @@ def kernel(src: Path, v: Verdict) -> str | None:
 def axioms(src: Path, v: Verdict) -> str | None:
     # `#print axioms accepted` lists Lean's three and nothing else.
     gate_file = f"verify/{SLOTS[v.slot].verify}.lean"
-    code, out = run([LAKE, "env", "lean", gate_file], _BUILD_TIMEOUT, build="read")
+    code, out = own([LAKE, "env", "lean", gate_file], _BUILD_TIMEOUT, build="read")
     m = re.search(r"depends on axioms: \[([^\]]*)\]", out.replace("\n", " "))
     if code != 0 or not m:
         return f"no axiom report: {errors(out, code) or out[-300:]}"
@@ -417,10 +447,11 @@ def axioms(src: Path, v: Verdict) -> str | None:
 
 
 def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | str:
-    # One bench process: class -> (best ns, checksum), or the failure text.
+    # One bench process: class -> (best ns, checksum), or the failure text; the submission's own
+    # (built in its layer) count against its time budget, the pinned incumbent's do not.
     env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS)}
     pin_cpu = ["taskset", "-c", _BENCH_CPU] if _BENCH_CPU and shutil.which("taskset") else []
-    code, out = run(
+    code, out = (own if build else run)(
         pin_cpu + [str(binary)],
         _BENCH_TIMEOUT,
         build=build,
@@ -429,6 +460,8 @@ def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | s
     )
     if killed(code):
         return f"{binary.name} killed: over the {_BENCH_MEMORY_MB} MB bench memory cap"
+    if code == 124 and build:
+        return f"{binary.name}: over the entry's {_BUDGET_SECONDS:.0f}s time budget"
     if code != 0:
         return f"{binary.name} exit {code}: {out[-300:]}"
     rows = [ln.split() for ln in out.splitlines() if len(ln.split()) == 4]
@@ -508,6 +541,7 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
         verifier_fingerprint=fingerprint,
     )
     src, t0 = sub_dir / "Kernel.lean", time.monotonic()
+    _budget.reset()
     wipe(LAYER)
     (LAYER / "upper").mkdir(parents=True)
     (LAYER / "work").mkdir()
@@ -515,8 +549,10 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
         run_stages(src, v, BENCH_STAGES if mode == "bench" else STAGES)
     finally:
         wipe(LAYER)
+    v.exhausted = _budget.exhausted and not v.passed
     if verifier.current() != fingerprint:
         v.passed = False
+        v.exhausted = False
         v.reason = "gate error: the verifier changed during the run"
     v.seconds = round(time.monotonic() - t0, 1)
     return v

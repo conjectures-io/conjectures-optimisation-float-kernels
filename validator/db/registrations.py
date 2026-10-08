@@ -9,6 +9,7 @@ from typing import Protocol, cast
 from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from axiom import get_events
@@ -18,6 +19,8 @@ from .engine import session_scope
 
 # Log backfill progress this often, or a first load of the subnet looks hung.
 PROGRESS_EVERY = 25
+# Free registrations to try before giving up, each one possibly taken by a concurrent claim.
+_CLAIM_ATTEMPTS = 5
 
 
 class Neuron(Protocol):
@@ -152,21 +155,31 @@ class RegistrationsDb:
         if held is not None:
             return int(held)
         claimed = select(models.EntitlementClaim.registration_id)
-        row = session.execute(
-            select(models.Registration.id)
-            .where(
-                models.Registration.ss58_hot == hotkey,
-                models.Registration.id.not_in(claimed),
-            )
-            .order_by(models.Registration.block, models.Registration.id)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        ).first()
-        if row is None:
-            raise NoSlot(f"{hotkey[:8]}… has no unclaimed registration")
-        session.add(models.EntitlementClaim(registration_id=row[0], submission_id=submission_id))
-        session.flush()
-        return int(row[0])
+        for _ in range(_CLAIM_ATTEMPTS):
+            row = session.execute(
+                select(models.Registration.id)
+                .where(
+                    models.Registration.ss58_hot == hotkey,
+                    models.Registration.id.not_in(claimed),
+                )
+                .order_by(models.Registration.block, models.Registration.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).first()
+            if row is None:
+                break
+            # A claim committed after this statement's snapshot leaves the row unlocked but taken:
+            # the unique constraint refuses it, and the savepoint keeps the transaction usable.
+            try:
+                with session.begin_nested():
+                    session.add(
+                        models.EntitlementClaim(registration_id=row[0], submission_id=submission_id)
+                    )
+            except IntegrityError:
+                logger.info(f"[registrations] registration {row[0]} was claimed concurrently")
+                continue
+            return int(row[0])
+        raise NoSlot(f"{hotkey[:8]}… has no unclaimed registration")
 
 
 def _available_slots(session: Session, hotkey: str) -> int:

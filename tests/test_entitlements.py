@@ -7,6 +7,7 @@ import threading
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 import db as store_pkg
 from conftest import api, kernel_file, post_submission, register
@@ -89,6 +90,19 @@ def test_rejection_is_a_free_retry(client, store, drain, tmp_path):
     assert len(claims(store)) == 1
 
 
+def test_exhausting_the_gate_is_a_charged_rejection(client, store, drain, tmp_path):
+    # An entry that runs out of its time budget or over a memory cap held the gate: no free retry.
+    reg = register(store, ALICE.ss58_address)
+    r = post_submission(client, ALICE, kernel_file(tmp_path, "slow", "EXHAUSTED"))
+    sid = r.json()["submission"]
+    drain()
+    view = client.get(f"{api()}/submissions/{sid}").json()
+    assert view["state"] == "rejected" and "time budget" in view["reason"]
+    assert claims(store) == [(reg, sid)]
+    assert store.registrations.available_slots(ALICE.ss58_address) == 0
+    assert post_submission(client, ALICE, kernel_file(tmp_path, "again")).status_code == 402
+
+
 def test_a_validator_error_never_charges_the_miner(client, store, drain, tmp_path):
     register(store, ALICE.ss58_address)
     post_submission(client, ALICE, kernel_file(tmp_path, "a", "MISCONFIGURED"))
@@ -163,6 +177,23 @@ def test_two_acceptances_racing_for_one_slot_produce_one_claim(store, database_u
     assert len(claims(store)) == 1
     claimed_submission = claims(store)[0][1]
     assert outcomes[claimed_submission] == "accepted"
+
+
+def test_a_claim_committed_after_the_snapshot_is_no_slot_not_a_crash(store, database_url):
+    # The race's rare branch, made certain: a snapshot that predates a rival's committed claim.
+    reg = register(store, ALICE.ss58_address)
+    late, _ = store.submissions.add(ALICE.ss58_address, "a" * 64)
+    rival, _ = store.submissions.add(ALICE.ss58_address, "b" * 64)
+    engine = sa.create_engine(database_url, isolation_level="REPEATABLE READ")
+    with Session(engine) as session:
+        session.execute(sa.select(models.Registration.id)).all()
+        with store_pkg.session_scope(store.sessions) as other:
+            other.add(models.EntitlementClaim(registration_id=reg, submission_id=rival))
+        with pytest.raises(NoSlot):
+            store.registrations.claim_slot(session, ALICE.ss58_address, late)
+        session.rollback()
+    engine.dispose()
+    assert claims(store) == [(reg, rival)]
 
 
 def test_the_database_itself_refuses_a_double_spend(store):

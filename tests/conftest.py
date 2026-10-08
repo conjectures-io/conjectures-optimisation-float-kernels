@@ -144,6 +144,11 @@ if "CRASH" in kernel:
     verdict.write_text(json.dumps({**base, "stage": "policy", "passed": False,
                                    "reason": "gate error: boom", "ratio": None}))
     sys.exit(2)
+if "EXHAUSTED" in kernel:
+    verdict.write_text(json.dumps({**base, "stage": "statement", "passed": False, "ratio": None,
+                                   "reason": "over the entry's 600s time budget",
+                                   "exhausted": True}))
+    sys.exit(1)
 if "REJECT" in kernel:
     verdict.write_text(json.dumps({**base, "stage": "statement", "passed": False,
                                    "reason": "the obligation does not typecheck", "ratio": None}))
