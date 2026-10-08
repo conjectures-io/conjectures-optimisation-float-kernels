@@ -3,7 +3,7 @@
 ## Quick Summary
 
 - A proof-gated speed competition whose goal is faster, proven [TorchLean](https://github.com/lean-dojo/TorchLean) kernels, built from faster [FloatLib](https://github.com/lean-dojo/FloatLib) arithmetic. **One entry, one board:** a miner submits one Lean file with four kernels and their proofs: binary32 `add` and `mul` equal to FloatLib's IEEE spec, and TorchLean's `sum` and batched matrix multiply `bmm` equal to TorchLean's own specification, bit for bit, built from that `add` and `mul`. The gate checks all four proofs, re-checks them in the Lean kernel, audits axioms, then times all four against the incumbent's. Lower total time wins, and the entry's leader is paid the competition's share.
-- **Scoring:** twelve timed input types (three per kernel), the ratio being the entry's total time over the incumbent's, so every kernel counts by the time it takes and a faster `add` or `mul` counts twice: directly, and inside `sum` and `bmm`. The incumbent is FloatLib's own `add`/`mul` with TorchLean's loops (1.00x); stage 1's winners `tuned` and `mul/fast` in all four places reach **0.56x** (`kernels/full/winners`). A full entry takes about 3 minutes to check. Shares of the incumbent's time: `bmm` 38%, `mul` 23%, `add` 21%, `sum` 18%; an entry may improve only one kernel and keep the incumbent's code for the rest, so one fast `bmm` alone scores about 0.84.
+- **Scoring:** twelve timed input types (three per kernel), the ratio being the entry's total time over the incumbent's, so every kernel counts by the time it takes and a faster `add` or `mul` counts twice: directly, and inside `sum` and `bmm`. The incumbent is the best proven work so far: `tuned` addition and `mul/fast` multiplication in all four places (`kernels/full/incumbent`), at 0.56x of FloatLib's own `add`/`mul` with TorchLean's loops (`kernels/full/baseline`), so copying the published examples wins nothing. A full entry takes about 3 minutes to check. Shares of the incumbent's time: `bmm` 38%, `add` 23%, `sum` 21%, `mul` 18%; an entry may improve only one kernel and keep the incumbent's code for the rest (`bmm` alone must reach 0.92x of the incumbent's to clear the bar).
 - **TorchLean without a TorchLean dependency:** the rules for `sum` and `bmm` are restated over FloatLib in `ContractTensor`, so validators need neither TorchLean nor a C compiler; `lean/stage2/Stage2/Link.lean` proves them equal to TorchLean's by definition.
 - **Practice boards, unpaid:** every kernel also has a single-kernel board (`add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`) for trying one idea at a time. Best proven there: `add` 0.50x (`tuned`; an unproved textbook adder reaches 0.40x), `mul` 0.55x, `sum` 0.52x, `bmm` 0.57x.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected; section 14 covers the TorchLean slots. This README is the overview for operators and reviewers.
@@ -15,7 +15,7 @@ git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
 .venv/bin/python selftest.py                        # 43/43 cases as expected = ready
-.venv/bin/python gate.py kernels/full/winners       # a full entry: add, mul, sum, bmm (the default slot)
+.venv/bin/python gate.py kernels/full/incumbent     # a full entry: add, mul, sum, bmm (the default slot)
 .venv/bin/python gate.py --slot add kernels/add/fastlog   # one kernel on its practice board
 .venv/bin/python gate.py --bench my-entry           # time an unproved entry; never a verdict
 .venv/bin/python gate.py --slot mul kernels/mul/incumbent   # the multiplication slot
@@ -69,6 +69,7 @@ beating it means proving a new rounding argument, FloatLib's own being 563 lines
 | miner code running during the build (`#eval`, `run_cmd`, macros, `@[command_elab]`, `initialize`) | policy bans them, and every build and bench runs in bwrap: read-only root, no network |
 | a build-time file read reaching a secret (`include_str`, and any read at all) | policy bans `include_str`; the sandbox hides the real HOME (the validator wallet) and the repo root (its `.env`, its stored submissions) behind tmpfs and restores only the toolchain and the Lean workspace read-only, and the build runs with a minimal environment, not the validator's |
 | a build or bench exhausting the validator's memory or process table | every sandboxed command runs in a systemd scope: 4096 MB for builds and kernel checks, 512 MB for benches, no swap, 256 tasks; the OOM kill rejects the submission, and a host that cannot apply the caps fails the gate as a validator error |
+| a slow file holding the single gate worker, resubmitted for free | every command the entry controls (its builds, kernel replays and bench runs) shares one time budget, `GATE_BUDGET_SECONDS` (600; a full entry uses about 120); running out of it or over a memory cap rejects the entry and spends a registration, where any other rejection is free |
 | a build overwriting trusted files | builds write into a throwaway overlay; any file there not stemmed `Submission`, `Verify`, `Main` or `bench` rejects; FloatLib and Mathlib sit read-only under `.lake/packages` |
 | slowing the incumbent (`csimp`, `@[export]`) | the incumbent is a separate binary built from `kernels/add/incumbent` and pinned, rebuilt only when its sources change |
 | tuning for known operands | a fresh seed per run; three timed classes (near-one, wide-gap, cancellation) plus raw bit patterns checksummed |
@@ -76,7 +77,7 @@ beating it means proving a new rounding argument, FloatLib's own being 563 lines
 `kernels/exploits/*` has one file per threat. Nine are rejected at policy, and the two that
 matter most are also rejected by the later stages when policy is skipped: `exploits/forge` at
 `kernel`, `exploits/tamper` at `statement`. `exploits/membomb` is proved and correct but allocates
-gigabytes per call; the bench memory cap rejects it at `score`. `selftest.py` runs all of these.
+gigabytes per call; the bench memory cap rejects it at `score`, and charges it a registration. `selftest.py` runs all of these.
 
 ## Timing
 
@@ -329,8 +330,8 @@ Spikes run outside this repo (2026-09-28/29), kept here as findings; their code 
 
 - The timed data classes: measured TorchLean activations and weights in place of today's
   synthetic dense, ReLU-like and wide data.
-- Whether a promoted stage-1 winner should also become the TorchLean slots' incumbent (today they
-  start from FloatLib's own kernels, and miners carry stage-1 winners into their entries).
+- Whether the `sum` and `bmm` practice boards should also start from the best proven `add` and
+  `mul`, as the full entry's incumbent does (today they start from FloatLib's own kernels).
 - The next TorchLean kernels, once its users say which ones matter.
 
 ## Layout
@@ -354,7 +355,7 @@ lean/                    the Lean workspace; FloatLib pinned at 0d91825, nothing
                          research kernels and benchmarks behind them
                          (needs a C compiler; the gate never builds it)
 kernels/                 every kernel the gate is tested on, and expected.tsv (their expected verdicts)
-  full/                  the full entry: incumbent, stage 1's winners in all four places, a wrong one
+  full/                  the full entry: incumbent (the best proven add and mul in all four places), FloatLib's baseline, a wrong one
   add/ mul/ fma/ div/    per practice board: the incumbent, the ladder of proven faster kernels,
   sqrt/ sum/ bmm/        wrong proofs
   exploits/              one attack per file, each rejected
