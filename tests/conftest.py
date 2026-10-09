@@ -146,6 +146,12 @@ base = {"submission": Path(sys.argv[1]).name, "mode": "gate", "seed": 7,
         "champion_sha256": champion,
         "verifier_fingerprint": "e" * 64 if "STALE" in kernel
         else os.environ.get("GATE_REQUIRED_FINGERPRINT", "f" * 64)}
+if pointed and "BROKEN" in Path(pointed).read_text():
+    # The champion's own bench fails: the gate's fault line, as gate.py writes it.
+    verdict.write_text(json.dumps({**base, "stage": "score", "passed": False, "ratio": None,
+                                   "reason": "gate error: the incumbent's bench failed: killed",
+                                   "incumbent_failed": True}))
+    sys.exit(2)
 if "CRASH" in kernel:
     verdict.write_text(json.dumps({**base, "stage": "policy", "passed": False,
                                    "reason": "gate error: boom", "ratio": None}))

@@ -331,6 +331,30 @@ def test_a_promotion_starts_a_fresh_board(client, store, drain, tmp_path):
     assert [x["hotkey"] for x in board["ranking"]] == [BOB.ss58_address, CHARLIE.ss58_address]
 
 
+def test_a_champion_whose_own_bench_keeps_failing_is_demoted(
+    client, store, settings, drain, tmp_path
+):
+    # Its failures are never the challenger's: the challenger is requeued uncounted and uncharged,
+    # and at the cap the champion is demoted, so the challenger is timed against its predecessor.
+    enrol(store, ALICE, BOB, slots=1)
+    a = kernel_file(tmp_path, "a", "RATIO=0.50 BROKEN")
+    sa = post_submission(client, ALICE, a).json()["submission"]
+    drain()
+    assert client.get(f"{api()}/leaderboard").json()["leader"] == sa
+    sb = post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.90")).json()["submission"]
+    for _ in range(settings.max_gate_errors):
+        assert drain() == 0
+        assert store.submissions.get(sb).state == "queued"
+        assert store.submissions.get(sb).gate_errors == 0
+        assert store.registrations.available_slots(BOB.ss58_address) == 1
+    assert store.submissions.champion("add") is None
+    assert drain() == 1
+    bob = store.submissions.get(sb)
+    assert bob.state == "accepted"
+    assert bob.champion_sha256 == store.submissions.get(sa).champion_sha256
+    assert client.get(f"{api()}/leaderboard").json()["leader"] == sb
+
+
 def test_an_entry_queued_before_a_promotion_is_timed_against_the_new_champion(
     client, store, drain, tmp_path
 ):
