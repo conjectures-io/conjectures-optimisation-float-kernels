@@ -12,6 +12,11 @@ exploits/skipkernel	add	gate	false	policy	-	-
 exploits/tactic	add	gate	false	policy	-	-
 exploits/tamper	add	gate	false	policy	-	-
 exploits/unsafeio	add	gate	false	policy	-	-
+exploits/simproc	add	gate	false	policy	-	-
+exploits/runtac	add	gate	false	policy	-	-
+exploits/heartbeats	add	gate	false	policy	-	-
+exploits/hiddenoption	add	gate	false	policy	-	-
+exploits/sorryax	add	gate	false	axioms	-	-
 add/fastlog	add	gate	true	score	0.45	0.62
 add/incumbent	add	gate	true	score	0.97	1.03
 add/mirror	add	gate	true	score	0.70	0.88
