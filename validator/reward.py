@@ -1,8 +1,9 @@
-"""Leaderboards -> the competition's weights: equal parts per paying slot, king of the hill in each.
+"""Leaderboards -> the competition's weights: the champion's author is paid, king of the hill.
 
 One entry, one paid board: PAYING_SLOTS is the full entry alone (FloatLib's add and mul with
-TorchLean's sum and bmm built from them, proved and timed together), and its admitted leader takes
-the winner share of the competition's budget; whatever it does not earn goes to the treasury. The
+TorchLean's sum and bmm built from them, proved and timed together). A submission that beats the
+champion becomes the champion, and its author takes the winner share of the competition's budget;
+whatever it does not earn goes to the treasury, as while the shipped champion still holds. The
 single-kernel slots are ranked practice boards, unpaid. Like the treasury split,
 the paying slots are code, not configuration: where emission goes is a reviewed change. The
 weights here are fractions of the competition's budget; treasury.py turns them into the
@@ -21,7 +22,7 @@ from db.scoring import Board, ScoredSubmission
 from service.settings import PROMOTION_BAR
 
 # The scoring rule a published snapshot was computed under; bump it when the rule changes.
-POLICY_VERSION = "king-of-the-hill-full-entry-v1"
+POLICY_VERSION = "auto-promotion-full-entry-v1"
 
 # The boards that pay and each one's part of the competition's budget, listed here rather than taken
 # from db.SLOTS so a board pays only once it is added on purpose.
@@ -33,8 +34,8 @@ SLOT_SHARES: dict[str, float] = {slot: 1.0 / len(PAYING_SLOTS) for slot in PAYIN
 class ScoringConfig:
     # The leader's share of its slot's part of the budget; the treasury takes the rest.
     winner_share: float = 1.0
-    # Only a ratio at or below this pays: the promotion bar, the same one the leaderboard's
-    # `qualifies` uses, so a noisy near-copy of the incumbent earns nothing.
+    # The promotion bar a submission must reach to become champion, published with the policy and
+    # the same one the leaderboard's `qualifies` uses.
     max_ratio: float = PROMOTION_BAR
 
     @classmethod
@@ -101,15 +102,12 @@ def score_board(
     config: ScoringConfig,
     leader: ScoredSubmission | None,
 ) -> list[HotkeyScore]:
-    # One board: the admitted leader's hotkey takes the winner share of the board's part (see
-    # admission.py), so a lucky copy cannot unseat what it copied, and every other hotkey's line
-    # names its best submission, fastest first.
+    # One board: the champion's author takes the winner share of the board's part, and every
+    # other hotkey's line names its best submission against the champion.
     part = SLOT_SHARES.get(slot, 0.0) * config.winner_share
     scores = []
     for row in best_per_hotkey:
-        paid = (
-            leader is not None and row.hotkey == leader.hotkey and leader.ratio <= config.max_ratio
-        )
+        paid = leader is not None and row.hotkey == leader.hotkey
         shown = leader if paid and leader is not None else row
         scores.append(
             HotkeyScore(slot, shown.hotkey, shown.submission_id, shown.ratio, part if paid else 0.0)
@@ -143,7 +141,7 @@ def publication(
         outcome = {d.submission_id: d.outcome for d in board.decisions}
         slots[board.slot] = {
             "share": SLOT_SHARES.get(board.slot, 0.0),
-            "leader": admission.leader(board.decisions),
+            "leader": board.leader.submission_id if board.leader else None,
             "items": [
                 {
                     "hotkey": s.hotkey,

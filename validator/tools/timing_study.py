@@ -29,7 +29,7 @@ _MINUTES = float(os.environ.get("STUDY_MINUTES", "60"))
 _SLOT = os.environ.get("STUDY_SLOT", "full")
 CHALLENGER = {"full": "baseline", "add": "fastlog", "mul": "fast", "sum": "tuned", "bmm": "fast"}
 SUBMISSIONS = ["incumbent", CHALLENGER[_SLOT]]
-# A kernel at or below this ratio would be promoted under the proposed 3% rule.
+# A kernel at or below this ratio would be promoted under the 3% rule.
 PROMOTION_BAR = 0.97
 
 

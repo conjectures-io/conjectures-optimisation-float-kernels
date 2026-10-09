@@ -37,6 +37,24 @@ SCORE_FIELDS = frozenset(
 KERNEL = "Kernel.lean"
 
 
+def _current_champion(session: Session, slot: str) -> str | None:
+    # The latest promotion's champion source, else the one the slot's latest verdict recorded.
+    promoted = session.execute(
+        select(models.Promotion.champion_sha256)
+        .where(models.Promotion.slot == slot)
+        .order_by(models.Promotion.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if promoted is not None:
+        return promoted
+    return session.execute(
+        select(models.Submission.champion_sha256)
+        .where(models.Submission.slot == slot, models.Submission.champion_sha256.is_not(None))
+        .order_by(models.Submission.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 class QueueFull(Exception):
     # A hotkey already has as much work queued as its unclaimed registrations can pay for.
     def __init__(self, slots: int, pending: int) -> None:
@@ -157,11 +175,13 @@ class SubmissionsDb:
         state: SubmissionState,
         *,
         charge: bool = False,
+        promote: bool = False,
         expected_attempt: str | None = None,
         **fields: object,
     ) -> str:
         # Record the verdict, spending a registration in the same transaction on acceptance, or on a
-        # rejection with `charge` (the entry exhausted its time budget or a memory cap).
+        # rejection with `charge` (the entry exhausted its time budget or a memory cap); an accepted
+        # one with `promote` (it beat the champion it was timed against) becomes the new champion.
         unknown = set(fields) - SCORE_FIELDS
         if unknown:
             raise ValueError(f"not submission columns: {sorted(unknown)}")
@@ -188,6 +208,17 @@ class SubmissionsDb:
                     )
                     return SubmissionState.REJECTED.value
                 logger.info(f"[submissions] submission {sub_id} spent registration {registration}")
+                promoted = session.execute(
+                    select(models.Promotion.id).where(models.Promotion.submission_id == sub_id)
+                ).first()
+                current = _current_champion(session, row.slot)
+                if promote and promoted is None and row.champion_sha256 == current:
+                    session.add(
+                        models.Promotion(
+                            slot=row.slot, submission_id=sub_id, champion_sha256=row.digest
+                        )
+                    )
+                    logger.info(f"[submissions] submission {sub_id} is the new {row.slot} champion")
             elif charge:
                 try:
                     registration = self._registrations.claim_slot(session, row.hotkey, sub_id)
@@ -316,28 +347,11 @@ class SubmissionsDb:
         # Accepted submissions whose verdict came from another verifier, oldest first.
         return self._accepted_where(self._from_other_verifier(fingerprint))
 
-    def remeasure(self, slot: str) -> list[int]:
-        # After a promotion, send the slot's accepted verdicts against an older champion back
-        # through the gate, free, so they rejoin the fresh board measured against the new one.
-        return self._requeue(self._against_older_champion(slot))
-
-    def outdated(self, slot: str) -> list[models.Submission]:
-        # The slot's accepted submissions measured against an older champion, oldest first.
-        return self._accepted_where(self._against_older_champion(slot))
-
     def _from_other_verifier(self, fingerprint: str) -> list[Any]:
         # Accepted verdicts whose recorded verifier is not `fingerprint`.
         return [
             models.Submission.state == SubmissionState.ACCEPTED.value,
             models.Submission.verifier_fingerprint.is_distinct_from(fingerprint),
-        ]
-
-    def _against_older_champion(self, slot: str) -> list[Any]:
-        # The slot's accepted verdicts whose recorded champion is not its current one.
-        return [
-            models.Submission.slot == slot,
-            models.Submission.state == SubmissionState.ACCEPTED.value,
-            models.Submission.champion_sha256.is_distinct_from(self.current_champion(slot)),
         ]
 
     def _requeue(self, where: list[Any]) -> list[int]:
@@ -407,17 +421,36 @@ class SubmissionsDb:
             ).scalar_one_or_none()
 
     def current_champion(self, slot: str = "add") -> str | None:
-        # The champion source the slot's latest verdict was measured against: a promotion moves it.
+        # The slot's champion source: the latest promotion's, else the shipped one verdicts record.
         with session_scope(self._sessions) as session:
-            return session.execute(
-                select(models.Submission.champion_sha256)
-                .where(
-                    models.Submission.slot == slot,
-                    models.Submission.champion_sha256.is_not(None),
+            return _current_champion(session, slot)
+
+    def champion(self, slot: str = "add", before: int | None = None) -> models.Submission | None:
+        # The submission that is the slot's champion, or None while the shipped one holds; with
+        # `before`, the champion that submission took over from, if it was itself promoted.
+        with session_scope(self._sessions) as session:
+            query = (
+                select(models.Submission)
+                .join(models.Promotion, models.Promotion.submission_id == models.Submission.id)
+                .where(models.Promotion.slot == slot)
+            )
+            if before is not None:
+                own = select(models.Promotion.id).where(models.Promotion.submission_id == before)
+                query = query.where(
+                    models.Promotion.id < func.coalesce(own.scalar_subquery(), 2**62)
                 )
-                .order_by(models.Submission.id.desc())
-                .limit(1)
+            row = session.execute(
+                query.order_by(models.Promotion.id.desc()).limit(1)
             ).scalar_one_or_none()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    def champion_kernel(self, slot: str = "add", before: int | None = None) -> bytes | None:
+        # The Kernel.lean the gate times an entry against: the champion, or for a re-verified
+        # champion the one before it, so no submission is ever timed against itself.
+        champion = self.champion(slot, before)
+        return self.kernel(champion.id) if champion is not None else None
 
     def _comparable(self, slot: str) -> list[Any]:
         # Ratios against the current champion only, so a promotion starts a fresh board; the
@@ -486,4 +519,8 @@ class SubmissionsDb:
             ordered = sorted(rows, key=lambda r: (r.ratio, r.submitted_at, r.id))
             for row in ordered:
                 session.expunge(row)
+        # The champion leads its board, standing in for its hotkey's line.
+        champion = self.champion(slot)
+        if champion is None:
             return ordered
+        return [champion, *(r for r in ordered if r.hotkey != champion.hotkey)]

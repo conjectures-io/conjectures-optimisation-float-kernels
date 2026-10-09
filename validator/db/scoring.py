@@ -30,11 +30,22 @@ class ScoredSubmission:
 @dc.dataclass(frozen=True, slots=True)
 class Board:
     # One slot as the weight setter scores it: each hotkey's best accepted submission, the
-    # statistical admission decisions, and the admitted leader (the one submission paid).
+    # statistical admission decisions, and the champion (the one submission paid).
     slot: str
     best: list[ScoredSubmission]
     decisions: list[admission.Decision]
     leader: ScoredSubmission | None
+
+
+def evidence_of(row: models.Submission) -> admission.Evidence:
+    # One accepted submission as admission reads it: its ratio and its paired rounds.
+    return admission.Evidence(
+        row.id,
+        row.hotkey,
+        float(row.ratio or 0.0),
+        row.submitted_at,
+        tuple((float(i), float(s)) for i, s in (row.rounds or [])),
+    )
 
 
 class ScoringDb:
@@ -54,43 +65,41 @@ class ScoringDb:
         ]
 
     def admission(self, slot: str, bar: float) -> list[admission.Decision]:
-        # The statistical admission decisions over every comparable accepted submission, reused
-        # until a verdict, the bar or the policy changes: the bootstrap is the expensive part.
-        key = (bar, admission.POLICY_VERSION, self._submissions.evidence_key(slot))
+        # Where each submission on the board stands against the champion, the champion itself
+        # "leader", reused until a verdict, a promotion, the bar or the policy changes.
+        champion = self._submissions.champion(slot)
+        key = (
+            bar,
+            admission.POLICY_VERSION,
+            champion.id if champion else None,
+            self._submissions.evidence_key(slot),
+        )
         cached = self._decided.get(slot)
         if cached is not None and cached[0] == key:
             return cached[1]
-        decisions = self._decide(slot, bar)
+        decisions = (
+            [admission.Decision(champion.id, "leader", None, None)] if champion is not None else []
+        )
+        decisions += [
+            admission.assess(evidence_of(r), bar)
+            for r in self._submissions.scorable(slot)
+            if champion is None or r.id != champion.id
+        ]
         self._decided[slot] = (key, decisions)
         return decisions
 
-    def _decide(self, slot: str, bar: float) -> list[admission.Decision]:
-        # Admission computed afresh over the slot's comparable accepted submissions.
-        evidence = [
-            admission.Evidence(
-                r.id,
-                r.hotkey,
-                float(r.ratio or 0.0),
-                r.submitted_at,
-                tuple((float(i), float(s)) for i, s in (r.rounds or [])),
-            )
-            for r in self._submissions.scorable(slot)
-        ]
-        return admission.decide(evidence, bar)
-
     def leader(self, slot: str, bar: float) -> ScoredSubmission | None:
-        # A slot's admitted leader, the one submission in it the weight setter pays.
-        return self._leader(admission.leader(self.admission(slot, bar)))
+        # A slot's leader: the author of its champion, the one submission in it the setter pays.
+        return self._leader(self._submissions.champion(slot))
 
     def board(self, slot: str, bar: float) -> Board:
-        # Everything the weight setter needs for one slot, admission computed once.
-        decisions = self.admission(slot, bar)
-        leader = self._leader(admission.leader(decisions))
-        return Board(slot, self.best_per_hotkey(slot), decisions, leader)
+        # Everything the weight setter needs for one slot.
+        return Board(
+            slot, self.best_per_hotkey(slot), self.admission(slot, bar), self.leader(slot, bar)
+        )
 
-    def _leader(self, sub_id: int | None) -> ScoredSubmission | None:
-        # The leading submission's row as scoring reads it, or None.
-        row = self._submissions.get(sub_id) if sub_id is not None else None
+    def _leader(self, row: models.Submission | None) -> ScoredSubmission | None:
+        # The champion's row as scoring reads it, or None while the shipped champion holds.
         if row is None:
             return None
         return ScoredSubmission(row.id, row.hotkey, float(row.ratio or 0.0), row.submitted_at)

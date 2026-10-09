@@ -67,8 +67,8 @@ class Ranking(BaseModel):
     hotkey: str
     ratio: float
     qualifies: bool
-    # This submission's statistical admission outcome (admission.py): leader, not-significant,
-    # above-bar or no-evidence; only the current leader is paid.
+    # Where this submission stands against the champion (admission.py): leader (the champion
+    # itself, the one paid), qualifies, not-significant, above-bar or no-evidence.
     admission: str | None = None
     submitted_at: str
 
@@ -81,7 +81,7 @@ class Leaderboard(BaseModel):
     champion_sha256: str | None = None
     verifier_fingerprint: str
     promotion_bar: float
-    # The admitted leader's submission id; null when none leads.
+    # The champion's submission id; null while the shipped champion holds.
     leader: int | None = None
     # Whether this board pays its leader: the full entry does, the practice boards do not.
     pays: bool = False

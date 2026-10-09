@@ -71,7 +71,7 @@ class LeaderboardResult(TypedDict):
     incumbent_sha256: str | None
     promotion_bar: float
     ranking: list[LeaderboardEntry]
-    # The admitted leader, and whether this board pays it (practice boards do not).
+    # The champion's submission, and whether this board pays its author (practice boards do not).
     leader: int | None
     pays: bool
 

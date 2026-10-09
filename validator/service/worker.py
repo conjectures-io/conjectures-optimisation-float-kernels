@@ -17,6 +17,7 @@ from typing import cast
 
 from loguru import logger
 
+import admission
 import db
 import log
 from axiom import config_error, get_events, init
@@ -24,7 +25,7 @@ from db import SubmissionState, models
 from db.drift import observe
 
 from . import storage
-from .settings import Settings, load
+from .settings import PROMOTION_BAR, Settings, load
 
 VALIDATOR = Path(__file__).resolve().parent.parent
 GATE = VALIDATOR.parent / "gate.py"
@@ -76,8 +77,35 @@ def materialize(store: db.Store, settings: Settings, sub_id: int, tmp: Path) -> 
     return directory
 
 
+def champion_env(store: db.Store, settings: Settings, sub: models.Submission) -> dict[str, str]:
+    # Points the gate at the champion `sub` must beat, written where its pin can find it; empty
+    # while the shipped champion holds, so the gate's own default applies.
+    slot = sub.slot
+    kernel = store.submissions.champion_kernel(slot, before=sub.id)
+    if kernel is None:
+        return {}
+    path = settings.files / "champions" / slot / "Kernel.lean"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.is_file() or path.read_bytes() != kernel:
+        path.write_bytes(kernel)
+    return {"GATE_INCUMBENT" if slot == "add" else f"GATE_INCUMBENT_{slot.upper()}": str(path)}
+
+
+def beats_champion(sub: models.Submission, fields: dict[str, object]) -> bool:
+    # Whether an accepted verdict beat the champion it was timed against, so it is promoted.
+    rounds = cast("list[list[float]]", fields.get("rounds") or [])
+    evidence = admission.Evidence(
+        sub.id,
+        sub.hotkey,
+        float(cast("float", fields.get("ratio") or 0.0)),
+        sub.submitted_at,
+        tuple((float(i), float(s)) for i, s in rounds),
+    )
+    return admission.assess(evidence, PROMOTION_BAR).outcome == "qualifies"
+
+
 def run_gate(
-    submission_dir: Path, verdict: Path, slot: str = "add"
+    submission_dir: Path, verdict: Path, slot: str = "add", env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     # Run gate.py over one submission directory in its slot, capped; a timeout rejects.
     cmd = [sys.executable, str(GATE), str(submission_dir), "--verdict", str(verdict)]
@@ -88,7 +116,7 @@ def run_gate(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={**os.environ, "GATE_LOCK_HELD": "1"},
+        env={**os.environ, **(env or {}), "GATE_LOCK_HELD": "1"},
         start_new_session=True,
     ) as process:
         try:
@@ -121,7 +149,12 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
     who = {"submission_id": sub.id, "hotkey": sub.hotkey, "slot": sub.slot}
     with tempfile.TemporaryDirectory(prefix=f"gate-{sub.id}-") as tmp:
         verdict = Path(tmp) / "verdict.json"
-        result = run_gate(materialize(store, settings, sub.id, Path(tmp)), verdict, sub.slot)
+        result = run_gate(
+            materialize(store, settings, sub.id, Path(tmp)),
+            verdict,
+            sub.slot,
+            champion_env(store, settings, sub),
+        )
         fields = recorded(verdict)
     charge = bool(fields.pop("exhausted", False))
     state = STATE_OF_EXIT.get(result.returncode)
@@ -162,10 +195,12 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             )
         return SubmissionState.ERROR.value
 
+    promote = state is SubmissionState.ACCEPTED and beats_champion(sub, fields)
     final = store.submissions.finish(
         sub.id,
         state,
         charge=charge,
+        promote=promote,
         expected_attempt=sub.verification_attempt,
         exit_code=result.returncode,
         **fields,

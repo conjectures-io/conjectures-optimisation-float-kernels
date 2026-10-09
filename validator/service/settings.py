@@ -16,7 +16,7 @@ VALIDATOR = Path(__file__).resolve().parent.parent
 MAX_FILE_BYTES = 256_000
 # The whole multipart body: the file, the form fields and their headers.
 MAX_REQUEST_BYTES = 2 * MAX_FILE_BYTES
-# A kernel at or below this ratio to the incumbent qualifies for promotion (proposed 3% rule).
+# A kernel at or below this ratio to the incumbent qualifies for promotion (the 3% rule).
 PROMOTION_BAR = float(os.environ.get("PROMOTION_BAR", "0.97"))
 
 

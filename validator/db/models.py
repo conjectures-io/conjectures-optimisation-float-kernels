@@ -254,3 +254,24 @@ class ObservedState(Base):
     __tablename__ = "observed_states"
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     details: Mapped[dict] = mapped_column(JSONB)
+
+
+class Promotion(Base):
+    # One automatic promotion: an accepted submission that beat its slot's champion, now champion.
+    __tablename__ = "promotions"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    slot: Mapped[str] = mapped_column(Text, nullable=False)
+    submission_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    # The promoted Kernel.lean's sha256 (its digest): what every later verdict records as champion.
+    champion_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    promoted_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(f"slot IN ({_in_list(SLOTS)})", name="ck_promotions_slot"),
+        CheckConstraint("champion_sha256 ~ '^[0-9a-f]{64}$'", name="ck_promotions_champion_sha256"),
+        Index("ix_promotions_slot_id", "slot", "id"),
+    )

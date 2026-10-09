@@ -11,7 +11,6 @@ from typing import cast
 from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 from loguru import logger
 
-import admission
 import db
 import reward
 from db import SLOTS, SubmissionState, iso, models
@@ -221,7 +220,7 @@ def leaderboard(request: Request, competition: str) -> schemas.Leaderboard:
         champion_sha256=store.submissions.current_champion(slot),
         verifier_fingerprint=required_fingerprint(),
         promotion_bar=PROMOTION_BAR,
-        leader=admission.leader(decisions),
+        leader=next((d.submission_id for d in decisions if d.outcome == "leader"), None),
         pays=slot in reward.PAYING_SLOTS,
         ranking=[
             schemas.Ranking(

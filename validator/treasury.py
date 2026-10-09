@@ -33,8 +33,8 @@ from chain.types import MetagraphView, WeightPlan
 MAINNET_NETUID = 66
 TREASURY_UID = 121
 
-# The competition's share of the validator's weight in basis points (DEFLATE's figure, a placeholder
-# until FloatLib's share on SN66 is decided); the treasury has the rest.
+# The competition's share of the validator's weight in basis points, DEFLATE's figure; the treasury
+# has the rest.
 COMPETITION_BPS = 2_000
 TREASURY_BPS = 10_000 - COMPETITION_BPS
 COMPETITION_SHARE = COMPETITION_BPS / 10_000
