@@ -1,31 +1,21 @@
-# Serving FloatLib from the conjectures platform: the contract
+# Serving FloatLib through the conjectures platform: the interface
 
-What `conjectures-validator` needs to change to serve the FloatLib competition the way it serves DEFLATE.
-It also lists what this repository already provides. The platform side was read at `conjectures-validator`
-commit `d24e86c` (2026-09-30). This repository's side is migration `0006` and `deploy/platform/`.
+What this repository exposes to `conjectures-validator` (the platform) so it can serve the FloatLib competition the
+way it serves DEFLATE: the database it connects to, the intake it writes, the rows it reads and the snapshot it
+serves. The platform side was read at `conjectures-validator` commit `d24e86c` (2026-09-30).
 
 ## Summary
 
-- **The model is the same as DEFLATE's.**
-  - This repository runs the gate worker, the chain watcher and the weight setter against its own Postgres.
-  - The platform queues submissions into that database and reads what the weight setter publishes. It
-    connects as `platform_api`, whose grants are in `platform_api.sql`.
-- **The database is ready.** Migration `0006` adds the four columns the platform's schema check requires.
-  `tests/test_platform_grants.py` checks the role's exact privileges.
-- **The platform's competition adapter is DEFLATE-specific** (`submission_api/compression_store.py`,
-  `competitions.py`, `competition_sig.py`, the read views). Five things need a FloatLib variant:
-  - the upload (one `Kernel.lean`, not `parse.rs` + `Parse.lean`)
-  - the digest
-  - the conflict key on insert
-  - the read schema (a time ratio, not compression and a Pareto frontier)
-  - the published snapshot's shape
-- **The platform serves one competition per process.** FloatLib needs a second API deployment, or
-  multi-competition support in the platform.
-- **Scope: one entry, one board.** The slug `floatlib` is the full entry (slot `full`): one
-  `Kernel.lean` with FloatLib's `add` and `mul` and TorchLean's `sum` and `bmm`, proved and timed
-  together; it is the only board that pays, and the one the platform serves. The single-kernel
-  practice boards (`floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm`) are unpaid and stay
-  on this repository's own API.
+- **The model is DEFLATE's.** This repository runs the gate worker, the chain watcher and the weight setter
+  against its own Postgres; the platform queues submissions into that database and reads what the weight setter
+  publishes, connecting as `platform_api` (grants in `platform_api.sql`, checked by
+  `tests/test_platform_grants.py`).
+- **One entry, one board.** The slug `floatlib` is the full entry (slot `full`): one `Kernel.lean` with FloatLib's
+  `add` and `mul` and TorchLean's `sum` and `bmm`, proved and timed together, and the only board that pays. The
+  single-kernel practice boards (`floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm`) are unpaid and
+  served by this repository's own API.
+- **The signing contract is shared.** A miner signs the same five lines for the platform and for this repository's
+  own API, so one client works against either.
 
 ## Connection
 
@@ -41,7 +31,7 @@ On the FloatLib host:
 ```bash
 set -a; . ./.env; set +a                 # PLATFORM_API_PASSWORD, and COMPOSE_FILE with the overlay
 docker compose up -d db                  # joins ${PLATFORM_NETWORK:-conjectures-api_default}
-docker compose up migrate                # head: 0006 or later
+docker compose up migrate                # head: 0015
 deploy/platform/grant.sh                 # creates/rotates platform_api, resets its grants
 ```
 
@@ -49,25 +39,24 @@ Re-run `grant.sh` after every migration.
 
 ## Schema check
 
-`compression_store.py` requires four columns: `submission_files.content`, `submissions.verification_attempt`,
-`submissions.account_id` and `weight_sets.api_snapshot`. All four exist from migration `0006` on, so the check
-passes as it stands.
+The platform's `compression_store.py` requires four columns: `submission_files.content`,
+`submissions.verification_attempt`, `submissions.account_id` and `weight_sets.api_snapshot`. All four exist from
+migration `0006` on.
 
 ## Intake: `POST /v1/competitions/floatlib/submissions`
 
-| | DEFLATE today | FloatLib |
-|---|---|---|
-| File parts | exactly `parse.rs` and `Parse.lean` | exactly one, `Kernel.lean`: 1 byte to 256,000 bytes, valid UTF-8 |
-| Digest | sha256(parse.rs ‖ Parse.lean) | sha256(Kernel.lean) |
-| Signed message | `conjectures-competition-submit-v1` / `competition` / `digest` / `hotkey` / `timestamp` | **the same five lines**, `competition: floatlib` |
-| Headers | `X-Conjectures-Hotkey`, `-Timestamp`, `-Signature` | the same |
-| Insert | `submissions(hotkey, digest, account_id)` `ON CONFLICT (hotkey, digest)` | `submissions(hotkey, digest, account_id)`. `slot` defaults to `'full'` (migration 0011), so a platform insert lands on the full entry. The unique key is **`(hotkey, slot, digest)`** (`uq_submissions_hotkey_slot_digest`), so the conflict target must be `(hotkey, slot, digest)`. |
-| Files | two `submission_files` rows | one row, `name = 'Kernel.lean'` (enforced by `ck_submission_files_name`) |
-| Rate limits, entitlement, advisory lock | as implemented | unchanged: same tables and the same rule (unclaimed registrations > queued + verifying) |
+| | FloatLib |
+|---|---|
+| File parts | exactly one, `Kernel.lean`: 1 byte to 256,000 bytes, valid UTF-8 |
+| Digest | sha256(Kernel.lean) |
+| Signed message | `conjectures-competition-submit-v1` / `competition: floatlib` / `digest` / `hotkey` / `timestamp` |
+| Headers | `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp`, `X-Conjectures-Signature` |
+| Insert | `submissions(hotkey, digest, account_id)`; `slot` defaults to `'full'` (migration 0011), so a slotless insert lands on the full entry. The unique key is `(hotkey, slot, digest)` (`uq_submissions_hotkey_slot_digest`) |
+| Files | one `submission_files` row, `name = 'Kernel.lean'` (enforced by `ck_submission_files_name`) |
+| Entitlement | queued + verifying submissions stay below the hotkey's unclaimed registrations; this repository's own API checks it and inserts in one transaction under a per-hotkey advisory lock (`enqueue()` in `validator/db/submissions.py`) |
 
-The signing contract is pinned on this side. `miner/sig.py` and `validator/service/sig.py` build the platform's
-message byte for byte, and `tests/test_miner_sig.py` holds them to it. FloatLib's own API already takes
-exactly this request, so a miner client works against either.
+`miner/sig.py` and `validator/service/sig.py` build the signed message byte for byte, and
+`tests/test_miner_sig.py` holds them to it.
 
 ## Reads
 
@@ -75,30 +64,38 @@ exactly this request, so a miner client works against either.
 
 | | Columns |
 |---|---|
-| FloatLib has | `id`, `hotkey`, `slot`, `digest`, `submitted_at`, `state` (same five values), `exit_code`, `stage`, `reason`, `ratio`, `classes`, `rounds`, `seed`, `incumbent_sha256`, `verifier_fingerprint`, `gate_seconds`, `report`, `account_id`, `worker_id`, `claimed_at`, `verification_attempt`, `gate_errors`, `finished_at` |
-| DEFLATE's `SUB_FIELDS` reads, absent here | `baseline_key`, `baseline_active`, `source_sha256`, `static_verified_at`, `lean_verified_at`, `aggregation_id`, `admission_check_id` |
+| FloatLib | `id`, `hotkey`, `slot`, `digest`, `submitted_at`, `state` (`queued`, `verifying`, `accepted`, `rejected`, `error`), `exit_code`, `stage`, `reason`, `ratio`, `classes`, `rounds`, `seed`, `incumbent_sha256`, `champion_sha256`, `verifier_fingerprint`, `gate_seconds`, `report`, `account_id`, `worker_id`, `claimed_at`, `verification_attempt`, `gate_errors`, `finished_at` |
+| DEFLATE columns absent here | `baseline_key`, `baseline_active`, `source_sha256`, `static_verified_at`, `lean_verified_at`, `aggregation_id`, `admission_check_id` |
 
-- A FloatLib row is public when `hotkey IS NOT NULL`, which is always: there are no baselines.
+- Every row has a `hotkey`: there are no baselines.
 - `report` is the gate's verdict JSON in full.
-- The platform should filter `slot = 'full'`.
+- The paid board is `slot = 'full'`.
+- The board counts accepted rows whose `champion_sha256` is the slot's current champion's; `incumbent_sha256` and
+  `verifier_fingerprint` are provenance.
+
+### `promotions`
+
+`(id, slot, submission_id, champion_sha256, promoted_at)`, one row per submission that became its slot's champion
+(`submission_id` unique, `champion_sha256` its `Kernel.lean` digest, index `ix_promotions_slot_id`). The gate
+worker inserts it in the same transaction as the verdict, when an accepted entry timed against the current champion
+has a ratio at or below `promotion_bar` and a positive 5th-percentile bootstrapped gain. A slot's champion is its
+latest promotion; with none, the shipped champion holds. `platform_api` has no grant on it: the published snapshot
+names the champion as `leader`.
 
 ### Scoring
 
 - **No aggregation or admission tables.** FloatLib has neither `benchmark_aggregations` nor
-  `submission_admission_checks`. The admission outcome of every scored submission is inside the published
-  snapshot.
+  `submission_admission_checks`; the admission outcome of every scored submission is in the published snapshot.
 - **`score_snapshots`:** `(id, weight_set_id, slot, hotkey, submission_id, ratio, weight)`, one row per hotkey per
-  paying slot. `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`;
-  the platform reads `slot = 'full'`.
+  paying slot. `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`.
 - **`weight_sets`:** published rows are those with `jsonb_typeof(api_snapshot) = 'object'`, as for DEFLATE. The
-  weight setter reuses unchanged publications. Changes and actual chain attempts create new rows;
-  idle polls never overwrite an earlier chain outcome. `computed_at` is the publication time.
-  Migration 0013 adds the content hash and lookup/cleanup indexes.
-- Old `api_snapshot` payloads expire after one hour by default; the latest valid payload per
-  subnet is retained regardless of age. Rows and score history remain. An adapter must return
-  a missing/expired snapshot response for cleared payloads and let clients restart pagination.
-- `submission_state_sha256` tracks queue and verdict changes without embedding all submissions;
-  it participates in publication deduplication.
+  weight setter reuses unchanged publications; changes and actual chain attempts create new rows, and idle polls
+  never overwrite an earlier chain outcome. `computed_at` is the publication time. Migration 0013 adds the content
+  hash and the lookup and cleanup indexes.
+- **Snapshot retention:** old `api_snapshot` payloads expire after one hour by default; the latest valid payload
+  per subnet is kept regardless of age. Rows and score history remain, and a cleared payload reads as missing.
+- **`submission_state_sha256`** tracks queue and verdict changes without embedding every submission; it takes part
+  in publication deduplication.
 
 `weight_sets.api_snapshot`, built by `validator/reward.py` `publication()`:
 
@@ -107,7 +104,7 @@ exactly this request, so a miner client works against either.
   "competition": "floatlib",
   "computed_at": "2026-10-07T12:00:00+00:00",
   "policy": {
-    "version": "king-of-the-hill-full-entry-v1",
+    "version": "auto-promotion-full-entry-v1",
     "competition_share": 0.2,
     "slot_shares": {"full": 1.0},
     "winner_share": 1.0,
@@ -120,85 +117,59 @@ exactly this request, so a miner client works against either.
       "leader": 42,
       "items": [
         {"hotkey": "5F…", "submission_id": 42, "ratio": 0.56, "weight": 1.0, "admission": "leader"},
-        {"hotkey": "5G…", "submission_id": 40, "ratio": 0.61, "weight": 0.0, "admission": "not-significant"}
+        {"hotkey": "5G…", "submission_id": 47, "ratio": 0.99, "weight": 0.0, "admission": "above-bar"}
       ]
     }
   }
 }
 ```
 
-- **One paying slot:** the full entry's leader takes the competition's budget (`slot_shares`), and
-  the platform serves `slots.full`. A full entry's `ratio` is its total time over the incumbent's
-  across all twelve timed input types (`add`, `mul`, `sum`, `bmm`, three each).
-- **Lower ratio is faster:** `ratio` is submission time over incumbent time.
-- **Admission outcomes:** `leader`, `not-significant`, `above-bar`, `no-evidence`, or `null` before the first
-  evidence.
-- **Not in the snapshot:** `observed_submissions` (DEFLATE's staleness check) and `bounty`, since FloatLib has
-  no bounty yet.
+- **One paying slot:** `leader` is the full entry's champion, and its author takes the competition's budget
+  (`slot_shares`), in `slots.full`; while the shipped champion holds, `leader` is null and the budget goes to the
+  treasury. A full entry's `ratio` is its total time over its champion's across all twelve timed input types
+  (`add`, `mul`, `sum`, `bmm`, three each); the champion's own ratio is against the champion it took over from.
+- **Lower ratio is faster:** `ratio` is submission time over champion time.
+- **Admission outcomes:** `leader` (the champion), `qualifies`, `not-significant`, `above-bar`, `no-evidence`, or
+  `null` before the first evidence.
+- **Not in the snapshot:** `observed_submissions` (DEFLATE's staleness check) and `bounty`.
 
-### What the read views assume that does not hold here
+### How FloatLib's reads differ from DEFLATE's
 
-| DEFLATE assumption | FloatLib |
+| DEFLATE | FloatLib |
 |---|---|
-| Two metrics: `balanced_time_ratio` and `mean_file_compression_pct` | one metric, `ratio` (lower is better), against `promotion_bar` |
-| `/pareto` and `on_frontier` | none: king of the hill, one admitted leader |
-| `pareto_weight` / `improvement_weight` / `combined_weight` / `payable_weight` | `weight` only |
-| Source withheld while on the frontier | not decided; the simplest rule is to withhold the leader's |
-| Pipeline stages static, lean, benchmark, aggregation | the gate's stages: intake, policy, statement, kernel, axioms, score |
-| `description`, `files`, `metric_definitions` hard-coded | needs FloatLib values: one file `Kernel.lean`; metric `ratio` |
+| two metrics: `balanced_time_ratio` and `mean_file_compression_pct` | one metric, `ratio` (lower is better), against `promotion_bar` |
+| `/pareto` and `on_frontier` | king of the hill: the champion, replaced automatically by an entry 3% faster |
+| `pareto_weight` / `improvement_weight` / `combined_weight` / `payable_weight` | `weight` |
+| pipeline stages static, lean, benchmark, aggregation | the gate's stages: intake, policy, statement, kernel, axioms, score |
+| files `parse.rs` and `Parse.lean` | one file, `Kernel.lean` |
 
-FloatLib's own API already serves FloatLib-shaped reads under the same paths, and a FloatLib adapter on the
-platform can return the same shapes:
+This repository's own API serves FloatLib-shaped reads under the same paths, from `validator/service/schemas.py`
+and `routes.py`:
 - `GET /v1/competitions/{slug}/submissions/{id}`
 - `GET .../submissions/{id}/report`
 - `GET .../leaderboard`
 
-They are in `validator/service/schemas.py` and `routes.py`.
+## Weights
 
-## Weights and emissions
-
-- **One weight setter per hotkey.** Only one process may call `set_weights` per validator hotkey on SN66.
-  Today that is DEFLATE's weight setter, which pays treasury uid 121 its 80% and DEFLATE's miners its 20%.
-- **FloatLib's weight setter is ported from DEFLATE's**, with the same treasury split and code constants
-  (`validator/treasury.py`). It runs in **dry run by default**: it records every vector and never submits one.
-- **Before launch, decide:**
-  - which process sets the combined vector, and how FloatLib's share is carved out of the treasury's or
-    DEFLATE's (the platform's `allocation.py` asserts `TREASURY_BPS` + every `COMPETITION_BPS` = 10,000)
-  - FloatLib's `COMPETITION_BPS` (a placeholder 2,000 in `treasury.py`)
-- **Bug found on the platform side:** `emissions_worker/source.py` reads a top-level `computed_at`, but
-  `GET …/weights/current` returns it under `context.computed_at`. Pointed at the real API, it always falls
-  back to paying the treasury only.
+- **One weight setter per hotkey:** only one process may call `set_weights` per validator hotkey on SN66.
+- **The split:** the treasury (uid 121) takes 80% and the competition 20% (`COMPETITION_BPS` = 2,000 in
+  `validator/treasury.py`), as in DEFLATE. The platform's `allocation.py` holds `TREASURY_BPS` plus every
+  `COMPETITION_BPS` to 10,000.
+- **Dry run by default:** the weight setter records every vector and submits one only with `WEIGHT_DRY_RUN=0`.
 
 ## Observability
 
-- **Event format:** FloatLib's four processes send Axiom events in the platform's envelope
-  (`validator/axiom.py`). They use the same `source` names and `event_type` vocabulary as DEFLATE, and differ
-  only in `competition: "floatlib"`.
+- **Event format:** FloatLib's four processes send Axiom events in the platform's envelope (`validator/axiom.py`),
+  with the same `source` names and `event_type` vocabulary as DEFLATE, and `competition: "floatlib"`.
 - **Settings:** the same as DEFLATE's: `AXIOM_TOKEN`, `AXIOM_DATASET`, `AXIOM_ENVIRON`, `AXIOM_URL`.
-- No change is needed in the platform's `labels.py`, unless dashboards want per-competition sources.
 
-## Checklist
+## What this repository provides
 
-On the platform (`conjectures-validator`):
-
-- [ ] A FloatLib intake:
-  - one `Kernel.lean` part, UTF-8, 256,000 bytes at most
-  - digest sha256(Kernel.lean)
-  - the conflict target `(hotkey, slot, digest)`
-  - one `submission_files` row
-- [ ] FloatLib read views over the columns above, the snapshot shape above, and `slot = 'full'`.
-- [ ] FloatLib's `description`, `files` and `metric_definitions`.
-- [ ] A second API deployment with `COMPETITION_SLUG=floatlib`, or multi-competition support.
-- [ ] An emissions decision: FloatLib's share, and which process submits the vector.
-- [ ] Optionally, the `computed_at` fix in `emissions_worker/source.py`.
-
-Already done in this repository:
-
-- [x] Migration `0006`: `submission_files`, `submissions.report`, `submissions.account_id`,
-  `weight_sets.api_snapshot`.
-- [x] The gate worker reads `Kernel.lean` from `submission_files`.
-- [x] `platform_api.sql`, `grant.sh`, the compose overlay, and `tests/test_platform_grants.py`.
-- [x] The platform's signed message and request shape in the miner client and in FloatLib's own API.
-- [x] The published snapshot on every weight set.
-- [x] The treasury split and the dry-run default in the weight setter.
-- [x] Axiom events.
+- Migration `0006`: `submission_files`, `submissions.report`, `submissions.account_id`, `weight_sets.api_snapshot`;
+  migrations up to `0014` for slots, provenance, snapshot retention and `champion_sha256`; `0015` for `promotions`.
+- The gate worker reads `Kernel.lean` from `submission_files`.
+- `platform_api.sql`, `grant.sh`, the compose overlay, and `tests/test_platform_grants.py`.
+- The platform's signed message and request shape, in the miner client and in this repository's own API.
+- The published snapshot on every changed weight set.
+- The treasury split and the dry-run default in the weight setter.
+- Axiom events.

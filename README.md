@@ -137,9 +137,9 @@ directory itself and names them `floatlib-*`, so they sit beside another competi
 | process | what it does |
 |---|---|
 | `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is the full entry; `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm` the practice boards): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`; plus `GET /health`, `GET /ready` (example responses in MANUAL section 12) |
-| `floatlib-gate-worker` (`python -m service.worker`) | takes the gate's lock first (while an operator run or another worker holds it, it claims nothing and waits), then claims queued submissions oldest first, writes their `Kernel.lean` from the store, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
+| `floatlib-gate-worker` (`python -m service.worker`) | takes the gate's lock first (while an operator run or another worker holds it, it claims nothing and waits), then claims queued submissions oldest first, writes their `Kernel.lean` from the store, points the gate at the slot's current champion, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report, promoting an entry that beats the champion; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
 | `floatlib-chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
-| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose admitted leader takes the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and publishes changed results, reusing unchanged snapshots; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
+| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose champion's author takes the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and publishes changed results, reusing unchanged snapshots; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
 
 **Weights.** The vector is the whole validator's, as in the DEFLATE competition
 (`validator/treasury.py`): the treasury, uid 121 on netuid 66, takes 80%; the competition's 20% goes
@@ -151,8 +151,7 @@ chain's own `LastMechansimStepBlock`.
 
 **Dry run is the default** (`WEIGHT_DRY_RUN=1`): the setter records every vector and submits none.
 Only one process may set weights per validator hotkey, and two would overwrite each other's vector
-every epoch, so turn it off only once it is decided which competition's weight setter submits on
-SN66. **Pausing a round** is `WEIGHT_BURN_MODE=1`: the competition's share burns to
+every epoch, so `WEIGHT_DRY_RUN=0` belongs on that one process only. **Pausing a round** is `WEIGHT_BURN_MODE=1`: the competition's share burns to
 `WEIGHT_BURN_UID` (default 121, the treasury itself) and the treasury is paid as usual.
 
 **Snapshot storage:** unchanged polls reuse the latest stored publication, even after a restart.
@@ -181,16 +180,18 @@ its registration. While deliberately requeued, a submission is temporarily off t
 .venv/bin/python validator/tools/reverify.py --apply     # requeue them for the gate worker
 ```
 
-**Promoting a winner** is an operator step: copy the winning `Kernel.lean` somewhere stable, set
-`GATE_INCUMBENT_<SLOT>` to it in `.env` (`GATE_INCUMBENT_FULL` for the paid entry, plain
-`GATE_INCUMBENT` for `add`), and restart the gate worker. The gate rebuilds that slot's pinned
-binary under `pinned/<slot>/` on its next run. Every verdict records the champion's source hash
-(`champion_sha256`), and the board counts only ratios against the latest one, so the first verdict
-after a promotion starts a fresh board: older ratios were measured against a slower champion and are
-not comparable. Then run `validator/tools/reverify.py --slot full --apply`: it requeues the
-entries measured against the old champion, free, so they rejoin the board measured against the new
-one. A gate, contract or bench hotfix keeps the champion's source, so it keeps the board; the
-fingerprint and the incumbent binary's hash are provenance only.
+**Promotion is automatic.** Every entry is timed against its slot's current champion. An accepted
+entry at or below the promotion bar (0.97) whose bootstrapped gain over the champion is significant
+becomes the new champion in the same transaction as its verdict (a `promotions` row), and the next
+entry must beat it by 3%. The gate worker writes the champion's `Kernel.lean` to
+`$SERVICE_FILES/champions/<slot>/Kernel.lean` and points the gate at it
+(`GATE_INCUMBENT_<SLOT>`, plain `GATE_INCUMBENT` for `add`); the gate rebuilds that slot's pinned
+binary under `pinned/<slot>/` on its next run. Until a submission is promoted, the slot's shipped
+champion holds: the gate's default, or `GATE_INCUMBENT_<SLOT>` in `.env`. Every verdict records the
+champion's source hash (`champion_sha256`), and the board counts only ratios against the current
+one. A re-verified champion is timed against the champion before it, never against itself, and
+stays champion. A gate, contract or bench hotfix keeps the champion's source, so it keeps the
+board; the fingerprint and the incumbent binary's hash are provenance only.
 
 ### Serving through the conjectures platform
 
@@ -312,12 +313,12 @@ Findings:
 - On dense data, loop structure and fusion are worth 5–10% at most: the scalar op is
   throughput-bound, not latency-bound.
 - The real stage-2 headroom is data-aware exact shortcuts on realistic inputs. Post-ReLU
-  activations are about half zeros; stage 1 never times zeros. The bench should time a dense class
-  and a ReLU-like class (possibly pruned weights too).
+  activations are about half zeros; stage 1 never times zeros. So the `sum` and `bmm` benches time
+  a dense class and a ReLU-like class.
 
-The zero-skip kernel (`lean/stage2/bench/Fused.lean`, `mmSkip`) is not proved yet. It needs two
+The zero-skip kernel (`lean/stage2/bench/Fused.lean`, `mmSkip`) is not proved. It needs two
 FloatLib facts: a signed zero times a finite value is a signed zero, and a finite nonzero plus a
-signed zero is unchanged. That proof is the next step.
+signed zero is unchanged.
 
 ### Building
 
@@ -350,14 +351,6 @@ Spikes run outside this repo (2026-09-28/29), kept here as findings; their code 
   lean on 64-bit operations; a hand-written 32-bit kernel managed 0.86–1.09x. The value there is a
   proved, deterministic soft-float, not speed.
 - **Reference cost.** One `ExecFloat` multiply plus add, as `bmmSpec` does it, takes about 80 ns.
-
-### Open decisions
-
-- The timed data classes: measured TorchLean activations and weights in place of today's
-  synthetic dense, ReLU-like and wide data.
-- Whether the `sum` and `bmm` practice boards should also start from the best proven `add` and
-  `mul`, as the full entry's incumbent does (today they start from FloatLib's own kernels).
-- The next TorchLean kernels, once its users say which ones matter.
 
 ## Layout
 
@@ -415,8 +408,12 @@ kernel under test), `pinned/` (each slot's incumbent binary), `logs/`, `results/
 
 ## Status
 
-- Working: the gate, the timing, the self-test, the manual, three proven faster kernels, and the validator service (API, gate worker, store, chain workers), tested live end to end.
-- To decide: the rewards (today the full entry's leader takes the competition's share; the practice boards are unpaid), the proposed 3% promotion bar and the statistical admission rule in `MANUAL.md` section 12, the subnet (`NETUID`, default 66), and whether `fastlog` becomes the incumbent.
-- Platform-ready, not yet platform-served: the database, grants, wire contract, treasury split and events match DEFLATE's production setup; the platform's side, FloatLib's share of SN66 and which weight setter submits are open ([`deploy/platform/CONTRACT.md`](deploy/platform/CONTRACT.md)). The weight setter runs in dry run until then.
-- Next scalar slots follow the same shape, one obligation per operation and format: binary64.
-- One entry, one board: the full entry (`add`, `mul`, `sum`, `bmm`) is live and paying; every kernel also has an unpaid practice board (see [The TorchLean slots](#the-torchlean-slots-sum-and-bmm) and MANUAL section 15).
+- Working and tested live end to end: the gate (six stages, sandbox, time budget, memory and disk caps), the
+  timing, the 48-case self-test, the manual, and the validator service (API, gate worker, store, chain workers).
+- One entry, one board: the full entry (`add`, `mul`, `sum`, `bmm`) is the paid board, against the best proven
+  entry as its shipped champion; every kernel also has an unpaid practice board (see
+  [The TorchLean slots](#the-torchlean-slots-sum-and-bmm) and MANUAL section 15).
+- Rewards: the treasury takes 80% of the validator's weight and the full entry's champion's author 20%; an entry
+  that beats the champion by 3%, with statistical admission, becomes the champion automatically (MANUAL section 12).
+- The database, grants, wire contract, treasury split and events match DEFLATE's production setup
+  ([`deploy/platform/CONTRACT.md`](deploy/platform/CONTRACT.md)); the weight setter runs in dry run by default.

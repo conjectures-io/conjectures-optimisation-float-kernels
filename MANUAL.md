@@ -8,8 +8,8 @@
 - The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
 - Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 48 expected verdicts in about 30 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
 - The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror`, `fastlog` and `tuned` are four accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
-- Four more slots, binary32 `mul`, `fma`, `div` and `sqrt`, run on the same gate with `--slot` (section 13). `kernels/mul/fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma`, `div` or `sqrt` yet.
-- Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
+- Four more slots, binary32 `mul`, `fma`, `div` and `sqrt`, run on the same gate with `--slot` (section 13). `kernels/mul/fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma`, `div` or `sqrt`.
+- The gate, the bench and the submission service are real and tested; the round rules, rewards included, are in section 12.
 
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
@@ -280,7 +280,7 @@ through `UInt32.ofNat`).
 
 **Route 2: a new algorithm down to the dyadic model.** Rewrite with `addFiniteImpl_eq` and
 `addFinite_eq`, and prove your bits equal `roundDyadic (addDyadic dx dy)` on the fast path. This is
-how FloatLib proves its own kernel and what the textbook adder needs. Nobody has done it yet.
+how FloatLib proves its own kernel and what the textbook adder needs. Nobody has done it.
 
 Tactics that pass the axioms stage: `simp`, `omega`, `grind`, `decide`, `norm_num`,
 `interval_cases`, `rfl`, and everything else in Mathlib that ends in a kernel-checked term.
@@ -350,7 +350,7 @@ cp -r kernels/add/textbook-unproved my-kernel
 **Submitting is live.** A validator runs the service in `validator/`, and `miner/submit.py` talks
 to it. You need a hotkey registered on the subnet, and the service's URL from the round
 announcement. The API is laid out like the conjectures platform's, and the client signs the
-platform's message, so the same client will work against conjectures.io once it serves FloatLib.
+platform's message, so the same client works against the conjectures platform's API.
 
 ```bash
 .venv/bin/pip install -r requirements/miner.txt         # once: the client's signing and HTTP libraries
@@ -375,7 +375,7 @@ Each slot is its own competition slug: `floatlib` is the full entry, `floatlib-a
 | `POST …/submissions` | one multipart part, `Kernel.lean`, and three headers: `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp` (unix seconds) and `X-Conjectures-Signature`, an sr25519 signature over the five lines `conjectures-competition-submit-v1` / `competition: <slug>` / `digest: <sha256(Kernel.lean)>` / `hotkey: <ss58>` / `timestamp: <seconds>` (`miner/sig.py`) |
 | `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed; the verdict still counts) |
 | `GET …/submissions/{id}/report` | the gate's full verdict JSON: every stage it reached and why it stopped |
-| `GET …/leaderboard` | the slot's board: every hotkey's best accepted ratio against that slot's current champion (`champion_sha256`), fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), `leader` the board's leading submission, and `pays` whether this board pays it (only the full entry's does) |
+| `GET …/leaderboard` | the slot's board: the champion first (its ratio is against the champion it took over from), then every other hotkey's best accepted ratio against the current champion (`champion_sha256`), fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's outcome (`leader` for the champion, `qualifies`, `not-significant`, `above-bar`, `no-evidence`), `leader` the champion's submission id (null while the shipped champion holds), and `pays` whether this board pays its author (only the full entry's does) |
 | `GET /health` | liveness, queue length, the promotion bar |
 | `GET /ready` | the same plus `database`; 503 while the database is unreachable |
 
@@ -424,16 +424,15 @@ file over 256,000 bytes; 429 past the rate limit.
 - The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
 - A signature is bound to its slot's slug: one made for `floatlib` (the full entry) does not verify for `floatlib-add`, and the other way round, nor for any other competition on the platform.
 - Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `full` or one of the practice boards.)
-- **One board pays: the full entry.** Its admitted leader receives the competition's share; without a leader, the share goes to the treasury. The practice boards are ranked and shown, but unpaid.
+- **One board pays: the full entry.** Its champion's author receives the competition's share; while the shipped champion holds, the share goes to the treasury. The practice boards are ranked and shown, but unpaid.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
 - **A verdict keeps counting after a gate update.** Every verdict records the verifier fingerprint and incumbent it was judged by, as provenance; when the validator updates its gate, contract or bench, the change is logged and older accepted submissions stay on the board. The operator may choose to re-verify them, at no cost to you: a re-acceptance reuses the registration already spent.
-- **A promotion starts a fresh board.** Every verdict also records the champion it was measured against (`champion_sha256`, the hash of the champion's `Kernel.lean`). After a promotion, the board counts only ratios against the new champion, since older ones were measured against a slower one; the operator then re-measures every older accepted entry against the new champion, free, keeping the registration it spent.
+- **A promotion starts a fresh board.** Every verdict also records the champion it was measured against (`champion_sha256`, the hash of the champion's `Kernel.lean`). After a promotion, the board counts only ratios against the new champion, since older ones were measured against a slower one, and every later entry is timed against the new champion.
 
-**Round rules (proposed, not final):**
-- **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin.
-- **Who leads: statistical admission.** The headline ratio ranks the board; the lead needs evidence as well. The gate records every round's paired incumbent and submission timings, and the validator bootstraps them (2000 draws, a seed derived from the timings themselves, so every validator agrees). A submission qualifies when its ratio is at or below the bar *and* its 5th-percentile gain over the incumbent is positive. Taken in submission order, a qualifying submission takes the lead only if its 5th-percentile gain over the current leader is positive too. So a later copy of the leader, or the same kernel with one lucky round, cannot take the lead; a genuinely faster kernel can. This is the rule the DEFLATE competition uses.
-- **Emission:** a placeholder until rewards are announced. As in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; the full entry's admitted leader receives the competition's share, and whatever no miner earns goes to the treasury.
-- **Later slots** use the same shape, one obligation per operation and format: binary64 next.
+**Round rules:**
+- **Every entry is timed against the current champion,** the best submission so far in its slot; for the full entry, `kernels/full/incumbent` until a submission beats it.
+- **Promotion is automatic: beat the champion by 3%, with evidence.** An accepted entry becomes the new champion when its ratio is 0.97 or lower *and* its 5th-percentile bootstrapped gain over the champion is positive. The gate records every round's paired champion and submission timings, and the validator bootstraps them (2000 draws, a seed derived from the timings themselves, so every validator agrees). So a copy of the champion, or the same kernel with one lucky round, is never promoted; a genuinely faster kernel is, and the next entry must beat it by 3%. The one-hour timing study shows noise under 1% per run, so 3% leaves margin. This is the admission test the DEFLATE competition uses.
+- **Emission:** as in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; the full entry's champion's author receives the competition's share, and while the shipped champion holds, it goes to the treasury.
 
 ## 13. The other slots: multiplication, fused multiply-add, division and square root
 
@@ -490,11 +489,11 @@ the other two, so the far-addend path is the obvious target. The summed score we
 the incumbent's time, so `wide` is about two thirds of the fma score.
 
 `div` and `sqrt` are new: their incumbents are FloatLib's certified kernels, about 50 ns a call on
-every class on the reference machine, and no faster proven kernel exists yet. Both carry the
+every class on the reference machine, and no faster proven kernel exists. Both carry the
 `Option`/`Model` wrappers and the carrier codec `direct` and `mirror` removed for `add`. `sqrt`'s
 word kernel also normalises with the bit-at-a-time `UInt64.log2` that `fastlog` replaced, so that
 lemma is the first thing to try there; `div` takes its own quotient path, where nobody has
-measured yet where the time goes.
+measured where the time goes.
 
 ## 14. The TorchLean kernels: `sum` and `bmm`
 
@@ -581,7 +580,7 @@ in TorchLean's loops), so a copy of the published examples scores 1.00 and wins 
 **Scoring.** Twelve timed input types, three per kernel and the same as the practice boards':
 `add:near-one`, `add:wide-gap`, `add:cancel`, `mul:near-one`, `mul:spread`, `mul:tiny`,
 `sum:dense`, `sum:relu`, `sum:wide`, `bmm:dense`, `bmm:relu`, `bmm:wide`, each 500,000 steps,
-plus an untimed raw set per kernel. The ratio is your total time over the incumbent's total, so
+plus an untimed raw set per kernel. The ratio is your total time over the champion's total, so
 each kernel counts by the time it takes, and the 3% bar and statistical admission apply to the
 total as on every board. Each kernel's share of the champion's time, from a full gate run on the
 reference machine, and how much faster that kernel alone must get to clear the 0.97 bar:
@@ -593,13 +592,14 @@ reference machine, and how much faster that kernel alone must get to clear the 0
 | `sum` | about 68 | 21% | 0.86x |
 | `bmm` | about 125 | 38% | 0.92x |
 
-**How to win.** An entry wins the board when, in this order:
-1. it is correct: all four proofs pass the gate, and every output matches the incumbent's bit for
+**How to win.** An entry becomes the champion, and its author is paid, when:
+1. it is correct: all four proofs pass the gate, and every output matches the champion's bit for
    bit on fresh random inputs;
-2. its total ratio is 0.97 or lower;
-3. the bootstrap over its 25 paired rounds shows it beats the incumbent even at the 5th percentile;
-4. the same test shows it beats the current leader, taken in submission order: a copy of the
-   leader, or one lucky run, never takes the lead.
+2. its total ratio against the current champion is 0.97 or lower;
+3. the bootstrap over its 25 paired rounds shows it beats the champion even at the 5th percentile:
+   a copy of the champion, or one lucky run, is never promoted.
+
+It stays champion, and paid, until an entry beats it by 3% in turn.
 
 **You need not optimise all four.** Keep the champion's code and proofs for the kernels you leave
 alone and replace one: your ratio is then about `1 - share × (1 - that kernel's ratio)`, which is
@@ -614,10 +614,10 @@ a namespace of its own.
 
 **The ladder so far.**
 
-| entry | ratio against today's champion |
+| entry | ratio against the shipped champion |
 |---|---|
 | `kernels/full/baseline`: FloatLib's `add`/`mul`, TorchLean's loops | about 1.8x |
-| `kernels/full/incumbent`: `tuned` and `mul/fast`, the same loops on top | **1.00x**, the bar |
+| `kernels/full/incumbent`: `tuned` and `mul/fast`, the same loops on top | **1.00x**: 0.97 or lower takes over |
 
 **Where to look.** Everything in sections 6, 7, 13 and 14: a faster `add` or `mul` (below 0.50x
 needs a new rounding argument), and exact shortcuts in `sum` and `bmm` on zero-heavy data
