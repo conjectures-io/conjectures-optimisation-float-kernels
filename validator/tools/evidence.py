@@ -17,7 +17,7 @@ from pathlib import Path
 
 from loguru import logger
 
-HERE = Path(__file__).resolve().parent.parent
+HERE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(HERE))
 import gate  # noqa: E402 - the gate lives at the repository root, one level up
 import selftest  # noqa: E402 - so do the expected verdicts
@@ -148,7 +148,7 @@ def render(env, setup, rows, contain, study, stamp) -> str:
     rejected = [r for r in rows if not r["verdict"]["passed"]]
     contained = not contain["host_file_after"]
     lines = [
-        "# Evidence - FloatLib kernel competition",
+        "# Evidence - TorchLean kernel competition (on FloatLib)",
         "",
         "```mermaid",
         "flowchart LR",
@@ -159,7 +159,7 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         "",
         "## Quick Summary",
         "",
-        f"- Generated {stamp} by `tools/evidence.py` from real gate runs on the machine in section 1; nothing here is typed by hand.",
+        f"- Generated {stamp} by `validator/tools/evidence.py` from real gate runs on the machine in section 1; nothing here is typed by hand.",
         f"- **{ok}/{len(rows)}** fixtures across the {', '.join(f'`{s}`' for s in slots)} slots got exactly their expected verdict: {len(accepted)} accepted, {len(rejected)} rejected at the expected stage.",
         "- Best accepted kernel per slot this run: "
         + ", ".join(
@@ -184,7 +184,7 @@ def render(env, setup, rows, contain, study, stamp) -> str:
         "",
         "```bash",
         "export PATH=$HOME/.elan/bin:$PATH",
-        ".venv/bin/python tools/evidence.py      # about 10 minutes; rewrites evidence/EVIDENCE.md and evidence.json",
+        ".venv/bin/python validator/tools/evidence.py   # about 35 minutes; rewrites evidence/EVIDENCE.md and evidence.json",
         "```",
         "",
         "## 1. Environment",
@@ -251,7 +251,7 @@ def render(env, setup, rows, contain, study, stamp) -> str:
             "",
             "## 6. Timing stability",
             "",
-            f"`tools/timing_study.py` on `{study.get('slot', 'add')}`, measured {study['measured']}: {study['minutes']:.0f} minutes of alternating full gate runs, fresh seed each:",
+            f"`validator/tools/timing_study.py` on `{study.get('slot', 'add')}`, measured {study['measured']}: {study['minutes']:.0f} minutes of alternating full gate runs, fresh seed each:",
             "",
             "| submission | runs | mean | stdev | min | max | at or below 0.97 |",
             "|---|---:|---:|---:|---:|---:|---:|",

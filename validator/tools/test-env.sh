@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # A local test environment for the validator suite, no sudo or Docker: uv, .venv, Postgres 17.
-#   tools/test-env.sh install      uv, .venv from the pinned requirements, Postgres binaries + data
-#   tools/test-env.sh up           start Postgres (port 5433, local connections, no password)
-#   tools/test-env.sh test [args]  start Postgres if needed, then pytest (default: -q)
-#   tools/test-env.sh down         stop Postgres
-#   tools/test-env.sh status       what is installed and whether Postgres is running
+#   validator/tools/test-env.sh install      uv, .venv from the pinned requirements, Postgres binaries + data
+#   validator/tools/test-env.sh up           start Postgres (port 5433, local connections, no password)
+#   validator/tools/test-env.sh test [args]  start Postgres if needed, then pytest (default: -q)
+#   validator/tools/test-env.sh down         stop Postgres
+#   validator/tools/test-env.sh status       what is installed and whether Postgres is running
 # Knobs: TEST_PG_DIR (~/.local/share/floatlib-pg), TEST_PG_PORT (5433), TEST_VENV (.venv),
 # UV_INSTALL_DIR (~/.local/bin). Never a validator store: every local user may connect.
 set -euo pipefail
-here="$(cd "$(dirname "$0")/.." && pwd)"
+here="$(cd "$(dirname "$0")/../.." && pwd)"
 pg="${TEST_PG_DIR:-$HOME/.local/share/floatlib-pg}"
 port="${TEST_PG_PORT:-5433}"
 venv="${TEST_VENV:-$here/.venv}"
@@ -46,11 +46,11 @@ open(sys.argv[2], 'wb').write(z.read('postgres-linux-x86_64.txz'))" "$pg/pg.jar"
     LC_ALL=C "$pg/dist/bin/initdb" -D "$pg/data" -U conjectures --auth=trust -E UTF8 --no-locale \
       >/dev/null
   fi
-  log "done - run: tools/test-env.sh test"
+  log "done - run: validator/tools/test-env.sh test"
 }
 
 up() {
-  [ -x "$pg/dist/bin/postgres" ] || { log "not installed - run: tools/test-env.sh install"; exit 1; }
+  [ -x "$pg/dist/bin/postgres" ] || { log "not installed - run: validator/tools/test-env.sh install"; exit 1; }
   if running; then log "Postgres already running on port $port"; return; fi
   # Unix socket in $pg, not /var/run/postgresql, which needs root.
   "$pg/dist/bin/pg_ctl" -D "$pg/data" -o "-p $port -k $pg -c listen_addresses=localhost" \

@@ -18,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Existing rows have none, so they leave scoring until tools/reverify.py re-stamps them.
+    # Existing rows have none, so they leave scoring until validator/tools/reverify.py re-stamps them.
     op.add_column("submissions", sa.Column("verifier_fingerprint", sa.Text(), nullable=True))
     op.create_check_constraint(
         "ck_submissions_verifier_fingerprint",

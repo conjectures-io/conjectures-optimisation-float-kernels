@@ -2,7 +2,7 @@
 
 Fingerprints describe the verifier used for a result. Changes do not invalidate verdicts,
 exclude submissions from scoring, or trigger automatic reverification. Operators can use
-`tools/reverify.py` to explicitly requeue accepted submissions when necessary.
+`validator/tools/reverify.py` to explicitly requeue accepted submissions when necessary.
 
     python fingerprint.py     prints the current fingerprint
 """

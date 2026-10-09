@@ -20,7 +20,7 @@ from pathlib import Path
 
 from loguru import logger
 
-HERE = Path(__file__).resolve().parent.parent
+HERE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(HERE))
 import gate  # noqa: E402 - the gate lives at the repository root, one level up
 

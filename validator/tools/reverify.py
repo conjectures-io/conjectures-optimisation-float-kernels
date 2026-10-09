@@ -6,8 +6,8 @@ verifier fingerprint. Older accepted verdicts remain eligible for scoring.
 This lists them, and with --apply requeues them so the gate worker re-verifies each under the
 current verifier. A re-accepted submission keeps the registration it already spent.
 
-    .venv/bin/python tools/reverify.py            list stale accepted submissions
-    .venv/bin/python tools/reverify.py --apply    requeue them for the gate worker
+    .venv/bin/python validator/tools/reverify.py            list stale accepted submissions
+    .venv/bin/python validator/tools/reverify.py --apply    requeue them for the gate worker
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "validator"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db  # noqa: E402
 import log  # noqa: E402
