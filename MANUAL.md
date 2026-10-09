@@ -373,7 +373,7 @@ Each slot is its own competition slug: `floatlib` is the full entry, `floatlib-a
 | endpoint | what it does |
 |---|---|
 | `POST …/submissions` | one multipart part, `Kernel.lean`, and three headers: `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp` (unix seconds) and `X-Conjectures-Signature`, an sr25519 signature over the five lines `conjectures-competition-submit-v1` / `competition: <slug>` / `digest: <sha256(Kernel.lean)>` / `hotkey: <ss58>` / `timestamp: <seconds>` (`miner/sig.py`) |
-| `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed) |
+| `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed on it three times: uncharged, and worth reporting), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed; the verdict still counts) |
 | `GET …/submissions/{id}/report` | the gate's full verdict JSON: every stage it reached and why it stopped |
 | `GET …/leaderboard` | the slot's board: every hotkey's best accepted ratio against that slot's current incumbent, fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's statistical admission outcome (`leader`, `not-significant`, `above-bar`, `no-evidence`), `leader` the board's leading submission, and `pays` whether this board pays it (only the full entry's does) |
 | `GET /health` | liveness, queue length, the promotion bar |
@@ -426,7 +426,7 @@ file over 256,000 bytes; 429 past the rate limit.
 - Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `full` or one of the practice boards.)
 - **One board pays: the full entry.** Its admitted leader receives the competition's share; without a leader, the share goes to the treasury. The practice boards are ranked and shown, but unpaid.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
-- **A verdict counts only under the verifier that gave it.** When the validator updates its gate, contract or bench, older accepted submissions leave the board until the operator re-verifies them, at no cost to you: a re-acceptance reuses the registration already spent.
+- **A verdict keeps counting after a gate update.** Every verdict records the verifier fingerprint and incumbent it was judged by, as provenance; when the validator updates its gate, contract or bench, the change is logged and older accepted submissions stay on the board. The operator may choose to re-verify them, at no cost to you: a re-acceptance reuses the registration already spent.
 
 **Round rules (proposed, not final):**
 - **Promotion:** an accepted kernel at least 3% faster than the current incumbent over all timed classes becomes the new incumbent (the operator repins it). The one-hour timing study shows noise under 1% per run, so 3% leaves margin.
