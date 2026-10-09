@@ -69,8 +69,8 @@ KERNELS = HERE / "kernels"
 
 
 def incumbent(slot: str) -> Path:
-    # A slot's incumbent: kernels/<slot>/incumbent, or the winner an operator promoted (repins)
-    # with GATE_INCUMBENT for add, GATE_INCUMBENT_MUL and GATE_INCUMBENT_FMA for the others.
+    # A slot's incumbent: kernels/<slot>/incumbent, or the file GATE_INCUMBENT (add) or
+    # GATE_INCUMBENT_<SLOT> names, which the gate worker points at the slot's current champion.
     env = "GATE_INCUMBENT" if slot == "add" else f"GATE_INCUMBENT_{slot.upper()}"
     return Path(os.environ.get(env, KERNELS / slot / "incumbent" / "Kernel.lean"))
 
