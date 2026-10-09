@@ -61,8 +61,6 @@ def recorded(verdict: Path) -> dict[str, object]:
         "verifier_fingerprint": v.get("verifier_fingerprint") or None,
         "gate_seconds": v.get("seconds"),
         "report": verdict.read_text(),
-        # Not a column: whether the rejection is charged, read off by score_one.
-        "exhausted": v.get("exhausted") is True,
     }
 
 
@@ -156,7 +154,6 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             champion_env(store, settings, sub),
         )
         fields = recorded(verdict)
-    charge = bool(fields.pop("exhausted", False))
     state = STATE_OF_EXIT.get(result.returncode)
 
     if state is None or not fields:
@@ -199,7 +196,6 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
     final = store.submissions.finish(
         sub.id,
         state,
-        charge=charge,
         promote=promote,
         expected_attempt=sub.verification_attempt,
         exit_code=result.returncode,

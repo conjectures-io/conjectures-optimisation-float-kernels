@@ -1,4 +1,4 @@
-"""Registrations and the slots they buy: one registration, one accepted submission."""
+"""Registrations and the slots they buy: one registration, one entry, accepted or rejected."""
 
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ class RegistrationsDb:
             )
 
     def available_slots(self, hotkey: str) -> int:
-        # Registrations this hotkey holds that no accepted submission has spent yet.
+        # Registrations this hotkey holds that no verdict has spent yet.
         with session_scope(self._sessions) as session:
             return _available_slots(session, hotkey)
 

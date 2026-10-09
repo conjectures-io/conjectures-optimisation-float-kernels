@@ -39,7 +39,7 @@ class SubmitResult(TypedDict):
     digest: str
     # False when this exact file was already queued: the retry got the same submission.
     created: bool
-    # Unclaimed registrations left; only an accepted submission spends one.
+    # Unclaimed registrations left; every verdict, accepted or rejected, spends one.
     slots_remaining: int
 
 
@@ -140,7 +140,7 @@ def cmd_submit(args: argparse.Namespace) -> None:
     print(f"submission {s['submission']} ({slot}) {s['state']}{again}  digest {digest}")
     print(
         f"{s['slots_remaining']} registration slot(s) left; "
-        "one registration buys one accepted submission"
+        "one registration buys one entry, accepted or rejected"
     )
     print(f"check with: submit.py status {s['submission']} --slot {slot} --url {url}")
 

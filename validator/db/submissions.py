@@ -174,14 +174,12 @@ class SubmissionsDb:
         sub_id: int,
         state: SubmissionState,
         *,
-        charge: bool = False,
         promote: bool = False,
         expected_attempt: str | None = None,
         **fields: object,
     ) -> str:
-        # Record the verdict, spending a registration in the same transaction on acceptance, or on a
-        # rejection with `charge` (the entry exhausted its time budget or a memory cap); an accepted
-        # one with `promote` (it beat the champion it was timed against) becomes the new champion.
+        # Record the verdict and spend a registration in the same transaction, accepted or rejected,
+        # since one registration buys one entry; an accepted one with `promote` becomes champion.
         unknown = set(fields) - SCORE_FIELDS
         if unknown:
             raise ValueError(f"not submission columns: {sorted(unknown)}")
@@ -201,7 +199,7 @@ class SubmissionsDb:
                     row.state = SubmissionState.REJECTED.value
                     row.reason = (
                         "accepted by the gate, but this hotkey has no unclaimed registration "
-                        "left: one registration buys one accepted submission"
+                        "left: one registration buys one entry"
                     )
                     logger.warning(
                         f"[submissions] submission {sub_id} accepted with no slot left; rejected"
@@ -219,17 +217,17 @@ class SubmissionsDb:
                         )
                     )
                     logger.info(f"[submissions] submission {sub_id} is the new {row.slot} champion")
-            elif charge:
+            else:
                 try:
                     registration = self._registrations.claim_slot(session, row.hotkey, sub_id)
                     logger.info(
-                        f"[submissions] submission {sub_id} exhausted the gate's limits: "
-                        f"spent registration {registration}"
+                        f"[submissions] submission {sub_id} rejected: spent registration "
+                        f"{registration}"
                     )
                 except NoSlot:
                     logger.warning(
-                        f"[submissions] submission {sub_id} exhausted the gate's limits, "
-                        "but its hotkey has no registration left to charge"
+                        f"[submissions] submission {sub_id} rejected, but its hotkey has no "
+                        "registration left to charge"
                     )
             row.state = state.value
             return state.value

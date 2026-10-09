@@ -155,7 +155,7 @@ class SubmissionFile(Base):
 
 
 class EntitlementClaim(Base):
-    # One registration spent on one accepted submission; the keys enforce the rule.
+    # One registration spent on one entry's verdict; the keys enforce the rule.
     __tablename__ = "entitlement_claims"
 
     registration_id: Mapped[int] = mapped_column(

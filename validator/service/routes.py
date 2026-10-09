@@ -157,7 +157,7 @@ async def submit(
     if not sig.verify(hotkey, message, signature):
         raise refuse(401, "signature does not verify against the hotkey for this file and slot")
 
-    # A slot is required here but spent only on acceptance, so a rejection costs nothing.
+    # A slot is required here and spent once the gate gives a verdict, accepted or rejected.
     if not store.registrations.is_registered(hotkey):
         raise refuse(402, "this hotkey is not registered on the subnet")
     try:
@@ -166,7 +166,7 @@ async def submit(
         raise refuse(
             402,
             f"{full.slots} unclaimed registration(s) and {full.pending} already in the queue: "
-            "one registration buys one accepted submission, so register again to submit again",
+            "one registration buys one entry, so register again to submit again",
         ) from full
     row = store.submissions.get(sub_id)
     assert row is not None, "add() either inserted this row or found the existing one"
