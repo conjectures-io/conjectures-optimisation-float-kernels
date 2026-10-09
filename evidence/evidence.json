@@ -1,6 +1,6 @@
 {
-  "generated": "2026-10-08 13:34 UTC",
-  "seconds": 1962,
+  "generated": "2026-10-09 08:54 UTC",
+  "seconds": 2368,
   "environment": [
     [
       "CPU",
@@ -91,7 +91,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -115,136 +117,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2053881600,
-        "ratio": 0.7883468133950949,
+        "seed": 50985136,
+        "ratio": 0.7859002872849205,
         "classes": {
           "near-one": {
-            "incumbent_ns": 51.388676,
-            "submission_ns": 42.41474,
-            "ratio": 0.8253713327815646,
-            "spread_inc": 1.1179205317529488,
-            "spread_sub": 1.1475575707878911
+            "incumbent_ns": 53.922734,
+            "submission_ns": 44.268798,
+            "ratio": 0.8209672380484269,
+            "spread_inc": 1.2895838330452607,
+            "spread_sub": 1.2100393148239534
           },
           "wide-gap": {
-            "incumbent_ns": 57.256536,
-            "submission_ns": 42.425158,
-            "ratio": 0.7409662016577461,
-            "spread_inc": 1.1475497225329874,
-            "spread_sub": 1.146683012942462
+            "incumbent_ns": 60.975882,
+            "submission_ns": 44.86043,
+            "ratio": 0.735707767211961,
+            "spread_inc": 1.1780828360957534,
+            "spread_sub": 1.1988951064445883
           },
           "cancel": {
-            "incumbent_ns": 40.39639,
-            "submission_ns": 32.656574,
-            "ratio": 0.8084032756392341,
-            "spread_inc": 1.3263702523913647,
-            "spread_sub": 1.1473497495481308
+            "incumbent_ns": 42.347368,
+            "submission_ns": 34.450436,
+            "ratio": 0.8135201224312217,
+            "spread_inc": 1.1729864769871885,
+            "spread_sub": 1.235163874268529
           }
         },
         "rounds": [
           [
-            81343713,
-            63912655
+            80514345,
+            66430288
           ],
           [
-            79750992,
-            60438129
+            83118797,
+            64533314
           ],
           [
-            87703097,
-            65347682
+            80224581,
+            70716029
           ],
           [
-            80667192,
-            64795995
+            82764631,
+            65013988
           ],
           [
-            82502651,
-            63869265
+            80652235,
+            63729335
           ],
           [
-            80419618,
-            64264506
+            89492059,
+            64345363
           ],
           [
-            79194128,
-            64324400
+            86244008,
+            64069606
           ],
           [
-            81071953,
-            63137572
+            82468947,
+            63819765
           ],
           [
-            76704853,
-            59654880
+            90317241,
+            65901665
           ],
           [
-            76277439,
-            61722974
+            83481188,
+            67216406
           ],
           [
-            76987883,
-            60085969
+            79635355,
+            63421648
           ],
           [
-            76601417,
-            61481790
+            90142934,
+            65928896
           ],
           [
-            75868081,
-            60123710
+            87200205,
+            64823311
           ],
           [
-            75959632,
-            60986792
+            82293697,
+            65219574
           ],
           [
-            75054011,
-            61804077
+            79853475,
+            69156360
           ],
           [
-            78987438,
-            64127719
+            83802882,
+            63300610
           ],
           [
-            81141746,
-            61654034
+            83208857,
+            66079319
           ],
           [
-            80542790,
-            67297695
+            87179806,
+            72814622
           ],
           [
-            79605359,
-            63872041
+            87344044,
+            65008619
           ],
           [
-            75356950,
-            65445606
+            81360575,
+            68736350
           ],
           [
-            75468138,
-            65402534
+            80823014,
+            64201001
           ],
           [
-            80319930,
-            61804498
+            79614274,
+            64406937
           ],
           [
-            75517681,
-            59448222
+            81730651,
+            65447192
           ],
           [
-            76753152,
-            60133528
+            82394918,
+            65276151
           ],
           [
-            74561468,
-            58961227
+            80648757,
+            64320787
           ]
         ],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 64.1,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 75.3,
         "exhausted": false
       },
       "as_expected": true,
@@ -272,7 +276,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -301,7 +307,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -330,7 +338,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -354,13 +364,15 @@
         "stage": "score",
         "passed": false,
         "reason": "bench killed: over the 512 MB bench memory cap",
-        "seed": 92278016,
+        "seed": 568116375,
         "ratio": null,
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 45.8,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 55.2,
         "exhausted": true
       },
       "as_expected": true,
@@ -388,7 +400,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -417,7 +431,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -446,7 +462,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -469,13 +487,15 @@
         "mode": "gate",
         "stage": "policy",
         "passed": false,
-        "reason": "attribute 'command_elab Lean.Parser.Command.check' is not allowed",
+        "reason": "banned name 'command_elab' at line 9",
         "seed": 0,
         "ratio": null,
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -504,7 +524,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -533,8 +555,165 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
+        "exhausted": false
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploits/simproc",
+        "slot": "add",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "simproc",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name 'simproc' at line 12",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 0.0,
+        "exhausted": false
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploits/runtac",
+        "slot": "add",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "runtac",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "banned name 'run_tac' at line 12",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 0.0,
+        "exhausted": false
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploits/heartbeats",
+        "slot": "add",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "heartbeats",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "set_option maxHeartbeats 0: allowed values are 1 to 4000000",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 0.0,
+        "exhausted": false
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploits/hiddenoption",
+        "slot": "add",
+        "mode": "gate",
+        "passed": false,
+        "stage": "policy",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "hiddenoption",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "policy",
+        "passed": false,
+        "reason": "set_option debug.skipKernelTC is not allowed",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 0.0,
+        "exhausted": false
+      },
+      "as_expected": true,
+      "problem": null
+    },
+    {
+      "case": {
+        "name": "exploits/sorryax",
+        "slot": "add",
+        "mode": "gate",
+        "passed": false,
+        "stage": "axioms",
+        "ratio_min": null,
+        "ratio_max": null
+      },
+      "verdict": {
+        "submission": "sorryax",
+        "slot": "add",
+        "mode": "gate",
+        "stage": "axioms",
+        "passed": false,
+        "reason": "extra axioms ['sorryAx']",
+        "seed": 0,
+        "ratio": null,
+        "classes": {},
+        "rounds": [],
+        "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 54.4,
         "exhausted": false
       },
       "as_expected": true,
@@ -557,136 +736,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2774320711,
-        "ratio": 0.5463980688366256,
+        "seed": 2287868891,
+        "ratio": 0.5484914453715363,
         "classes": {
           "near-one": {
-            "incumbent_ns": 50.968946,
-            "submission_ns": 31.485354,
-            "ratio": 0.6177360230286104,
-            "spread_inc": 1.0774246342076605,
-            "spread_sub": 1.0504170923407754
+            "incumbent_ns": 56.080046,
+            "submission_ns": 34.273642,
+            "ratio": 0.6111557397795288,
+            "spread_inc": 1.540532081589234,
+            "spread_sub": 1.6965780876161336
           },
           "wide-gap": {
-            "incumbent_ns": 56.717884,
-            "submission_ns": 25.080704,
-            "ratio": 0.4422009819689324,
-            "spread_inc": 1.0914798584517011,
-            "spread_sub": 1.028009580592315
+            "incumbent_ns": 59.831512,
+            "submission_ns": 26.773514,
+            "ratio": 0.447481821953622,
+            "spread_inc": 1.3728792613497716,
+            "spread_sub": 1.7742150694152437
           },
           "cancel": {
-            "incumbent_ns": 39.832952,
-            "submission_ns": 24.038466,
-            "ratio": 0.6034819111573755,
-            "spread_inc": 1.040752390131668,
-            "spread_sub": 1.0199864666905119
+            "incumbent_ns": 41.890152,
+            "submission_ns": 25.505732,
+            "ratio": 0.6088717940197496,
+            "spread_inc": 1.733741811201831,
+            "spread_sub": 1.5661380743748112
           }
         },
         "rounds": [
           [
-            74980313,
-            40981970
+            79926161,
+            46036179
           ],
           [
-            74981856,
-            40802502
+            90612134,
+            45682484
           ],
           [
-            74894402,
-            40492460
+            81056143,
+            54918684
           ],
           [
-            77429792,
-            40441945
+            85598207,
+            47081992
           ],
           [
-            74414109,
-            40965127
+            90273950,
+            45843607
           ],
           [
-            74467831,
-            40920844
+            82677089,
+            43276444
           ],
           [
-            74472990,
-            40731660
+            83171477,
+            52180660
           ],
           [
-            74523584,
-            40738713
+            89834774,
+            47446828
           ],
           [
-            74221909,
-            40558434
+            96266275,
+            52584089
           ],
           [
-            76710562,
-            40747759
+            91335663,
+            52441452
           ],
           [
-            74911873,
-            40998651
+            82123919,
+            59004831
           ],
           [
-            74642348,
-            40613116
+            109279791,
+            50028649
           ],
           [
-            75250780,
-            40878817
+            86795425,
+            49211883
           ],
           [
-            74590080,
-            40745536
+            96203057,
+            52996834
           ],
           [
-            74220756,
-            40664654
+            90539778,
+            53360677
           ],
           [
-            74936990,
-            40566288
+            98321215,
+            52546039
           ],
           [
-            74579960,
-            41090193
+            93953380,
+            58914199
           ],
           [
-            76019013,
-            40802733
+            96510693,
+            63879187
           ],
           [
-            75369084,
-            41162730
+            108524503,
+            69024331
           ],
           [
-            74648940,
-            40427217
+            97735564,
+            67375064
           ],
           [
-            74961989,
-            41572308
+            113785646,
+            46573177
           ],
           [
-            74832035,
-            40476660
+            102268381,
+            47473337
           ],
           [
-            74431282,
-            40876712
+            102582881,
+            46747525
           ],
           [
-            74137020,
-            40793606
+            83106194,
+            53737597
           ],
           [
-            74162336,
-            40812702
+            84187686,
+            52968291
           ]
         ],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 61.9,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 77.8,
         "exhausted": false
       },
       "as_expected": true,
@@ -709,136 +890,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 3344673522,
-        "ratio": 0.9955125799263232,
+        "seed": 3041882031,
+        "ratio": 1.0043447558837826,
         "classes": {
           "near-one": {
-            "incumbent_ns": 51.068914,
-            "submission_ns": 50.857156,
-            "ratio": 0.9958534853511865,
-            "spread_inc": 1.013834365069913,
-            "spread_sub": 1.0869782808932533
+            "incumbent_ns": 52.69719,
+            "submission_ns": 54.104194,
+            "ratio": 1.0266997917725784,
+            "spread_inc": 1.765495086170629,
+            "spread_sub": 1.318976011360598
           },
           "wide-gap": {
-            "incumbent_ns": 57.105952,
-            "submission_ns": 56.765754,
-            "ratio": 0.9940426875293139,
-            "spread_inc": 1.0241075746360029,
-            "spread_sub": 1.0310731713349566
+            "incumbent_ns": 60.176302,
+            "submission_ns": 60.589778,
+            "ratio": 1.0068710769232712,
+            "spread_inc": 1.458912779319673,
+            "spread_sub": 1.4211044971975306
           },
           "cancel": {
-            "incumbent_ns": 39.876796,
-            "submission_ns": 39.764382,
-            "ratio": 0.9971809670967547,
-            "spread_inc": 1.0245736894207849,
-            "spread_sub": 1.0240329146822904
+            "incumbent_ns": 42.898666,
+            "submission_ns": 41.754978,
+            "ratio": 0.9733397770457478,
+            "spread_inc": 1.4532977319154865,
+            "spread_sub": 1.8599787072094733
           }
         },
         "rounds": [
           [
-            74676893,
-            75269947
+            82702977,
+            84127873
           ],
           [
-            74555676,
-            75428565
+            94091069,
+            90630439
           ],
           [
-            74797551,
-            74837965
+            86251443,
+            104806329
           ],
           [
-            74846591,
-            76664005
+            84373795,
+            81311332
           ],
           [
-            74994930,
-            74386227
+            83750856,
+            79339388
           ],
           [
-            75075082,
-            73853505
+            79236926,
+            82648955
           ],
           [
-            74834038,
-            75267251
+            84677916,
+            83264894
           ],
           [
-            74914259,
-            74691480
+            86989188,
+            88124862
           ],
           [
-            74545456,
-            74360298
+            81081702,
+            81640310
           ],
           [
-            75010060,
-            74145555
+            84248309,
+            84678849
           ],
           [
-            75078776,
-            74203653
+            89499283,
+            84882511
           ],
           [
-            74072698,
-            74158478
+            90237791,
+            94624801
           ],
           [
-            74269198,
-            74533845
+            80523041,
+            82930003
           ],
           [
-            74714863,
-            74930299
+            85448355,
+            93612271
           ],
           [
-            74324011,
-            74530918
+            83028228,
+            81347631
           ],
           [
-            74668396,
-            74661273
+            90617605,
+            83332741
           ],
           [
-            74829509,
-            74522172
+            116034900,
+            97332528
           ],
           [
-            75039263,
-            74361020
+            90706552,
+            89732222
           ],
           [
-            74562238,
-            74257615
+            97853417,
+            84617753
           ],
           [
-            74937171,
-            75125175
+            113897386,
+            99113102
           ],
           [
-            74754798,
-            74617641
+            100462278,
+            95898605
           ],
           [
-            74694186,
-            75113952
+            84145646,
+            103281113
           ],
           [
-            74502506,
-            75151815
+            91487569,
+            84398992
           ],
           [
-            74304614,
-            75103142
+            84763489,
+            83055789
           ],
           [
-            74470384,
-            74847474
+            83054337,
+            87947970
           ]
         ],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 60.9,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 80.1,
         "exhausted": false
       },
       "as_expected": true,
@@ -861,136 +1044,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 1019050390,
-        "ratio": 0.7943391974174162,
+        "seed": 1346276433,
+        "ratio": 0.8067273029351785,
         "classes": {
           "near-one": {
-            "incumbent_ns": 50.712586,
-            "submission_ns": 42.04793,
-            "ratio": 0.8291419017756263,
-            "spread_inc": 1.1218510923501317,
-            "spread_sub": 1.1248528048824282
+            "incumbent_ns": 53.902816,
+            "submission_ns": 45.06782,
+            "ratio": 0.8360939806929567,
+            "spread_inc": 1.458028018424863,
+            "spread_sub": 1.2762953699557689
           },
           "wide-gap": {
-            "incumbent_ns": 56.6849,
-            "submission_ns": 42.303632,
-            "ratio": 0.7462945511062029,
-            "spread_inc": 1.1004531012668277,
-            "spread_sub": 1.1305725711683574
+            "incumbent_ns": 61.371848,
+            "submission_ns": 45.620738,
+            "ratio": 0.7433495892123047,
+            "spread_inc": 1.3972217685216193,
+            "spread_sub": 1.2807056299703
           },
           "cancel": {
-            "incumbent_ns": 40.138484,
-            "submission_ns": 32.842042,
-            "ratio": 0.8182182964359093,
-            "spread_inc": 1.1436938176339695,
-            "spread_sub": 1.1450959718034586
+            "incumbent_ns": 40.951748,
+            "submission_ns": 35.343554,
+            "ratio": 0.8630536112890712,
+            "spread_inc": 1.4616901334712258,
+            "spread_sub": 1.342519600603833
           }
         },
         "rounds": [
           [
-            79666699,
-            63023354
+            86874855,
+            68386905
           ],
           [
-            73917905,
-            63278800
+            100441630,
+            68830910
           ],
           [
-            77242585,
-            63945951
+            109065902,
+            77000325
           ],
           [
-            77905105,
-            62989400
+            90455291,
+            75561502
           ],
           [
-            79669084,
-            60514629
+            88163677,
+            76588582
           ],
           [
-            76200141,
-            60872038
+            85409944,
+            75976001
           ],
           [
-            78572407,
-            62675028
+            82917381,
+            64894946
           ],
           [
-            80164570,
-            60028601
+            82103651,
+            66258959
           ],
           [
-            76401512,
-            63908178
+            100059262,
+            72185191
           ],
           [
-            74319881,
-            62583679
+            89468156,
+            69229939
           ],
           [
-            75839015,
-            60499486
+            83042867,
+            64522234
           ],
           [
-            74074781,
-            59031780
+            86041931,
+            65830975
           ],
           [
-            75304301,
-            60591939
+            87676250,
+            71690480
           ],
           [
-            78589271,
-            59304922
+            83687609,
+            71467253
           ],
           [
-            74491683,
-            63152049
+            82546354,
+            78394994
           ],
           [
-            76635411,
-            61919162
+            80531480,
+            68302166
           ],
           [
-            75882287,
-            61780531
+            99098537,
+            64883774
           ],
           [
-            74873783,
-            59356059
+            102154699,
+            64384337
           ],
           [
-            74406284,
-            59375034
+            85925852,
+            68937950
           ],
           [
-            80434456,
-            61562001
+            95029634,
+            68897443
           ],
           [
-            79954354,
-            65497995
+            94345059,
+            73637329
           ],
           [
-            76021407,
-            65528671
+            92354599,
+            72273917
           ],
           [
-            79359588,
-            60242804
+            87531860,
+            68654988
           ],
           [
-            75522630,
-            59787198
+            83939961,
+            70703496
           ],
           [
-            78476769,
-            61027338
+            82162332,
+            70006969
           ]
         ],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 69.2,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 82.3,
         "exhausted": false
       },
       "as_expected": true,
@@ -1018,7 +1203,9 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
         "seconds": 0.0,
         "exhausted": false
       },
@@ -1042,136 +1229,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 216994417,
-        "ratio": 0.5090676501484239,
+        "seed": 2048804661,
+        "ratio": 0.5316663822535748,
         "classes": {
           "near-one": {
-            "incumbent_ns": 50.80854,
-            "submission_ns": 29.839378,
-            "ratio": 0.5872906011469725,
-            "spread_inc": 1.080176482142569,
-            "spread_sub": 1.0743221926408788
+            "incumbent_ns": 54.706908,
+            "submission_ns": 34.046398,
+            "ratio": 0.6223418439221606,
+            "spread_inc": 1.3868146231185283,
+            "spread_sub": 1.3719255705111595
           },
           "wide-gap": {
-            "incumbent_ns": 56.724612,
-            "submission_ns": 23.351456,
-            "ratio": 0.411663565014777,
-            "spread_inc": 1.0949982698867997,
-            "spread_sub": 1.0646810203183905
+            "incumbent_ns": 60.5162,
+            "submission_ns": 25.518596,
+            "ratio": 0.4216820619933175,
+            "spread_inc": 1.5582296641229951,
+            "spread_sub": 1.3574795415860652
           },
           "cancel": {
-            "incumbent_ns": 39.858838,
-            "submission_ns": 21.84166,
-            "ratio": 0.5479753323466179,
-            "spread_inc": 1.096800714561724,
-            "spread_sub": 1.0502590920287194
+            "incumbent_ns": 41.13397,
+            "submission_ns": 23.564808,
+            "ratio": 0.5728794959494549,
+            "spread_inc": 1.4445749340508587,
+            "spread_sub": 1.284532511361858
           }
         },
         "rounds": [
           [
-            74584318,
-            38033017
+            82238746,
+            46174199
           ],
           [
-            74954007,
-            38320688
+            86586613,
+            42436737
           ],
           [
-            74145618,
-            38103810
+            83339866,
+            46008339
           ],
           [
-            73895719,
-            39016224
+            104047775,
+            51671485
           ],
           [
-            73994025,
-            38207756
+            97546973,
+            48534143
           ],
           [
-            76409280,
-            38945792
+            85360511,
+            46293884
           ],
           [
-            75602405,
-            39004963
+            94059931,
+            48512512
           ],
           [
-            76984671,
-            39124668
+            94637927,
+            44710208
           ],
           [
-            75744573,
-            38433489
+            94852912,
+            52159202
           ],
           [
-            74303045,
-            38220350
+            86382951,
+            46097054
           ],
           [
-            74796732,
-            38087942
+            102041895,
+            42647714
           ],
           [
-            74173923,
-            38631943
+            79549746,
+            44960798
           ],
           [
-            75268959,
-            38593341
+            86664400,
+            43392132
           ],
           [
-            78650710,
-            38606534
+            110114601,
+            49423393
           ],
           [
-            74251177,
-            39432136
+            107845498,
+            53786689
           ],
           [
-            74532865,
-            38407221
+            95408875,
+            48735741
           ],
           [
-            75146470,
-            38048749
+            98736938,
+            50682178
           ],
           [
-            75224375,
-            37993112
+            93136497,
+            48221904
           ],
           [
-            74901449,
-            38467625
+            91723133,
+            50098450
           ],
           [
-            80009410,
-            38246028
+            92532483,
+            45651006
           ],
           [
-            75205050,
-            37752049
+            98039899,
+            50501256
           ],
           [
-            74344142,
-            38229848
+            87384032,
+            46819912
           ],
           [
-            73913412,
-            38405006
+            88268352,
+            47842043
           ],
           [
-            75271092,
-            38225440
+            88152566,
+            45657289
           ],
           [
-            74289169,
-            38368058
+            88855396,
+            47308690
           ]
         ],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 62.6,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 79.1,
         "exhausted": false
       },
       "as_expected": true,
@@ -1194,136 +1383,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 402739546,
-        "ratio": 1.0017105589294457,
+        "seed": 2112344859,
+        "ratio": 1.002210512736085,
         "classes": {
           "near-one": {
-            "incumbent_ns": 50.894466,
-            "submission_ns": 50.930554,
-            "ratio": 1.000709075128129,
-            "spread_inc": 1.0600079387806132,
-            "spread_sub": 1.055682096055739
+            "incumbent_ns": 53.51593,
+            "submission_ns": 53.419488,
+            "ratio": 0.9981978823875433,
+            "spread_inc": 1.2925871604959496,
+            "spread_sub": 1.3084464980270871
           },
           "wide-gap": {
-            "incumbent_ns": 56.681688,
-            "submission_ns": 56.701024,
-            "ratio": 1.0003411331010468,
-            "spread_inc": 1.0535580027186204,
-            "spread_sub": 1.0651235857751
+            "incumbent_ns": 60.122742,
+            "submission_ns": 59.990132,
+            "ratio": 0.997794345440865,
+            "spread_inc": 1.2775226718701551,
+            "spread_sub": 1.1683919615312732
           },
           "cancel": {
-            "incumbent_ns": 39.682146,
-            "submission_ns": 39.878616,
-            "ratio": 1.0049510931188046,
-            "spread_inc": 1.0694935702318116,
-            "spread_sub": 1.0638757874646403
+            "incumbent_ns": 41.158898,
+            "submission_ns": 41.730132,
+            "ratio": 1.0138787486487126,
+            "spread_inc": 1.3036893747738338,
+            "spread_sub": 1.2007670620356532
           }
         },
         "rounds": [
           [
-            75925606,
-            74952512
+            84057063,
+            80478189
           ],
           [
-            75169101,
-            74023312
+            80450217,
+            84672689
           ],
           [
-            76529272,
-            74668798
+            78164914,
+            82659596
           ],
           [
-            75697796,
-            75276332
+            80887336,
+            82706304
           ],
           [
-            76063825,
-            75129586
+            79645415,
+            82605445
           ],
           [
-            73943922,
-            76436378
+            86342876,
+            80524116
           ],
           [
-            74146213,
-            74529004
+            82346709,
+            80740232
           ],
           [
-            74940139,
-            75396068
+            82576721,
+            81895460
           ],
           [
-            74850981,
-            74292890
+            81601728,
+            81151124
           ],
           [
-            74358704,
-            74199514
+            78425182,
+            79511364
           ],
           [
-            75647231,
-            77224412
+            84810677,
+            80454486
           ],
           [
-            77161794,
-            76616306
+            79827747,
+            78142521
           ],
           [
-            75660687,
-            76551995
+            83679482,
+            79603376
           ],
           [
-            75989224,
-            75100210
+            87852632,
+            81320130
           ],
           [
-            76866788,
-            76277279
+            79219304,
+            79611650
           ],
           [
-            74434206,
-            76328033
+            81868251,
+            90967303
           ],
           [
-            74187632,
-            75180954
+            86158680,
+            82016107
           ],
           [
-            76740330,
-            76458038
+            79525780,
+            79937454
           ],
           [
-            75724126,
-            76453370
+            85151037,
+            80796226
           ],
           [
-            76639288,
-            75773849
+            92015672,
+            81124603
           ],
           [
-            76273451,
-            77002944
+            79487358,
+            88621416
           ],
           [
-            76318425,
-            75038604
+            79969564,
+            86229684
           ],
           [
-            75595844,
-            77266140
+            81508745,
+            82493944
           ],
           [
-            76220359,
-            76185935
+            95329728,
+            82960432
           ],
           [
-            75503520,
-            74533693
+            86257526,
+            81641554
           ]
         ],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 64.7,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 75.9,
         "exhausted": false
       },
       "as_expected": true,
@@ -1351,8 +1542,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 6.7,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 8.1,
         "exhausted": false
       },
       "as_expected": true,
@@ -1380,8 +1573,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 28.0,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 33.6,
         "exhausted": false
       },
       "as_expected": true,
@@ -1409,8 +1604,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 15.4,
+        "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 18.4,
         "exhausted": false
       },
       "as_expected": true,
@@ -1433,136 +1630,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 1298795835,
-        "ratio": 0.9992752553720698,
+        "seed": 1862235207,
+        "ratio": 1.0009279719040705,
         "classes": {
           "near-one": {
-            "incumbent_ns": 33.935094,
-            "submission_ns": 33.857948,
-            "ratio": 0.9977266601943109,
-            "spread_inc": 1.033506198627297,
-            "spread_sub": 1.0311023574139815
+            "incumbent_ns": 35.745288,
+            "submission_ns": 35.843614,
+            "ratio": 1.002750740181475,
+            "spread_inc": 1.257077855968037,
+            "spread_sub": 1.1703732218520153
           },
           "spread": {
-            "incumbent_ns": 36.101526,
-            "submission_ns": 36.08857,
-            "ratio": 0.9996411232034901,
-            "spread_inc": 1.0184946198673153,
-            "spread_sub": 1.0218977365963795
+            "incumbent_ns": 37.447064,
+            "submission_ns": 37.582058,
+            "ratio": 1.0036049288136448,
+            "spread_inc": 1.0834257660360236,
+            "spread_sub": 1.2533993747761232
           },
           "tiny": {
-            "incumbent_ns": 33.238378,
-            "submission_ns": 33.253632,
-            "ratio": 1.0004589273279219,
-            "spread_inc": 1.0980535211435407,
-            "spread_sub": 1.044861445510674
+            "incumbent_ns": 35.183774,
+            "submission_ns": 35.051024,
+            "ratio": 0.9962269539362093,
+            "spread_inc": 1.2667112402438692,
+            "spread_sub": 1.2457874554535127
           }
         },
         "rounds": [
           [
-            52056288,
-            52526774
+            56596657,
+            58984934
           ],
           [
-            52332617,
-            52398823
+            55517270,
+            56089995
           ],
           [
-            52249322,
-            52192174
+            61132869,
+            56912801
           ],
           [
-            52311539,
-            52752117
+            56208248,
+            56692888
           ],
           [
-            52258841,
-            52112765
+            56868107,
+            55407594
           ],
           [
-            52079503,
-            52434199
+            55422772,
+            55045524
           ],
           [
-            52505813,
-            51937095
+            55965713,
+            55476624
           ],
           [
-            51986978,
-            51974324
+            56111657,
+            56730950
           ],
           [
-            52010983,
-            52014660
+            59009511,
+            55548237
           ],
           [
-            52114118,
-            52163701
+            55741040,
+            55299931
           ],
           [
-            52146088,
-            51788576
+            54642205,
+            54849386
           ],
           [
-            52104198,
-            52069083
+            57360382,
+            57527175
           ],
           [
-            52264710,
-            52176434
+            55440966,
+            58301881
           ],
           [
-            52192004,
-            52169131
+            55216374,
+            57464297
           ],
           [
-            52226479,
-            51980877
+            59146016,
+            57167980
           ],
           [
-            52118125,
-            52425173
+            55729268,
+            55901892
           ],
           [
-            52243441,
-            52290979
+            56332190,
+            57104551
           ],
           [
-            52112725,
-            52497518
+            57273329,
+            56357397
           ],
           [
-            52649052,
-            52221760
+            60567106,
+            64670303
           ],
           [
-            52220748,
-            52408812
+            57186196,
+            57047293
           ],
           [
-            53681532,
-            51971151
+            54992924,
+            58098528
           ],
           [
-            51975367,
-            52103850
+            59262135,
+            54875274
           ],
           [
-            52337991,
-            51836868
+            59880667,
+            56448108
           ],
           [
-            52294899,
-            52637585
+            60830139,
+            58204158
           ],
           [
-            52371684,
-            52565940
+            55395360,
+            56213287
           ]
         ],
         "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 58.6,
+        "champion_sha256": "0524d617b28254973c792791442b292739280e817fb75e6df0467c7e4e8ad658",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 68.8,
         "exhausted": false
       },
       "as_expected": true,
@@ -1585,136 +1784,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 3986738218,
-        "ratio": 0.551631327766309,
+        "seed": 2623179690,
+        "ratio": 0.5558681509538512,
         "classes": {
           "near-one": {
-            "incumbent_ns": 34.049386,
-            "submission_ns": 18.313222,
-            "ratio": 0.5378429437758437,
-            "spread_inc": 1.171355630318855,
-            "spread_sub": 1.1343528735686161
+            "incumbent_ns": 35.69834,
+            "submission_ns": 19.117734,
+            "ratio": 0.5355356579605662,
+            "spread_inc": 1.4275933838940411,
+            "spread_sub": 1.324769766123956
           },
           "spread": {
-            "incumbent_ns": 36.445,
-            "submission_ns": 20.666816,
-            "ratio": 0.5670686239539031,
-            "spread_inc": 1.0255231719028672,
-            "spread_sub": 1.0295124319101694
+            "incumbent_ns": 37.185834,
+            "submission_ns": 21.610496,
+            "ratio": 0.5811486169706453,
+            "spread_inc": 1.3675451786290447,
+            "spread_sub": 1.2217414167634097
           },
           "tiny": {
-            "incumbent_ns": 33.261342,
-            "submission_ns": 18.254872,
-            "ratio": 0.5488314933294033,
-            "spread_inc": 1.0422559017612698,
-            "spread_sub": 1.0964463623738365
+            "incumbent_ns": 34.025056,
+            "submission_ns": 18.699206,
+            "ratio": 0.5495716450841404,
+            "spread_inc": 1.3260049887941403,
+            "spread_sub": 1.3676496210587765
           }
         },
         "rounds": [
           [
-            52447286,
-            30515329
+            58425263,
+            33415431
           ],
           [
-            52078441,
-            29950835
+            62052857,
+            30580055
           ],
           [
-            52601638,
-            29937330
+            55272149,
+            34216717
           ],
           [
-            52328282,
-            29782066
+            61754306,
+            30235657
           ],
           [
-            55528713,
-            29351706
+            63570558,
+            30732311
           ],
           [
-            53160270,
-            29015995
+            58723793,
+            33719863
           ],
           [
-            52635551,
-            29304719
+            55226433,
+            30544468
           ],
           [
-            52429893,
-            28955692
+            57889296,
+            34191559
           ],
           [
-            52894160,
-            29079825
+            55713939,
+            31351083
           ],
           [
-            52708459,
-            28796752
+            58111933,
+            35434164
           ],
           [
-            52414865,
-            30050043
+            54662283,
+            30848409
           ],
           [
-            52761297,
-            29746420
+            56106245,
+            36949810
           ],
           [
-            53182341,
-            29960563
+            56110013,
+            30901778
           ],
           [
-            53036787,
-            29147342
+            57578482,
+            34604436
           ],
           [
-            52275132,
-            29763944
+            56070418,
+            37694581
           ],
           [
-            52474147,
-            29787809
+            72379015,
+            30836586
           ],
           [
-            52327912,
-            29903657
+            63543177,
+            32003690
           ],
           [
-            52308885,
-            29887215
+            54674707,
+            31777644
           ],
           [
-            52784902,
-            29873220
+            55168144,
+            32078600
           ],
           [
-            52663314,
-            29778461
+            55965131,
+            31537663
           ],
           [
-            52630342,
-            30113791
+            57111476,
+            30572371
           ],
           [
-            52402432,
-            29979138
+            55256781,
+            32077037
           ],
           [
-            52219087,
-            30139010
+            56165177,
+            33623312
           ],
           [
-            52488203,
-            29366175
+            55954132,
+            31423350
           ],
           [
-            52761619,
-            29194919
+            56816531,
+            30746357
           ]
         ],
         "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 59.0,
+        "champion_sha256": "0524d617b28254973c792791442b292739280e817fb75e6df0467c7e4e8ad658",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 68.9,
         "exhausted": false
       },
       "as_expected": true,
@@ -1737,136 +1938,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 3817846899,
-        "ratio": 0.9991252531154707,
+        "seed": 2205922741,
+        "ratio": 0.9951216769423935,
         "classes": {
           "near-one": {
-            "incumbent_ns": 33.785304,
-            "submission_ns": 33.79448,
-            "ratio": 1.0002715973785525,
-            "spread_inc": 1.0774446191160512,
-            "spread_sub": 1.041906192964058
+            "incumbent_ns": 35.742544,
+            "submission_ns": 35.029544,
+            "ratio": 0.9800517836671055,
+            "spread_inc": 1.2409805524755038,
+            "spread_sub": 1.2585123574546102
           },
           "spread": {
-            "incumbent_ns": 36.113634,
-            "submission_ns": 36.115416,
-            "ratio": 1.000049344244891,
-            "spread_inc": 1.0448650501359127,
-            "spread_sub": 1.027510301971878
+            "incumbent_ns": 37.150026,
+            "submission_ns": 37.839262,
+            "ratio": 1.0185527730182478,
+            "spread_inc": 1.1482649837176426,
+            "spread_sub": 1.2054290065170932
           },
           "tiny": {
-            "incumbent_ns": 33.161732,
-            "submission_ns": 33.060622,
-            "ratio": 0.9969510036448036,
-            "spread_inc": 1.0313147093764583,
-            "spread_sub": 1.0329335606571468
+            "incumbent_ns": 35.2409,
+            "submission_ns": 34.737154,
+            "ratio": 0.9857056431589432,
+            "spread_inc": 1.1984608225102082,
+            "spread_sub": 1.2233007344240119
           }
         },
         "rounds": [
           [
-            52267118,
-            52296222
+            54859314,
+            60474011
           ],
           [
-            53214064,
-            52924902
+            59802189,
+            56019474
           ],
           [
-            52015956,
-            52494263
+            59459787,
+            56467695
           ],
           [
-            52750654,
-            52813474
+            61982734,
+            56348170
           ],
           [
-            52485167,
-            52446092
+            57643523,
+            56358090
           ],
           [
-            52432408,
-            52543766
+            55279452,
+            62832421
           ],
           [
-            53477980,
-            52599471
+            55782187,
+            58521733
           ],
           [
-            52131694,
-            51953309
+            61106178,
+            55955644
           ],
           [
-            51581600,
-            52082290
+            58476898,
+            55836469
           ],
           [
-            52297715,
-            51827222
+            56477313,
+            57664423
           ],
           [
-            52179002,
-            52590704
+            56216924,
+            56974968
           ],
           [
-            51793438,
-            52029451
+            57225269,
+            57285410
           ],
           [
-            51869471,
-            52138186
+            55649749,
+            58864607
           ],
           [
-            52243385,
-            51836740
+            56722433,
+            59455539
           ],
           [
-            51845536,
-            51947599
+            58387972,
+            56874760
           ],
           [
-            51988244,
-            51815810
+            55140061,
+            54840178
           ],
           [
-            52539671,
-            51707417
+            57592667,
+            56481871
           ],
           [
-            51892355,
-            51916670
+            55661681,
+            56009213
           ],
           [
-            51954430,
-            51916569
+            57083572,
+            55195354
           ],
           [
-            51806594,
-            51920427
+            57951563,
+            62456616
           ],
           [
-            52178732,
-            51994967
+            57260855,
+            54873610
           ],
           [
-            52285662,
-            51647765
+            61138439,
+            56987320
           ],
           [
-            52248844,
-            51949291
+            58509851,
+            54025187
           ],
           [
-            52196325,
-            51968266
+            55382275,
+            55897474
           ],
           [
-            51944802,
-            51762810
+            56076000,
+            56396241
           ]
         ],
         "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 60.7,
+        "champion_sha256": "0524d617b28254973c792791442b292739280e817fb75e6df0467c7e4e8ad658",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 70.8,
         "exhausted": false
       },
       "as_expected": true,
@@ -1894,8 +2097,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "bc1899244f02a90f7f9c2c26a547c6e2acfa39f192336b673653ee1c9481d160",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 6.4,
+        "champion_sha256": "0524d617b28254973c792791442b292739280e817fb75e6df0467c7e4e8ad658",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 7.9,
         "exhausted": false
       },
       "as_expected": true,
@@ -1918,136 +2123,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 558524791,
-        "ratio": 1.0026109354403112,
+        "seed": 3657630599,
+        "ratio": 0.9959863984589669,
         "classes": {
           "near-one": {
-            "incumbent_ns": 66.177806,
-            "submission_ns": 67.170558,
-            "ratio": 1.0150012830585529,
-            "spread_inc": 1.1424552515385595,
-            "spread_sub": 1.0472212542882255
+            "incumbent_ns": 69.410888,
+            "submission_ns": 68.971824,
+            "ratio": 0.9936744217996462,
+            "spread_inc": 1.1343477697620004,
+            "spread_sub": 1.2629759653739185
           },
           "cancel": {
-            "incumbent_ns": 62.730438,
-            "submission_ns": 62.971084,
-            "ratio": 1.0038361919296659,
-            "spread_inc": 1.0823626323157507,
-            "spread_sub": 1.0444614229604179
+            "incumbent_ns": 64.483352,
+            "submission_ns": 65.814672,
+            "ratio": 1.0206459490505395,
+            "spread_inc": 1.1354201313852295,
+            "spread_sub": 1.177144117652064
           },
           "wide": {
-            "incumbent_ns": 248.531958,
-            "submission_ns": 248.284032,
-            "ratio": 0.9990024381492218,
-            "spread_inc": 1.0548088387087828,
-            "spread_sub": 1.0592883315186374
+            "incumbent_ns": 262.954322,
+            "submission_ns": 260.469274,
+            "ratio": 0.9905495069215862,
+            "spread_inc": 1.1692757725427307,
+            "spread_sub": 1.1803180362840033
           }
         },
         "rounds": [
           [
-            198817901,
-            194500652
+            201257394,
+            200415241
           ],
           [
-            189048200,
-            192809947
+            201975384,
+            208559119
           ],
           [
-            195014728,
-            194268097
+            205645967,
+            209063367
           ],
           [
-            196123881,
-            191805790
+            207378622,
+            203565399
           ],
           [
-            199807862,
-            195295454
+            229133769,
+            202039763
           ],
           [
-            193731798,
-            192261527
+            201545955,
+            202978315
           ],
           [
-            194119638,
-            190564819
+            202020357,
+            200442873
           ],
           [
-            192602758,
-            193666235
+            204580296,
+            204500585
           ],
           [
-            199026434,
-            195978569
+            200415041,
+            202823757
           ],
           [
-            196895292,
-            198299349
+            209067175,
+            200362923
           ],
           [
-            196586832,
-            194845142
+            204120493,
+            203426800
           ],
           [
-            196210216,
-            194473854
+            203603009,
+            208447260
           ],
           [
-            197350957,
-            196978297
+            203925785,
+            208045105
           ],
           [
-            195716840,
-            199401678
+            208695636,
+            217956704
           ],
           [
-            195564892,
-            193622487
+            203926095,
+            208052778
           ],
           [
-            193978384,
-            193740378
+            208191949,
+            213679699
           ],
           [
-            195443615,
-            191203093
+            209749015,
+            201773263
           ],
           [
-            193166881,
-            193679224
+            202932610,
+            209383209
           ],
           [
-            190123056,
-            194916686
+            207801657,
+            236009846
           ],
           [
-            193349442,
-            194132854
+            208763975,
+            201973128
           ],
           [
-            197929794,
-            194230077
+            214841813,
+            208697689
           ],
           [
-            193055803,
-            196062587
+            199556568,
+            203119332
           ],
           [
-            194820204,
-            195570213
+            213768455,
+            208225754
           ],
           [
-            193883907,
-            195171766
+            206728481,
+            208678554
           ],
           [
-            195502966,
-            195581426
+            205122153,
+            207019899
           ]
         ],
         "incumbent_sha256": "6848107e686ce7148176938a78db7ad5c4a571398cff8408553a0a6788406065",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 100.5,
+        "champion_sha256": "ba2ae512d6bc311d0bb8384ddcc94485bf0ff21d94b3c167f6e09f764141bbaa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 113.1,
         "exhausted": false
       },
       "as_expected": true,
@@ -2070,136 +2277,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2854989663,
-        "ratio": 0.9937775460935697,
+        "seed": 2828518775,
+        "ratio": 1.0038324970007815,
         "classes": {
           "near-one": {
-            "incumbent_ns": 67.331056,
-            "submission_ns": 67.606492,
-            "ratio": 1.0040907720205665,
-            "spread_inc": 1.1644774738123815,
-            "spread_sub": 1.0926713665308947
+            "incumbent_ns": 68.528412,
+            "submission_ns": 68.84683,
+            "ratio": 1.0046465107056617,
+            "spread_inc": 1.1296786506595249,
+            "spread_sub": 1.2511983195159457
           },
           "cancel": {
-            "incumbent_ns": 63.596038,
-            "submission_ns": 63.158598,
-            "ratio": 0.9931215840835871,
-            "spread_inc": 1.138730560542152,
-            "spread_sub": 1.1535555934917998
+            "incumbent_ns": 65.651588,
+            "submission_ns": 65.176114,
+            "ratio": 0.9927576161600234,
+            "spread_inc": 1.1242172542726614,
+            "spread_sub": 1.1791763160350432
           },
           "wide": {
-            "incumbent_ns": 251.087146,
-            "submission_ns": 248.872084,
-            "ratio": 0.9911781147092253,
-            "spread_inc": 1.1115355542732561,
-            "spread_sub": 1.1092377480151612
+            "incumbent_ns": 260.911242,
+            "submission_ns": 262.582484,
+            "ratio": 1.006405404332865,
+            "spread_inc": 1.1222589097943123,
+            "spread_sub": 1.1016900198110702
           }
         },
         "rounds": [
           [
-            196526628,
-            197147524
+            222015849,
+            204764913
           ],
           [
-            214958270,
-            209524111
+            210843000,
+            205187848
           ],
           [
-            194404832,
-            198945401
+            204674102,
+            201873611
           ],
           [
-            194778123,
-            194930610
+            203687799,
+            200165222
           ],
           [
-            193887639,
-            196760077
+            204649106,
+            202426480
           ],
           [
-            196431679,
-            193857624
+            208846349,
+            207868353
           ],
           [
-            193764860,
-            195285035
+            201559310,
+            201103596
           ],
           [
-            195496493,
-            198594443
+            202821182,
+            202105036
           ],
           [
-            198045571,
-            194151536
+            203968817,
+            199493932
           ],
           [
-            195136356,
-            195290995
+            203074517,
+            204837709
           ],
           [
-            195573927,
-            194257846
+            202569979,
+            205170493
           ],
           [
-            193744201,
-            195514957
+            202631845,
+            215463369
           ],
           [
-            193264469,
-            194981015
+            201629211,
+            203381053
           ],
           [
-            194656426,
-            196239658
+            204024362,
+            204774141
           ],
           [
-            195130907,
-            190134381
+            199123716,
+            207949434
           ],
           [
-            195881436,
-            197922970
+            202859473,
+            204247610
           ],
           [
-            194241755,
-            196361478
+            202995700,
+            200491013
           ],
           [
-            197589124,
-            197213348
+            200715225,
+            200956128
           ],
           [
-            191053899,
-            192139969
+            203958478,
+            203067864
           ],
           [
-            196013013,
-            193084312
+            204278378,
+            209251351
           ],
           [
-            194140341,
-            202677484
+            202077233,
+            204385659
           ],
           [
-            195262707,
-            195635086
+            201607591,
+            203243875
           ],
           [
-            199183440,
-            197812615
+            213932043,
+            200903378
           ],
           [
-            195576205,
-            196254318
+            210188390,
+            203596226
           ],
           [
-            197018614,
-            197996330
+            209426560,
+            221335240
           ]
         ],
         "incumbent_sha256": "6848107e686ce7148176938a78db7ad5c4a571398cff8408553a0a6788406065",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 104.4,
+        "champion_sha256": "ba2ae512d6bc311d0bb8384ddcc94485bf0ff21d94b3c167f6e09f764141bbaa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 114.6,
         "exhausted": false
       },
       "as_expected": true,
@@ -2227,8 +2436,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "6848107e686ce7148176938a78db7ad5c4a571398cff8408553a0a6788406065",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 6.9,
+        "champion_sha256": "ba2ae512d6bc311d0bb8384ddcc94485bf0ff21d94b3c167f6e09f764141bbaa",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 8.0,
         "exhausted": false
       },
       "as_expected": true,
@@ -2251,136 +2462,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 1941726033,
-        "ratio": 1.0049731690316006,
+        "seed": 1415890166,
+        "ratio": 0.9965250757485615,
         "classes": {
           "near-one": {
-            "incumbent_ns": 50.382774,
-            "submission_ns": 50.670576,
-            "ratio": 1.0057123095286495,
-            "spread_inc": 1.1521293369039187,
-            "spread_sub": 1.0858278777016468
+            "incumbent_ns": 51.42965,
+            "submission_ns": 51.953976,
+            "ratio": 1.0101950139656792,
+            "spread_inc": 1.0703570411231653,
+            "spread_sub": 1.0766050321153475
           },
           "spread": {
-            "incumbent_ns": 50.943988,
-            "submission_ns": 51.170274,
-            "ratio": 1.0044418587724229,
-            "spread_inc": 1.138561197839478,
-            "spread_sub": 1.092531300496847
+            "incumbent_ns": 53.067988,
+            "submission_ns": 52.468602,
+            "ratio": 0.9887053189203254,
+            "spread_inc": 1.2507651128586221,
+            "spread_sub": 1.2051795090709678
           },
           "extremes": {
-            "incumbent_ns": 52.66358,
-            "submission_ns": 52.915312,
-            "ratio": 1.0047800016633885,
-            "spread_inc": 1.1177197600315056,
-            "spread_sub": 1.0856461736444074
+            "incumbent_ns": 54.762812,
+            "submission_ns": 54.284454,
+            "ratio": 0.9912649116703504,
+            "spread_inc": 1.1950155883156621,
+            "spread_sub": 1.154676180403325
           }
         },
         "rounds": [
           [
-            80036761,
-            82086338
+            83958657,
+            82583204
           ],
           [
-            79612403,
-            80085020
+            85868816,
+            81077906
           ],
           [
-            79068801,
-            81144399
+            83951444,
+            82556584
           ],
           [
-            82110449,
-            78936781
+            81668857,
+            84328191
           ],
           [
-            79010827,
-            78189416
+            80669417,
+            89129990
           ],
           [
-            79175678,
-            80053075
+            83341287,
+            80807728
           ],
           [
-            78152776,
-            82357683
+            80165852,
+            80739400
           ],
           [
-            78400091,
-            77719462
+            81796356,
+            83496619
           ],
           [
-            84342603,
-            80294077
+            82620814,
+            84634836
           ],
           [
-            80015565,
-            78866345
+            81208662,
+            83162992
           ],
           [
-            77581132,
-            78061174
+            88119493,
+            85972279
           ],
           [
-            78679805,
-            77960504
+            87270568,
+            82810450
           ],
           [
-            77803921,
-            78437110
+            85113255,
+            82159368
           ],
           [
-            78214872,
-            78395092
+            86839118,
+            83289930
           ],
           [
-            77799962,
-            78285144
+            81492184,
+            83664344
           ],
           [
-            77533052,
-            78554700
+            84384238,
+            82355485
           ],
           [
-            77715805,
-            78153398
+            86521130,
+            85933727
           ],
           [
-            77871267,
-            78125996
+            83651721,
+            81138600
           ],
           [
-            77547149,
-            78481524
+            82574619,
+            80072277
           ],
           [
-            80237252,
-            78104375
+            82884910,
+            84623896
           ],
           [
-            82262585,
-            80503331
+            81320400,
+            80375666
           ],
           [
-            78223839,
-            78691196
+            80356490,
+            82542636
           ],
           [
-            78097462,
-            77926260
+            83053496,
+            82101679
           ],
           [
-            77241505,
-            78481633
+            80728429,
+            80862330
           ],
           [
-            77452240,
-            78112990
+            82532227,
+            82697347
           ]
         ],
         "incumbent_sha256": "fda0939021fbfdb5225cea7d3905013e245cdd5be38fa57396c907fc3add83ea",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 66.7,
+        "champion_sha256": "9f0f7797c135808035b82a0ba6ef81bd87006e4bf0885a6a60ddbc82bcd966df",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 73.9,
         "exhausted": false
       },
       "as_expected": true,
@@ -2403,136 +2616,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2915595549,
-        "ratio": 0.9917184538608569,
+        "seed": 2677726773,
+        "ratio": 1.0089306349276206,
         "classes": {
           "near-one": {
-            "incumbent_ns": 50.636624,
-            "submission_ns": 50.417252,
-            "ratio": 0.9956677206600503,
-            "spread_inc": 1.0190529684601406,
-            "spread_sub": 1.04027422994018
+            "incumbent_ns": 51.235086,
+            "submission_ns": 51.75991,
+            "ratio": 1.010243449186364,
+            "spread_inc": 1.1387888370090762,
+            "spread_sub": 1.1774139870026823
           },
           "spread": {
-            "incumbent_ns": 51.08096,
-            "submission_ns": 51.029764,
-            "ratio": 0.9989977478888415,
-            "spread_inc": 1.0428075353321473,
-            "spread_sub": 1.0298293756561367
+            "incumbent_ns": 52.75548,
+            "submission_ns": 53.056828,
+            "ratio": 1.0057121648784164,
+            "spread_inc": 1.1499260361198496,
+            "spread_sub": 1.1216530321036153
           },
           "extremes": {
-            "incumbent_ns": 53.26024,
-            "submission_ns": 52.247352,
-            "ratio": 0.980982286223269,
-            "spread_inc": 1.0241217463533774,
-            "spread_sub": 1.0561577551336956
+            "incumbent_ns": 54.019476,
+            "submission_ns": 54.604434,
+            "ratio": 1.0108286500224475,
+            "spread_inc": 1.1060195030399778,
+            "spread_sub": 1.1071714066297254
           }
         },
         "rounds": [
           [
-            78840578,
-            78981864
+            81334346,
+            83692587
           ],
           [
-            78304843,
-            78916160
+            84012749,
+            81720723
           ],
           [
-            78568936,
-            77824888
+            81971605,
+            83707153
           ],
           [
-            78157125,
-            77757022
+            82124942,
+            83913682
           ],
           [
-            78126316,
-            78585799
+            83659103,
+            81133880
           ],
           [
-            78502287,
-            78172734
+            83487141,
+            82130022
           ],
           [
-            79097403,
-            78228730
+            81385483,
+            81815139
           ],
           [
-            78407135,
-            77805214
+            82809858,
+            84994203
           ],
           [
-            77880766,
-            78275528
+            82019625,
+            82497431
           ],
           [
-            78732187,
-            77783823
+            83380601,
+            82810651
           ],
           [
-            78129314,
-            78771661
+            80776048,
+            83760033
           ],
           [
-            78391306,
-            78271941
+            84406678,
+            82640600
           ],
           [
-            78231246,
-            77829019
+            82744946,
+            84952655
           ],
           [
-            77741945,
-            78101691
+            81875754,
+            86229032
           ],
           [
-            78082655,
-            78500620
+            82865664,
+            82843604
           ],
           [
-            77979152,
-            78692482
+            82618499,
+            80054653
           ],
           [
-            77998608,
-            77735915
+            82601227,
+            82535053
           ],
           [
-            77786609,
-            77664359
+            81724771,
+            85244082
           ],
           [
-            78003477,
-            78386737
+            83781534,
+            82552836
           ],
           [
-            77768324,
-            78235014
+            81445065,
+            81910951
           ],
           [
-            78281670,
-            77683896
+            84300429,
+            82935395
           ],
           [
-            78483770,
-            77414589
+            82705953,
+            81626806
           ],
           [
-            78703403,
-            78587014
+            82409798,
+            82549981
           ],
           [
-            78848275,
-            78283212
+            79883492,
+            81491282
           ],
           [
-            78367511,
-            78474071
+            81153487,
+            81624832
           ]
         ],
         "incumbent_sha256": "fda0939021fbfdb5225cea7d3905013e245cdd5be38fa57396c907fc3add83ea",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 62.0,
+        "champion_sha256": "9f0f7797c135808035b82a0ba6ef81bd87006e4bf0885a6a60ddbc82bcd966df",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 69.3,
         "exhausted": false
       },
       "as_expected": true,
@@ -2560,8 +2775,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "fda0939021fbfdb5225cea7d3905013e245cdd5be38fa57396c907fc3add83ea",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 6.3,
+        "champion_sha256": "9f0f7797c135808035b82a0ba6ef81bd87006e4bf0885a6a60ddbc82bcd966df",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 7.2,
         "exhausted": false
       },
       "as_expected": true,
@@ -2584,136 +2801,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 3151978325,
-        "ratio": 1.001455083585509,
+        "seed": 395708523,
+        "ratio": 1.0042191927439659,
         "classes": {
           "near-one": {
-            "incumbent_ns": 46.332024,
-            "submission_ns": 46.417344,
-            "ratio": 1.0018414908875986,
-            "spread_inc": 1.0778187026752815,
-            "spread_sub": 1.0753191307111412
+            "incumbent_ns": 47.599738,
+            "submission_ns": 47.11176,
+            "ratio": 0.9897483049171405,
+            "spread_inc": 1.064509766839473,
+            "spread_sub": 1.0857813420683073
           },
           "spread": {
-            "incumbent_ns": 46.217028,
-            "submission_ns": 46.259848,
-            "ratio": 1.0009264983460209,
-            "spread_inc": 1.0956285635675231,
-            "spread_sub": 1.074380875613772
+            "incumbent_ns": 47.246434,
+            "submission_ns": 47.684116,
+            "ratio": 1.009263810259204,
+            "spread_inc": 1.1046951395315887,
+            "spread_sub": 1.2206958812028728
           },
           "subnormal": {
-            "incumbent_ns": 46.453272,
-            "submission_ns": 46.527392,
-            "ratio": 1.001595581900022,
-            "spread_inc": 1.0638723145271662,
-            "spread_sub": 1.0204237968033971
+            "incumbent_ns": 47.243568,
+            "submission_ns": 47.893368,
+            "ratio": 1.0137542532773984,
+            "spread_inc": 1.1014275636421025,
+            "spread_sub": 1.1208989102624813
           }
         },
         "rounds": [
           [
-            69929299,
-            69836492
+            75407324,
+            73371339
           ],
           [
-            72916362,
-            70991484
+            72849769,
+            73860787
           ],
           [
-            70174227,
-            71137509
+            74164047,
+            75694012
           ],
           [
-            70147177,
-            70422964
+            75175326,
+            72729233
           ],
           [
-            70545225,
-            70120967
+            73142368,
+            72489362
           ],
           [
-            71429027,
-            69716236
+            73551287,
+            73235884
           ],
           [
-            70108995,
-            69961567
+            74015418,
+            74097382
           ],
           [
-            70024535,
-            73169969
+            73734622,
+            73603545
           ],
           [
-            69938694,
-            70064673
+            74491102,
+            74477649
           ],
           [
-            70037961,
-            70152276
+            76359854,
+            76208959
           ],
           [
-            70065063,
-            70128952
+            74217549,
+            73218411
           ],
           [
-            70527181,
-            70253396
+            74404489,
+            74535104
           ],
           [
-            69864907,
-            69927254
+            73865346,
+            75576091
           ],
           [
-            71585652,
-            70376036
+            73183195,
+            73507003
           ],
           [
-            70646657,
-            70425960
+            74174128,
+            74853292
           ],
           [
-            70025919,
-            70763475
+            74004117,
+            72169931
           ],
           [
-            70286679,
-            70348134
+            75136816,
+            74879983
           ],
           [
-            70392738,
-            70159540
+            74399711,
+            74515598
           ],
           [
-            70233609,
-            70034694
+            73761332,
+            72530649
           ],
           [
-            69956557,
-            69995581
+            72911424,
+            74375254
           ],
           [
-            70091912,
-            70218690
+            74487304,
+            72734011
           ],
           [
-            70849468,
-            70325321
+            74202740,
+            74038352
           ],
           [
-            70306657,
-            70304332
+            72280390,
+            72657237
           ],
           [
-            69927734,
-            70325072
+            73211999,
+            78245175
           ],
           [
-            70173987,
-            70038101
+            73360127,
+            75766327
           ]
         ],
         "incumbent_sha256": "75b5be4832fc1009510487f116b0d5e04e633eeb34b818292d3ff1df66744712",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 60.0,
+        "champion_sha256": "752f183aacd8b1f7dd1163b46ad75e209351011d165802dd9a104765699789c9",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 66.8,
         "exhausted": false
       },
       "as_expected": true,
@@ -2736,136 +2955,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 302606861,
-        "ratio": 0.9998462406206454,
+        "seed": 3582571020,
+        "ratio": 1.0003079752649309,
         "classes": {
           "near-one": {
-            "incumbent_ns": 46.3258,
-            "submission_ns": 46.272512,
-            "ratio": 0.9988497122553739,
-            "spread_inc": 1.046905741509051,
-            "spread_sub": 1.0181308073354651
+            "incumbent_ns": 48.193732,
+            "submission_ns": 48.04389,
+            "ratio": 0.9968908404935314,
+            "spread_inc": 1.6525823731600615,
+            "spread_sub": 1.715189090641911
           },
           "spread": {
-            "incumbent_ns": 45.954524,
-            "submission_ns": 46.097292,
-            "ratio": 1.0031067235077877,
-            "spread_inc": 1.024246013297842,
-            "spread_sub": 1.0202770262513468
+            "incumbent_ns": 48.446108,
+            "submission_ns": 48.49059,
+            "ratio": 1.0009181748923979,
+            "spread_inc": 1.741479088474971,
+            "spread_sub": 1.3635525160654882
           },
           "subnormal": {
-            "incumbent_ns": 46.49495,
-            "submission_ns": 46.384132,
-            "ratio": 0.997616558357413,
-            "spread_inc": 1.0816421568363876,
-            "spread_sub": 1.0209011564558328
+            "incumbent_ns": 48.44324,
+            "submission_ns": 48.593282,
+            "ratio": 1.0030972742533324,
+            "spread_inc": 1.5547706140216881,
+            "spread_sub": 1.1991992226415167
           }
         },
         "rounds": [
           [
-            69906214,
-            70248026
+            75171570,
+            76076951
           ],
           [
-            70392438,
-            69862701
+            75420637,
+            77132694
           ],
           [
-            69887749,
-            70170820
+            83615702,
+            75218578
           ],
           [
-            69864335,
-            70518565
+            115169397,
+            75660658
           ],
           [
-            70324430,
-            69906083
+            113210606,
+            103398424
           ],
           [
-            70868823,
-            70103714
+            79277152,
+            78741687
           ],
           [
-            70592885,
-            70345860
+            77326368,
+            81173234
           ],
           [
-            69928297,
-            69690852
+            75941295,
+            76877414
           ],
           [
-            71676616,
-            69681143
+            77131923,
+            79095021
           ],
           [
-            70484334,
-            70362776
+            76809947,
+            74802638
           ],
           [
-            69946652,
-            70142230
+            74413728,
+            75539731
           ],
           [
-            70179881,
-            69859699
+            81138950,
+            80602091
           ],
           [
-            69913529,
-            69817420
+            82211857,
+            79010220
           ],
           [
-            71698286,
-            70128465
+            75686918,
+            76941665
           ],
           [
-            70203636,
-            69787263
+            74849596,
+            76398026
           ],
           [
-            69818802,
-            70386030
+            80956417,
+            79080603
           ],
           [
-            70472791,
-            70051780
+            74946507,
+            73083689
           ],
           [
-            70267736,
-            69871582
+            75859492,
+            74698010
           ],
           [
-            71076287,
-            69784067
+            80241606,
+            73722347
           ],
           [
-            69728674,
-            70097697
+            75878878,
+            77825896
           ],
           [
-            70375929,
-            69807000
+            77898392,
+            75131786
           ],
           [
-            69778546,
-            69723392
+            81903277,
+            78303163
           ],
           [
-            70632261,
-            70338540
+            73979201,
+            74817176
           ],
           [
-            70379927,
-            70255923
+            83416319,
+            73456057
           ],
           [
-            69992668,
-            70233652
+            75759486,
+            77475889
           ]
         ],
         "incumbent_sha256": "75b5be4832fc1009510487f116b0d5e04e633eeb34b818292d3ff1df66744712",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 59.5,
+        "champion_sha256": "752f183aacd8b1f7dd1163b46ad75e209351011d165802dd9a104765699789c9",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 68.6,
         "exhausted": false
       },
       "as_expected": true,
@@ -2893,8 +3114,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "75b5be4832fc1009510487f116b0d5e04e633eeb34b818292d3ff1df66744712",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 6.1,
+        "champion_sha256": "752f183aacd8b1f7dd1163b46ad75e209351011d165802dd9a104765699789c9",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 7.7,
         "exhausted": false
       },
       "as_expected": true,
@@ -2917,136 +3140,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 999899961,
-        "ratio": 0.998379867055633,
+        "seed": 3383002100,
+        "ratio": 0.9977570806008343,
         "classes": {
           "dense": {
-            "incumbent_ns": 44.601054,
-            "submission_ns": 44.831948,
-            "ratio": 1.0051768731743425,
-            "spread_inc": 1.0264674911045824,
-            "spread_sub": 1.0340362189927594
+            "incumbent_ns": 46.753556,
+            "submission_ns": 46.993566,
+            "ratio": 1.005133513266884,
+            "spread_inc": 1.298495712283361,
+            "spread_sub": 1.5091392298256319
           },
           "relu": {
-            "incumbent_ns": 41.768712,
-            "submission_ns": 41.29294,
-            "ratio": 0.9886093686585308,
-            "spread_inc": 1.025560950981682,
-            "spread_sub": 1.1017533263555466
+            "incumbent_ns": 43.555766,
+            "submission_ns": 43.384406,
+            "ratio": 0.9960657332946458,
+            "spread_inc": 1.297437037383294,
+            "spread_sub": 1.4933235227422499
           },
           "wide": {
-            "incumbent_ns": 43.046774,
-            "submission_ns": 43.08198,
-            "ratio": 1.0008178545504942,
-            "spread_inc": 1.024414744761129,
-            "spread_sub": 1.0790702284342548
+            "incumbent_ns": 45.330862,
+            "submission_ns": 44.957982,
+            "ratio": 0.9917742574584176,
+            "spread_inc": 1.2366098840123534,
+            "spread_sub": 1.401775017392907
           }
         },
         "rounds": [
           [
-            65027050,
-            66019066
+            73090252,
+            77352871
           ],
           [
-            65201880,
-            66165772
+            71296522,
+            70538839
           ],
           [
-            65448312,
-            69170487
+            73417586,
+            69809939
           ],
           [
-            65670670,
-            65055314
+            73209557,
+            71317531
           ],
           [
-            65723248,
-            65498136
+            74560834,
+            72730096
           ],
           [
-            65619785,
-            65315212
+            70657642,
+            70176569
           ],
           [
-            65239720,
-            66141864
+            71471682,
+            71867966
           ],
           [
-            65456708,
-            65137637
+            70303025,
+            71827160
           ],
           [
-            65752744,
-            65955385
+            73270471,
+            69828114
           ],
           [
-            65234639,
-            65760569
+            68926720,
+            71086108
           ],
           [
-            65991313,
-            65146175
+            69015297,
+            72274480
           ],
           [
-            66038272,
-            66239147
+            71220961,
+            75270658
           ],
           [
-            65648507,
-            65469853
+            78873978,
+            86414715
           ],
           [
-            65965043,
-            65593514
+            85526956,
+            99363882
           ],
           [
-            65392947,
-            65049792
+            72224375,
+            80855720
           ],
           [
-            65762062,
-            64896704
+            72694359,
+            75282993
           ],
           [
-            65588054,
-            65773222
+            73631789,
+            70975107
           ],
           [
-            65654970,
-            65309871
+            70081379,
+            72594389
           ],
           [
-            65684676,
-            65530767
+            71324054,
+            71936564
           ],
           [
-            65483858,
-            65306835
+            74700738,
+            70824546
           ],
           [
-            65374564,
-            65513845
+            70386733,
+            75937310
           ],
           [
-            65157195,
-            65564460
+            69576061,
+            72445662
           ],
           [
-            65659729,
-            65871929
+            73258267,
+            69771757
           ],
           [
-            65787780,
-            65409479
+            74520359,
+            76881063
           ],
           [
-            65885302,
-            65843494
+            78631483,
+            68655552
           ]
         ],
         "incumbent_sha256": "768b3175c9d66fe2df597deebf55524f3a39b3c49f022150404971059b009bb5",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 90.9,
+        "champion_sha256": "eb5033d1da944dc2c8f9d7c5158b0dca7e4f0965ce096459cb423c3ee0aafe2d",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 107.3,
         "exhausted": false
       },
       "as_expected": true,
@@ -3069,136 +3294,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 3114342926,
-        "ratio": 0.5271634302054297,
+        "seed": 2809044874,
+        "ratio": 0.5271023585778815,
         "classes": {
           "dense": {
-            "incumbent_ns": 44.524892,
-            "submission_ns": 20.854084,
-            "ratio": 0.46836910912664315,
-            "spread_inc": 1.0855478324349446,
-            "spread_sub": 1.0692891617776163
+            "incumbent_ns": 46.481864,
+            "submission_ns": 21.965206,
+            "ratio": 0.47255432785569873,
+            "spread_inc": 1.4009920084099898,
+            "spread_sub": 1.5103470461419757
           },
           "relu": {
-            "incumbent_ns": 41.55935,
-            "submission_ns": 29.604052,
-            "ratio": 0.712331930119215,
-            "spread_inc": 1.0312657921743242,
-            "spread_sub": 1.0668260547576394
+            "incumbent_ns": 44.15962,
+            "submission_ns": 31.681458,
+            "ratio": 0.7174304941935642,
+            "spread_inc": 1.5751016879221333,
+            "spread_sub": 1.6337986086372667
           },
           "wide": {
-            "incumbent_ns": 42.8501,
-            "submission_ns": 17.511334,
-            "ratio": 0.40866495060688307,
-            "spread_inc": 1.0345672005432893,
-            "spread_sub": 1.0245331395083892
+            "incumbent_ns": 45.300264,
+            "submission_ns": 18.008552,
+            "ratio": 0.3975374624748324,
+            "spread_inc": 1.4847162038614168,
+            "spread_sub": 1.4496536978653254
           }
         },
         "rounds": [
           [
-            65365572,
-            34364030
+            76395281,
+            37440348
           ],
           [
-            64793155,
-            34652483
+            77457678,
+            42034429
           ],
           [
-            65343881,
-            34465832
+            80855991,
+            55521185
           ],
           [
-            65620772,
-            34298186
+            74786019,
+            41117676
           ],
           [
-            66043167,
-            34976503
+            69795342,
+            37940457
           ],
           [
-            66051834,
-            34547515
+            70242522,
+            37452490
           ],
           [
-            65447627,
-            34512480
+            71303505,
+            38536286
           ],
           [
-            65812434,
-            34430406
+            73720928,
+            41615472
           ],
           [
-            66111114,
-            34191125
+            78876102,
+            40203059
           ],
           [
-            65597219,
-            34613048
+            69033049,
+            40695433
           ],
           [
-            65267478,
-            34561952
+            74232447,
+            40015396
           ],
           [
-            65923482,
-            34340796
+            73986855,
+            41509512
           ],
           [
-            65270363,
-            34639338
+            70972433,
+            41677058
           ],
           [
-            67360657,
-            34503663
+            78713877,
+            41848910
           ],
           [
-            65617815,
-            34323244
+            72368566,
+            36050277
           ],
           [
-            65884128,
-            34801333
+            75666442,
+            37927703
           ],
           [
-            65990849,
-            34210942
+            71185584,
+            38396115
           ],
           [
-            65281664,
-            34786463
+            74614495,
+            41823442
           ],
           [
-            65443138,
-            34848693
+            70313075,
+            38350318
           ],
           [
-            65562002,
-            35657694
+            80114668,
+            38246533
           ],
           [
-            65957225,
-            34995109
+            89922113,
+            40821271
           ],
           [
-            65848821,
-            34360373
+            76130252,
+            41196606
           ],
           [
-            66083472,
-            34320188
+            89182363,
+            43384155
           ],
           [
-            65682147,
-            34624821
+            100967324,
+            42013239
           ],
           [
-            64732682,
-            34177820
+            78016086,
+            42639574
           ]
         ],
         "incumbent_sha256": "768b3175c9d66fe2df597deebf55524f3a39b3c49f022150404971059b009bb5",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 90.2,
+        "champion_sha256": "eb5033d1da944dc2c8f9d7c5158b0dca7e4f0965ce096459cb423c3ee0aafe2d",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 112.9,
         "exhausted": false
       },
       "as_expected": true,
@@ -3226,8 +3453,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "768b3175c9d66fe2df597deebf55524f3a39b3c49f022150404971059b009bb5",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 6.1,
+        "champion_sha256": "eb5033d1da944dc2c8f9d7c5158b0dca7e4f0965ce096459cb423c3ee0aafe2d",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 7.9,
         "exhausted": false
       },
       "as_expected": true,
@@ -3250,136 +3479,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 4269082832,
-        "ratio": 0.9984663412649382,
+        "seed": 3300536711,
+        "ratio": 1.0021099451515612,
         "classes": {
           "dense": {
-            "incumbent_ns": 82.496218,
-            "submission_ns": 82.217774,
-            "ratio": 0.9966247664832344,
-            "spread_inc": 1.02846532916212,
-            "spread_sub": 1.0233952332496863
+            "incumbent_ns": 86.627504,
+            "submission_ns": 86.356456,
+            "ratio": 0.9968711092033773,
+            "spread_inc": 1.3268989488603988,
+            "spread_sub": 1.2926035778957858
           },
           "relu": {
-            "incumbent_ns": 68.434058,
-            "submission_ns": 68.714644,
-            "ratio": 1.0041000929683288,
-            "spread_inc": 1.0306300117406453,
-            "spread_sub": 1.030376931007603
+            "incumbent_ns": 71.24234,
+            "submission_ns": 71.921116,
+            "ratio": 1.0095277050136198,
+            "spread_inc": 1.3478414100379073,
+            "spread_sub": 1.2076622114706896
           },
           "wide": {
-            "incumbent_ns": 69.637698,
-            "submission_ns": 69.29728,
-            "ratio": 0.9951115845328489,
-            "spread_inc": 1.021193865426166,
-            "spread_sub": 1.0223366054194334
+            "incumbent_ns": 72.617664,
+            "submission_ns": 72.696252,
+            "ratio": 1.0010822160294222,
+            "spread_inc": 1.243834420231419,
+            "spread_sub": 1.4356637258272957
           }
         },
         "rounds": [
           [
-            111452788,
-            111089717
+            120297889,
+            118386179
           ],
           [
-            111123740,
-            111198120
+            121680539,
+            118739673
           ],
           [
-            111304720,
-            111887815
+            121994196,
+            118404563
           ],
           [
-            110923493,
-            111470421
+            129316943,
+            118734563
           ],
           [
-            112801783,
-            111355389
+            122247661,
+            117556359
           ],
           [
-            111062671,
-            111790586
+            135973739,
+            128842793
           ],
           [
-            111932322,
-            112101690
+            123279270,
+            151349004
           ],
           [
-            110955979,
-            111345340
+            117536472,
+            119348175
           ],
           [
-            111916722,
-            111285969
+            116404776,
+            120079790
           ],
           [
-            111912286,
-            111523384
+            118047403,
+            119977959
           ],
           [
-            110376610,
-            110612123
+            122714501,
+            124667889
           ],
           [
-            111572367,
-            111107322
+            137973166,
+            120653488
           ],
           [
-            111494531,
-            111621348
+            127386046,
+            119554162
           ],
           [
-            111037642,
-            110463333
+            120092414,
+            123375070
           ],
           [
-            111783976,
-            111328128
+            117662949,
+            118048555
           ],
           [
-            111894051,
-            111447352
+            122012442,
+            126274668
           ],
           [
-            110934168,
-            110471858
+            121615266,
+            120307999
           ],
           [
-            111199698,
-            111149583
+            131280392,
+            116907100
           ],
           [
-            111137119,
-            111861000
+            119740773,
+            118766954
           ],
           [
-            111323659,
-            110968972
+            120080060,
+            119238298
           ],
           [
-            111437663,
-            111971057
+            122557163,
+            117840592
           ],
           [
-            111522403,
-            111309504
+            120901072,
+            119832245
           ],
           [
-            111229643,
-            110698574
+            119419119,
+            120307408
           ],
           [
-            110683497,
-            111102935
+            123219739,
+            121195494
           ],
           [
-            111468691,
-            111133351
+            123680945,
+            117505162
           ]
         ],
         "incumbent_sha256": "4ff962dd092497f51f29f0c2931f05802bc393522ab0813db7734a0183483b05",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 103.8,
+        "champion_sha256": "017e04c3239da3cb487bb61e71694587eb41787e89ce9198d25a7c042fab02c5",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 122.6,
         "exhausted": false
       },
       "as_expected": true,
@@ -3402,136 +3633,138 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 1078862651,
-        "ratio": 0.5701660240518677,
+        "seed": 2198504985,
+        "ratio": 0.5669244805834315,
         "classes": {
           "dense": {
-            "incumbent_ns": 82.074594,
-            "submission_ns": 42.747388,
-            "ratio": 0.5208358143081402,
-            "spread_inc": 1.0295188057829443,
-            "spread_sub": 1.0734698456897531
+            "incumbent_ns": 86.570076,
+            "submission_ns": 45.024708,
+            "ratio": 0.5200955119873061,
+            "spread_inc": 1.313228141326802,
+            "spread_sub": 1.2394959674141586
           },
           "relu": {
-            "incumbent_ns": 68.731336,
-            "submission_ns": 46.601734,
-            "ratio": 0.6780274720689264,
-            "spread_inc": 1.0546728787579511,
-            "spread_sub": 1.0305443140806734
+            "incumbent_ns": 72.09328,
+            "submission_ns": 49.101146,
+            "ratio": 0.6810779867416215,
+            "spread_inc": 1.3735386987525051,
+            "spread_sub": 1.2597825720809042
           },
           "wide": {
-            "incumbent_ns": 69.135576,
-            "submission_ns": 36.054052,
-            "ratio": 0.5214978175635653,
-            "spread_inc": 1.0175292674208718,
-            "spread_sub": 1.0266603598397206
+            "incumbent_ns": 73.265422,
+            "submission_ns": 37.360248,
+            "ratio": 0.509930155046401,
+            "spread_inc": 1.3974596092546905,
+            "spread_sub": 1.110453549451813
           }
         },
         "rounds": [
           [
-            111163079,
-            63553217
+            157547319,
+            69914626
           ],
           [
-            110672876,
-            63932559
+            120876116,
+            68265669
           ],
           [
-            112304634,
-            63823885
+            120572636,
+            68741573
           ],
           [
-            110502408,
-            63571621
+            123528970,
+            69080970
           ],
           [
-            110929268,
-            63302115
+            119030317,
+            69121466
           ],
           [
-            110992186,
-            63533410
+            143525978,
+            68575260
           ],
           [
-            110416374,
-            63522088
+            117971118,
+            71110743
           ],
           [
-            110687143,
-            64105946
+            119647309,
+            67357512
           ],
           [
-            111629786,
-            63639547
+            120421281,
+            79336486
           ],
           [
-            111479673,
-            63411239
+            136359082,
+            69297987
           ],
           [
-            110812909,
-            63669805
+            119657737,
+            66700919
           ],
           [
-            111465486,
-            63760175
+            125298213,
+            68310082
           ],
           [
-            111597955,
-            64284311
+            127821484,
+            68328747
           ],
           [
-            112930559,
-            63789070
+            120864875,
+            71592619
           ],
           [
-            111520790,
-            63367259
+            127630245,
+            68024985
           ],
           [
-            110242657,
-            63117199
+            125506294,
+            74201149
           ],
           [
-            110995130,
-            63960554
+            131821989,
+            67491363
           ],
           [
-            110499600,
-            64542147
+            118509490,
+            68132579
           ],
           [
-            110381997,
-            63876755
+            126216059,
+            66357723
           ],
           [
-            111082373,
-            63364253
+            124909363,
+            71498121
           ],
           [
-            111189224,
-            63463771
+            134472700,
+            66428226
           ],
           [
-            110821643,
-            63633669
+            117223694,
+            66784306
           ],
           [
-            110866919,
-            63376375
+            121393087,
+            77413344
           ],
           [
-            111049070,
-            62938420
+            133721668,
+            66661085
           ],
           [
-            111386355,
-            63630883
+            117470077,
+            69710955
           ]
         ],
         "incumbent_sha256": "4ff962dd092497f51f29f0c2931f05802bc393522ab0813db7734a0183483b05",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 102.4,
+        "champion_sha256": "017e04c3239da3cb487bb61e71694587eb41787e89ce9198d25a7c042fab02c5",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 123.5,
         "exhausted": false
       },
       "as_expected": true,
@@ -3559,8 +3792,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "4ff962dd092497f51f29f0c2931f05802bc393522ab0813db7734a0183483b05",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 14.6,
+        "champion_sha256": "017e04c3239da3cb487bb61e71694587eb41787e89ce9198d25a7c042fab02c5",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 19.6,
         "exhausted": false
       },
       "as_expected": true,
@@ -3583,199 +3818,201 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 2859987474,
-        "ratio": 1.0028473920952334,
+        "seed": 3817500512,
+        "ratio": 1.0049826357162424,
         "classes": {
           "add:near-one": {
-            "incumbent_ns": 29.841898,
-            "submission_ns": 29.85366,
-            "ratio": 1.0003941438309318,
-            "spread_inc": 1.0434391941156023,
-            "spread_sub": 1.0346337434003068
+            "incumbent_ns": 31.327574,
+            "submission_ns": 31.810962,
+            "ratio": 1.0154301127817942,
+            "spread_inc": 1.2871131355399559,
+            "spread_sub": 1.1752028121626752
           },
           "add:wide-gap": {
-            "incumbent_ns": 23.421694,
-            "submission_ns": 23.862744,
-            "ratio": 1.0188308326460076,
-            "spread_inc": 1.0611249553512228,
-            "spread_sub": 1.0233009246547673
+            "incumbent_ns": 24.508884,
+            "submission_ns": 24.472156,
+            "ratio": 0.998501441354898,
+            "spread_inc": 1.3148415896864174,
+            "spread_sub": 1.4917526678074462
           },
           "add:cancel": {
-            "incumbent_ns": 22.344152,
-            "submission_ns": 22.321668,
-            "ratio": 0.9989937411811377,
-            "spread_inc": 1.0619078316330823,
-            "spread_sub": 1.0533767458596732
+            "incumbent_ns": 22.80863,
+            "submission_ns": 23.038442,
+            "ratio": 1.0100756599585332,
+            "spread_inc": 1.3403160119656463,
+            "spread_sub": 1.3232984244333883
           },
           "mul:near-one": {
-            "incumbent_ns": 18.554826,
-            "submission_ns": 18.53571,
-            "ratio": 0.998969755900702,
-            "spread_inc": 1.0392226798569817,
-            "spread_sub": 1.0389734194158196
+            "incumbent_ns": 19.023838,
+            "submission_ns": 18.756778,
+            "ratio": 0.9859618232661569,
+            "spread_inc": 1.2017233325893544,
+            "spread_sub": 1.7170051274264695
           },
           "mul:spread": {
-            "incumbent_ns": 20.785762,
-            "submission_ns": 20.782874,
-            "ratio": 0.9998610587381882,
-            "spread_inc": 1.0440531359879903,
-            "spread_sub": 1.0443419904292353
+            "incumbent_ns": 21.255814,
+            "submission_ns": 21.118274,
+            "ratio": 0.9935292997953407,
+            "spread_inc": 1.3113176470211867,
+            "spread_sub": 1.4960007621835003
           },
           "mul:tiny": {
-            "incumbent_ns": 18.428932,
-            "submission_ns": 18.565526,
-            "ratio": 1.007411932498313,
-            "spread_inc": 1.0463751236371157,
-            "spread_sub": 1.0408092935260762
+            "incumbent_ns": 18.969278,
+            "submission_ns": 19.010334,
+            "ratio": 1.002164341731931,
+            "spread_inc": 1.2553643844536413,
+            "spread_sub": 1.2980580982953798
           },
           "sum:dense": {
-            "incumbent_ns": 20.725548,
-            "submission_ns": 20.740736,
-            "ratio": 1.000732815363917,
-            "spread_inc": 1.0747895302937225,
-            "spread_sub": 1.0420969631935917
+            "incumbent_ns": 21.196924,
+            "submission_ns": 21.405774,
+            "ratio": 1.0098528446863329,
+            "spread_inc": 1.2864805289673162,
+            "spread_sub": 1.2812396318862378
           },
           "sum:relu": {
-            "incumbent_ns": 29.903382,
-            "submission_ns": 29.971102,
-            "ratio": 1.0022646267903743,
-            "spread_inc": 1.0511623066581566,
-            "spread_sub": 1.0507765780517513
+            "incumbent_ns": 31.097682,
+            "submission_ns": 31.186168,
+            "ratio": 1.0028454210831534,
+            "spread_inc": 1.5428769899955888,
+            "spread_sub": 1.739231315626851
           },
           "sum:wide": {
-            "incumbent_ns": 17.529602,
-            "submission_ns": 17.50776,
-            "ratio": 0.9987539933878704,
-            "spread_inc": 1.0303851736051965,
-            "spread_sub": 1.0325608758630458
+            "incumbent_ns": 17.914756,
+            "submission_ns": 17.963246,
+            "ratio": 1.0027067072529483,
+            "spread_inc": 1.61967207368049,
+            "spread_sub": 1.7089177535062428
           },
           "bmm:dense": {
-            "incumbent_ns": 42.196776,
-            "submission_ns": 42.373508,
-            "ratio": 1.0041882820621177,
-            "spread_inc": 1.02223307297221,
-            "spread_sub": 1.0230062141657
+            "incumbent_ns": 43.081016,
+            "submission_ns": 43.912176,
+            "ratio": 1.0192929526081744,
+            "spread_inc": 1.304817555834802,
+            "spread_sub": 1.2736720676288054
           },
           "bmm:relu": {
-            "incumbent_ns": 47.059934,
-            "submission_ns": 47.122052,
-            "ratio": 1.001319976351858,
-            "spread_inc": 1.0217771661133226,
-            "spread_sub": 1.0781538121472298
+            "incumbent_ns": 48.79,
+            "submission_ns": 48.322924,
+            "ratio": 0.9904268087722894,
+            "spread_inc": 1.3244176265628202,
+            "spread_sub": 1.442429435768415
           },
           "bmm:wide": {
-            "incumbent_ns": 35.925406,
-            "submission_ns": 36.010866,
-            "ratio": 1.0023788179318,
-            "spread_inc": 1.0326650727343207,
-            "spread_sub": 1.0160442128773022
+            "incumbent_ns": 36.889484,
+            "submission_ns": 37.545116,
+            "ratio": 1.017772869905147,
+            "spread_inc": 1.316789305049645,
+            "spread_sub": 1.4335642484098332
           }
         },
         "rounds": [
           [
-            166370467,
-            166196222
+            206742090,
+            214858837
           ],
           [
-            165892721,
-            166895225
+            186554617,
+            180102284
           ],
           [
-            166392952,
-            165282453
+            187522425,
+            175697084
           ],
           [
-            165040972,
-            165272788
+            174243644,
+            174299247
           ],
           [
-            166140466,
-            166363885
+            196589655,
+            182317604
           ],
           [
-            165936635,
-            165550026
+            177830695,
+            189364653
           ],
           [
-            166664490,
-            166768780
+            182725250,
+            180925568
           ],
           [
-            165917359,
-            166329131
+            172275028,
+            185340024
           ],
           [
-            166443576,
-            165779209
+            189228827,
+            175288628
           ],
           [
-            166897550,
-            166516875
+            188535945,
+            177721570
           ],
           [
-            165920545,
-            167362646
+            177877031,
+            182141384
           ],
           [
-            166687919,
-            165345654
+            183643935,
+            172182122
           ],
           [
-            165930803,
-            167801218
+            174778008,
+            179192194
           ],
           [
-            165409935,
-            166452227
+            197008943,
+            176001327
           ],
           [
-            164639098,
-            166096698
+            184340593,
+            186847844
           ],
           [
-            165897682,
-            165684830
+            176994122,
+            179539064
           ],
           [
-            166446184,
-            168334614
+            182155761,
+            180042732
           ],
           [
-            167455393,
-            165775142
+            173906843,
+            187264347
           ],
           [
-            165111465,
-            165242060
+            173276509,
+            178461379
           ],
           [
-            166508650,
-            167150591
+            174644680,
+            174103031
           ],
           [
-            166526194,
-            166786082
+            176852158,
+            174779392
           ],
           [
-            165846306,
-            165436286
+            174534803,
+            178411805
           ],
           [
-            166304237,
-            165819105
+            174488434,
+            175636291
           ],
           [
-            167000544,
-            165706713
+            180205987,
+            172840107
           ],
           [
-            166510533,
-            166175035
+            177928528,
+            174406471
           ]
         ],
         "incumbent_sha256": "e0273a66e27fc6492258a8867675330a6b47fe9b06c1939af732fe8bf2ffa59a",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 149.6,
+        "champion_sha256": "5d0cef3ff21093ca05cde92e516edfe45afca8e11996ad4858e7fb2407d65868",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 175.4,
         "exhausted": false
       },
       "as_expected": true,
@@ -3798,199 +4035,201 @@
         "stage": "score",
         "passed": true,
         "reason": "",
-        "seed": 3307498047,
-        "ratio": 1.7969304680046323,
+        "seed": 1793095140,
+        "ratio": 1.7760007499963761,
         "classes": {
           "add:near-one": {
-            "incumbent_ns": 29.767432,
-            "submission_ns": 44.469338,
-            "ratio": 1.4938923182893304,
-            "spread_inc": 1.053378605181663,
-            "spread_sub": 1.017253506224896
+            "incumbent_ns": 31.24037,
+            "submission_ns": 44.772172,
+            "ratio": 1.4331511438564908,
+            "spread_inc": 1.1497963052294196,
+            "spread_sub": 1.3144983004175004
           },
           "add:wide-gap": {
-            "incumbent_ns": 23.691356,
-            "submission_ns": 44.398886,
-            "ratio": 1.8740542331135457,
-            "spread_inc": 1.0390301846800158,
-            "spread_sub": 1.0228737270570256
+            "incumbent_ns": 24.657924,
+            "submission_ns": 45.336954,
+            "ratio": 1.8386362939556469,
+            "spread_inc": 1.1323059475728776,
+            "spread_sub": 1.1603600453616711
           },
           "add:cancel": {
-            "incumbent_ns": 22.36765,
-            "submission_ns": 35.270234,
-            "ratio": 1.576841286411402,
-            "spread_inc": 1.0636640863032103,
-            "spread_sub": 1.0278974049335765
+            "incumbent_ns": 22.89397,
+            "submission_ns": 35.709626,
+            "ratio": 1.5597830345719856,
+            "spread_inc": 1.224585687847062,
+            "spread_sub": 1.1371478939600208
           },
           "mul:near-one": {
-            "incumbent_ns": 18.537812,
-            "submission_ns": 45.131694,
-            "ratio": 2.434575018885724,
-            "spread_inc": 1.0339794146148424,
-            "spread_sub": 1.0276296298561274
+            "incumbent_ns": 18.949638,
+            "submission_ns": 45.046426,
+            "ratio": 2.3771655163016834,
+            "spread_inc": 1.3420380906484863,
+            "spread_sub": 1.1743929695998523
           },
           "mul:spread": {
-            "incumbent_ns": 20.804954,
-            "submission_ns": 47.356342,
-            "ratio": 2.2762050807706666,
-            "spread_inc": 1.0359464385261319,
-            "spread_sub": 1.079371502131647
+            "incumbent_ns": 21.404794,
+            "submission_ns": 47.338154,
+            "ratio": 2.211567838494498,
+            "spread_inc": 1.2691846508777427,
+            "spread_sub": 1.183193666571789
           },
           "mul:tiny": {
-            "incumbent_ns": 18.390136,
-            "submission_ns": 44.573916,
-            "ratio": 2.423794799559938,
-            "spread_inc": 1.0452853638494028,
-            "spread_sub": 1.0389636396317523
+            "incumbent_ns": 18.824186,
+            "submission_ns": 44.896646,
+            "ratio": 2.3850511251854396,
+            "spread_inc": 1.6061082269374092,
+            "spread_sub": 1.1446785579484045
           },
           "sum:dense": {
-            "incumbent_ns": 20.698172,
-            "submission_ns": 36.363528,
-            "ratio": 1.756847319657021,
-            "spread_inc": 1.0490229765217913,
-            "spread_sub": 1.0191518270724447
+            "incumbent_ns": 20.8124,
+            "submission_ns": 37.480254,
+            "ratio": 1.8008616978339835,
+            "spread_inc": 1.2560497587976398,
+            "spread_sub": 1.2889821931302814
           },
           "sum:relu": {
-            "incumbent_ns": 29.90363,
-            "submission_ns": 37.854488,
-            "ratio": 1.265882703872406,
-            "spread_inc": 1.0476844449988179,
-            "spread_sub": 1.0352595972239804
+            "incumbent_ns": 30.700476,
+            "submission_ns": 39.078116,
+            "ratio": 1.2728830653961196,
+            "spread_inc": 1.2369391927343407,
+            "spread_sub": 1.1040320879338195
           },
           "sum:wide": {
-            "incumbent_ns": 17.611312,
-            "submission_ns": 33.158726,
-            "ratio": 1.8828083904254265,
-            "spread_inc": 1.0283965215084487,
-            "spread_sub": 1.0293808031104694
+            "incumbent_ns": 18.030292,
+            "submission_ns": 33.861434,
+            "ratio": 1.8780302615176725,
+            "spread_inc": 1.2140937040842157,
+            "spread_sub": 1.2118042017948796
           },
           "bmm:dense": {
-            "incumbent_ns": 42.353784,
-            "submission_ns": 81.11768,
-            "ratio": 1.9152404422707543,
-            "spread_inc": 1.0349948424915234,
-            "spread_sub": 1.0209482569028108
+            "incumbent_ns": 43.53022,
+            "submission_ns": 81.232748,
+            "ratio": 1.8661230749580406,
+            "spread_inc": 1.4930257186846287,
+            "spread_sub": 1.1241433565684618
           },
           "bmm:relu": {
-            "incumbent_ns": 46.814018,
-            "submission_ns": 69.034114,
-            "ratio": 1.4746462053310614,
-            "spread_inc": 1.0730574333525484,
-            "spread_sub": 1.0243999365299308
+            "incumbent_ns": 47.48593,
+            "submission_ns": 69.592822,
+            "ratio": 1.4655461523023767,
+            "spread_inc": 1.205442917512619,
+            "spread_sub": 1.1462757753953419
           },
           "bmm:wide": {
-            "incumbent_ns": 36.090054,
-            "submission_ns": 68.921782,
-            "ratio": 1.9097167878995138,
-            "spread_inc": 1.0214239635108333,
-            "spread_sub": 1.0170621531521051
+            "incumbent_ns": 36.468752,
+            "submission_ns": 70.613038,
+            "ratio": 1.9362614328014296,
+            "spread_inc": 1.3073935735448254,
+            "spread_sub": 1.2525710053715575
           }
         },
         "rounds": [
           [
-            164994492,
-            296074332
+            179734092,
+            328369878
           ],
           [
-            165384955,
-            297092295
+            185150788,
+            314493778
           ],
           [
-            166095695,
-            296563080
+            175827181,
+            318013279
           ],
           [
-            165561721,
-            296761035
+            178900787,
+            317469828
           ],
           [
-            165843334,
-            297267816
+            175368527,
+            317888737
           ],
           [
-            165472487,
-            295894214
+            175700644,
+            317254143
           ],
           [
-            165543639,
-            297843944
+            176764851,
+            315898860
           ],
           [
-            166007118,
-            296873140
+            176389237,
+            317206756
           ],
           [
-            165618920,
-            297040842
+            181240621,
+            317897845
           ],
           [
-            167059980,
-            297078547
+            174623138,
+            329310275
           ],
           [
-            166848854,
-            296307966
+            177406417,
+            318619438
           ],
           [
-            166308266,
-            298361954
+            176532547,
+            320710226
           ],
           [
-            166125413,
-            296214381
+            178562900,
+            316007914
           ],
           [
-            165650058,
-            296141216
+            173733027,
+            330951636
           ],
           [
-            167142943,
-            296289218
+            175759893,
+            319605354
           ],
           [
-            165983044,
-            297542036
+            181727445,
+            315098505
           ],
           [
-            166083205,
-            297469039
+            176250865,
+            318398484
           ],
           [
-            165377737,
-            295929666
+            186541881,
+            314341723
           ],
           [
-            166241519,
-            296541915
+            181516418,
+            325232844
           ],
           [
-            165963407,
-            296579756
+            190370651,
+            325960199
           ],
           [
-            165681107,
-            296962517
+            175508022,
+            320392110
           ],
           [
-            166978793,
-            297499815
+            180181051,
+            322878990
           ],
           [
-            165426842,
-            296118523
+            198221361,
+            310792147
           ],
           [
-            167229896,
-            298130374
+            170447946,
+            298233012
           ],
           [
-            165454571,
-            297958750
+            170880637,
+            303513690
           ]
         ],
         "incumbent_sha256": "e0273a66e27fc6492258a8867675330a6b47fe9b06c1939af732fe8bf2ffa59a",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 168.3,
+        "champion_sha256": "5d0cef3ff21093ca05cde92e516edfe45afca8e11996ad4858e7fb2407d65868",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 191.2,
         "exhausted": false
       },
       "as_expected": true,
@@ -4018,8 +4257,10 @@
         "classes": {},
         "rounds": [],
         "incumbent_sha256": "e0273a66e27fc6492258a8867675330a6b47fe9b06c1939af732fe8bf2ffa59a",
-        "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-        "seconds": 6.2,
+        "champion_sha256": "5d0cef3ff21093ca05cde92e516edfe45afca8e11996ad4858e7fb2407d65868",
+        "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+        "seconds": 6.7,
         "exhausted": false
       },
       "as_expected": true,
@@ -4036,136 +4277,138 @@
       "stage": "score",
       "passed": true,
       "reason": "",
-      "seed": 1487471398,
-      "ratio": 1.0004965589373649,
+      "seed": 3838915,
+      "ratio": 0.997622544974519,
       "classes": {
         "near-one": {
-          "incumbent_ns": 50.772856,
-          "submission_ns": 50.866814,
-          "ratio": 1.0018505557378927,
-          "spread_inc": 1.0660171647622108,
-          "spread_sub": 1.0262195701897114
+          "incumbent_ns": 50.766032,
+          "submission_ns": 50.854858,
+          "ratio": 1.0017497132728435,
+          "spread_inc": 1.0177949302793647,
+          "spread_sub": 1.0287659833796017
         },
         "wide-gap": {
-          "incumbent_ns": 56.759266,
-          "submission_ns": 56.807618,
-          "ratio": 1.0008518785285208,
-          "spread_inc": 1.0425812765091078,
-          "spread_sub": 1.0307713307042727
+          "incumbent_ns": 56.78448,
+          "submission_ns": 56.579714,
+          "ratio": 0.9963939794817175,
+          "spread_inc": 1.1453210806896532,
+          "spread_sub": 1.1101987189260094
         },
         "cancel": {
-          "incumbent_ns": 40.043512,
-          "submission_ns": 39.974482,
-          "ratio": 0.9982761252309738,
-          "spread_inc": 1.0702397432073392,
-          "spread_sub": 1.038414706662115
+          "incumbent_ns": 39.892866,
+          "submission_ns": 39.658266,
+          "ratio": 0.9941192492913394,
+          "spread_inc": 1.1068282735063457,
+          "spread_sub": 1.1218842498055765
         }
       },
       "rounds": [
         [
-          74105915,
-          74173212
+          74842846,
+          75162344
         ],
         [
-          74953469,
-          75485078
+          74256162,
+          75975414
         ],
         [
-          75828693,
-          75060811
+          78221973,
+          76124512
         ],
         [
-          78078521,
-          74401942
+          75295856,
+          74070523
         ],
         [
-          73944191,
-          75060610
+          76500640,
+          74289807
         ],
         [
-          75615283,
-          74316952
+          74826945,
+          74426714
         ],
         [
-          74695364,
-          74620632
+          73805597,
+          74881646
         ],
         [
-          74582141,
-          75060590
+          74539035,
+          75410812
         ],
         [
-          74320589,
-          74423072
+          79116193,
+          74064242
         ],
         [
-          74724880,
-          74685556
+          75454765,
+          74451310
         ],
         [
-          75066892,
-          74612077
+          74671343,
+          74435240
         ],
         [
-          74909365,
-          74372738
+          75788561,
+          77703498
         ],
         [
-          74713889,
-          74657071
+          74318139,
+          74399300
         ],
         [
-          74708017,
-          74618139
+          74275779,
+          75255829
         ],
         [
-          74665247,
-          74865673
+          77507912,
+          76292617
         ],
         [
-          74775465,
-          74610345
+          76045444,
+          74695158
         ],
         [
-          74990016,
-          74943721
+          74976806,
+          74459965
         ],
         [
-          74199752,
-          74589775
+          73969954,
+          74377129
         ],
         [
-          74570140,
-          74454592
+          74396265,
+          76115177
         ],
         [
-          74156521,
-          74213909
+          74581944,
+          74941842
         ],
         [
-          73887226,
-          74494387
+          75320282,
+          74535577
         ],
         [
-          74917612,
-          75691356
+          74886307,
+          74014619
         ],
         [
-          74433611,
-          74220019
+          74875386,
+          75009248
         ],
         [
-          75112288,
-          74532098
+          74412305,
+          75685667
         ],
         [
-          74416249,
-          74551143
+          74476346,
+          74808269
         ]
       ],
       "incumbent_sha256": "38ce67f0591b27190e19c91e00f3655d080c04ec5077b970afb07097343a4302",
-      "verifier_fingerprint": "8bfdd6266ec3cf77121e488b605e2b2599ad743b6b1fbbb96b220c4dafb015ea",
-      "seconds": 62.6,
+      "champion_sha256": "86d771f54cf91e5ca3a372249dab773f03075da9b9a9dac4aa82aeb5067ba5aa",
+      "verifier_fingerprint": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+      "verifier_fingerprint_end": "f4590e8187c33b1af94420ad2d80795c15e8bceb06fe07bb02fa9965bdc0d3e4",
+      "seconds": 65.2,
       "exhausted": false
     }
   },

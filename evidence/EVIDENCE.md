@@ -9,9 +9,9 @@ flowchart LR
 
 ## Quick Summary
 
-- Generated 2026-10-08 13:34 UTC by `validator/tools/evidence.py` from real gate runs on the machine in section 1; nothing here is typed by hand.
-- **43/43** fixtures across the `add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`, `full` slots got exactly their expected verdict: 21 accepted, 22 rejected at the expected stage.
-- Best accepted kernel per slot this run: `add/tuned` at **0.509x**, `mul/fast` at **0.552x**, `fma/word` at **0.994x**, `div/word` at **0.992x**, `sqrt/word` at **1.000x**, `sum/tuned` at **0.527x**, `bmm/fast` at **0.570x**, `full/incumbent` at **1.003x**, each of its own slot's incumbent's time.
+- Generated 2026-10-09 08:54 UTC by `validator/tools/evidence.py` from real gate runs on the machine in section 1; nothing here is typed by hand.
+- **48/48** fixtures across the `add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`, `full` slots got exactly their expected verdict: 21 accepted, 27 rejected at the expected stage.
+- Best accepted kernel per slot this run: `add/tuned` at **0.532x**, `mul/fast` at **0.556x**, `fma/incumbent` at **0.996x**, `div/incumbent` at **0.997x**, `sqrt/word` at **1.000x**, `sum/tuned` at **0.527x**, `bmm/fast` at **0.567x**, `full/incumbent` at **1.005x**, each of its own slot's incumbent's time.
 - Sandbox containment: an `#eval` that writes `/tmp/pwned` ran during the build, and the file did **not** appear on the host.
 - Timing (`full`, study of 2026-10-08 13:34 UTC): over 62 minutes, the incumbent against itself cleared the 0.97 bar 0 of 11 times, `baseline` 0 of 11.
 
@@ -52,7 +52,7 @@ Each row is one full `gate.py` pass. `nopolicy` skips the policy stage, to show 
 | submission | slot | mode | expected | got | as expected | gate's reason, or time vs incumbent |
 |---|---|---|---|---|---|---|
 | `add/cheat` | add | gate | reject at policy | reject at policy | yes | import other than Contract: 'import FloatLib.Floats.Formats.BinaryInterchange.Configured.NativeFPU.Unchecked' |
-| `add/direct` | add | gate | accept at score | accept at score | yes | 0.788x |
+| `add/direct` | add | gate | accept at score | accept at score | yes | 0.786x |
 | `exploits/csimp` | add | gate | reject at policy | reject at policy | yes | banned name 'csimp' at line 14 |
 | `exploits/eval` | add | gate | reject at policy | reject at policy | yes | banned name '#eval' at line 9 |
 | `exploits/includestr` | add | gate | reject at policy | reject at policy | yes | banned name 'include_str' at line 4 |
@@ -60,39 +60,44 @@ Each row is one full `gate.py` pass. `nopolicy` skips the policy stage, to show 
 | `exploits/forge` | add | gate | reject at policy | reject at policy | yes | banned name 'run_cmd' at line 10 |
 | `exploits/publicimport` | add | gate | reject at policy | reject at policy | yes | import other than Contract: 'public import Contract' |
 | `exploits/skipkernel` | add | gate | reject at policy | reject at policy | yes | set_option debug.skipKernelTC is not allowed |
-| `exploits/tactic` | add | gate | reject at policy | reject at policy | yes | attribute 'command_elab Lean.Parser.Command.check' is not allowed |
+| `exploits/tactic` | add | gate | reject at policy | reject at policy | yes | banned name 'command_elab' at line 9 |
 | `exploits/tamper` | add | gate | reject at policy | reject at policy | yes | banned name '#eval' at line 3 |
 | `exploits/unsafeio` | add | gate | reject at policy | reject at policy | yes | banned name 'unsafe' at line 9 |
-| `add/fastlog` | add | gate | accept at score | accept at score | yes | 0.546x |
-| `add/incumbent` | add | gate | accept at score | accept at score | yes | 0.996x |
-| `add/mirror` | add | gate | accept at score | accept at score | yes | 0.794x |
+| `exploits/simproc` | add | gate | reject at policy | reject at policy | yes | banned name 'simproc' at line 12 |
+| `exploits/runtac` | add | gate | reject at policy | reject at policy | yes | banned name 'run_tac' at line 12 |
+| `exploits/heartbeats` | add | gate | reject at policy | reject at policy | yes | set_option maxHeartbeats 0: allowed values are 1 to 4000000 |
+| `exploits/hiddenoption` | add | gate | reject at policy | reject at policy | yes | set_option debug.skipKernelTC is not allowed |
+| `exploits/sorryax` | add | gate | reject at axioms | reject at axioms | yes | extra axioms ['sorryAx'] |
+| `add/fastlog` | add | gate | accept at score | accept at score | yes | 0.548x |
+| `add/incumbent` | add | gate | accept at score | accept at score | yes | 1.004x |
+| `add/mirror` | add | gate | accept at score | accept at score | yes | 0.807x |
 | `add/textbook-unproved` | add | gate | reject at policy | reject at policy | yes | banned name 'sorry' at line 63 |
-| `add/tuned` | add | gate | accept at score | accept at score | yes | 0.509x |
+| `add/tuned` | add | gate | accept at score | accept at score | yes | 0.532x |
 | `add/word` | add | gate | accept at score | accept at score | yes | 1.002x |
 | `add/wrong` | add | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:12:13: Type mismatch / error: build failed |
 | `exploits/forge` | add | nopolicy | reject at kernel | reject at kernel | yes | leanchecker rejects Submission: leanchecker found a problem in Submission uncaught exception: while replayi... |
 | `exploits/tamper` | add | nopolicy | reject at statement | reject at statement | yes | the build wrote outside the submission's modules: ['lib/lean/Contract.olean.hash'] |
-| `mul/incumbent` | mul | gate | accept at score | accept at score | yes | 0.999x |
-| `mul/fast` | mul | gate | accept at score | accept at score | yes | 0.552x |
-| `mul/word` | mul | gate | accept at score | accept at score | yes | 0.999x |
+| `mul/incumbent` | mul | gate | accept at score | accept at score | yes | 1.001x |
+| `mul/fast` | mul | gate | accept at score | accept at score | yes | 0.556x |
+| `mul/word` | mul | gate | accept at score | accept at score | yes | 0.995x |
 | `mul/wrong` | mul | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:12:13: Type mismatch / error: build failed |
-| `fma/incumbent` | fma | gate | accept at score | accept at score | yes | 1.003x |
-| `fma/word` | fma | gate | accept at score | accept at score | yes | 0.994x |
+| `fma/incumbent` | fma | gate | accept at score | accept at score | yes | 0.996x |
+| `fma/word` | fma | gate | accept at score | accept at score | yes | 1.004x |
 | `fma/wrong` | fma | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:15:15: Type mismatch / error: build failed |
-| `div/incumbent` | div | gate | accept at score | accept at score | yes | 1.005x |
-| `div/word` | div | gate | accept at score | accept at score | yes | 0.992x |
+| `div/incumbent` | div | gate | accept at score | accept at score | yes | 0.997x |
+| `div/word` | div | gate | accept at score | accept at score | yes | 1.009x |
 | `div/wrong` | div | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:12:13: Type mismatch / error: build failed |
-| `sqrt/incumbent` | sqrt | gate | accept at score | accept at score | yes | 1.001x |
+| `sqrt/incumbent` | sqrt | gate | accept at score | accept at score | yes | 1.004x |
 | `sqrt/word` | sqrt | gate | accept at score | accept at score | yes | 1.000x |
 | `sqrt/wrong` | sqrt | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:12:11: Type mismatch / error: build failed |
 | `sum/incumbent` | sum | gate | accept at score | accept at score | yes | 0.998x |
 | `sum/tuned` | sum | gate | accept at score | accept at score | yes | 0.527x |
 | `sum/wrong` | sum | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:18:6: Tactic `rewrite` failed: Did not find ... |
-| `bmm/incumbent` | bmm | gate | accept at score | accept at score | yes | 0.998x |
-| `bmm/fast` | bmm | gate | accept at score | accept at score | yes | 0.570x |
+| `bmm/incumbent` | bmm | gate | accept at score | accept at score | yes | 1.002x |
+| `bmm/fast` | bmm | gate | accept at score | accept at score | yes | 0.567x |
 | `bmm/wrong` | bmm | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:34:2: Tactic `simp` failed with a nested err... |
-| `full/incumbent` | full | gate | accept at score | accept at score | yes | 1.003x |
-| `full/baseline` | full | gate | accept at score | accept at score | yes | 1.797x |
+| `full/incumbent` | full | gate | accept at score | accept at score | yes | 1.005x |
+| `full/baseline` | full | gate | accept at score | accept at score | yes | 1.776x |
 | `full/wrong` | full | gate | reject at statement | reject at statement | yes | the obligation does not typecheck: error: work/Submission.lean:39:6: Tactic `rewrite` failed: Did not find ... |
 
 ## 4. Accepted kernels: timing per operand class
@@ -101,87 +106,87 @@ Nanoseconds per operation, fastest of 25 rounds, 500,000 operand sets per class,
 
 | submission | slot | seed | class | incumbent ns | submission ns | ratio |
 |---|---|---:|---|---:|---:|---:|
-| `add/direct` | add | 2053881600 | near-one | 51.39 | 42.41 | 0.825 |
-| `add/direct` | add | 2053881600 | wide-gap | 57.26 | 42.43 | 0.741 |
-| `add/direct` | add | 2053881600 | cancel | 40.40 | 32.66 | 0.808 |
-| `add/fastlog` | add | 2774320711 | near-one | 50.97 | 31.49 | 0.618 |
-| `add/fastlog` | add | 2774320711 | wide-gap | 56.72 | 25.08 | 0.442 |
-| `add/fastlog` | add | 2774320711 | cancel | 39.83 | 24.04 | 0.603 |
-| `add/incumbent` | add | 3344673522 | near-one | 51.07 | 50.86 | 0.996 |
-| `add/incumbent` | add | 3344673522 | wide-gap | 57.11 | 56.77 | 0.994 |
-| `add/incumbent` | add | 3344673522 | cancel | 39.88 | 39.76 | 0.997 |
-| `add/mirror` | add | 1019050390 | near-one | 50.71 | 42.05 | 0.829 |
-| `add/mirror` | add | 1019050390 | wide-gap | 56.68 | 42.30 | 0.746 |
-| `add/mirror` | add | 1019050390 | cancel | 40.14 | 32.84 | 0.818 |
-| `add/tuned` | add | 216994417 | near-one | 50.81 | 29.84 | 0.587 |
-| `add/tuned` | add | 216994417 | wide-gap | 56.72 | 23.35 | 0.412 |
-| `add/tuned` | add | 216994417 | cancel | 39.86 | 21.84 | 0.548 |
-| `add/word` | add | 402739546 | near-one | 50.89 | 50.93 | 1.001 |
-| `add/word` | add | 402739546 | wide-gap | 56.68 | 56.70 | 1.000 |
-| `add/word` | add | 402739546 | cancel | 39.68 | 39.88 | 1.005 |
-| `mul/incumbent` | mul | 1298795835 | near-one | 33.94 | 33.86 | 0.998 |
-| `mul/incumbent` | mul | 1298795835 | spread | 36.10 | 36.09 | 1.000 |
-| `mul/incumbent` | mul | 1298795835 | tiny | 33.24 | 33.25 | 1.000 |
-| `mul/fast` | mul | 3986738218 | near-one | 34.05 | 18.31 | 0.538 |
-| `mul/fast` | mul | 3986738218 | spread | 36.45 | 20.67 | 0.567 |
-| `mul/fast` | mul | 3986738218 | tiny | 33.26 | 18.25 | 0.549 |
-| `mul/word` | mul | 3817846899 | near-one | 33.79 | 33.79 | 1.000 |
-| `mul/word` | mul | 3817846899 | spread | 36.11 | 36.12 | 1.000 |
-| `mul/word` | mul | 3817846899 | tiny | 33.16 | 33.06 | 0.997 |
-| `fma/incumbent` | fma | 558524791 | near-one | 66.18 | 67.17 | 1.015 |
-| `fma/incumbent` | fma | 558524791 | cancel | 62.73 | 62.97 | 1.004 |
-| `fma/incumbent` | fma | 558524791 | wide | 248.53 | 248.28 | 0.999 |
-| `fma/word` | fma | 2854989663 | near-one | 67.33 | 67.61 | 1.004 |
-| `fma/word` | fma | 2854989663 | cancel | 63.60 | 63.16 | 0.993 |
-| `fma/word` | fma | 2854989663 | wide | 251.09 | 248.87 | 0.991 |
-| `div/incumbent` | div | 1941726033 | near-one | 50.38 | 50.67 | 1.006 |
-| `div/incumbent` | div | 1941726033 | spread | 50.94 | 51.17 | 1.004 |
-| `div/incumbent` | div | 1941726033 | extremes | 52.66 | 52.92 | 1.005 |
-| `div/word` | div | 2915595549 | near-one | 50.64 | 50.42 | 0.996 |
-| `div/word` | div | 2915595549 | spread | 51.08 | 51.03 | 0.999 |
-| `div/word` | div | 2915595549 | extremes | 53.26 | 52.25 | 0.981 |
-| `sqrt/incumbent` | sqrt | 3151978325 | near-one | 46.33 | 46.42 | 1.002 |
-| `sqrt/incumbent` | sqrt | 3151978325 | spread | 46.22 | 46.26 | 1.001 |
-| `sqrt/incumbent` | sqrt | 3151978325 | subnormal | 46.45 | 46.53 | 1.002 |
-| `sqrt/word` | sqrt | 302606861 | near-one | 46.33 | 46.27 | 0.999 |
-| `sqrt/word` | sqrt | 302606861 | spread | 45.95 | 46.10 | 1.003 |
-| `sqrt/word` | sqrt | 302606861 | subnormal | 46.49 | 46.38 | 0.998 |
-| `sum/incumbent` | sum | 999899961 | dense | 44.60 | 44.83 | 1.005 |
-| `sum/incumbent` | sum | 999899961 | relu | 41.77 | 41.29 | 0.989 |
-| `sum/incumbent` | sum | 999899961 | wide | 43.05 | 43.08 | 1.001 |
-| `sum/tuned` | sum | 3114342926 | dense | 44.52 | 20.85 | 0.468 |
-| `sum/tuned` | sum | 3114342926 | relu | 41.56 | 29.60 | 0.712 |
-| `sum/tuned` | sum | 3114342926 | wide | 42.85 | 17.51 | 0.409 |
-| `bmm/incumbent` | bmm | 4269082832 | dense | 82.50 | 82.22 | 0.997 |
-| `bmm/incumbent` | bmm | 4269082832 | relu | 68.43 | 68.71 | 1.004 |
-| `bmm/incumbent` | bmm | 4269082832 | wide | 69.64 | 69.30 | 0.995 |
-| `bmm/fast` | bmm | 1078862651 | dense | 82.07 | 42.75 | 0.521 |
-| `bmm/fast` | bmm | 1078862651 | relu | 68.73 | 46.60 | 0.678 |
-| `bmm/fast` | bmm | 1078862651 | wide | 69.14 | 36.05 | 0.521 |
-| `full/incumbent` | full | 2859987474 | add:near-one | 29.84 | 29.85 | 1.000 |
-| `full/incumbent` | full | 2859987474 | add:wide-gap | 23.42 | 23.86 | 1.019 |
-| `full/incumbent` | full | 2859987474 | add:cancel | 22.34 | 22.32 | 0.999 |
-| `full/incumbent` | full | 2859987474 | mul:near-one | 18.55 | 18.54 | 0.999 |
-| `full/incumbent` | full | 2859987474 | mul:spread | 20.79 | 20.78 | 1.000 |
-| `full/incumbent` | full | 2859987474 | mul:tiny | 18.43 | 18.57 | 1.007 |
-| `full/incumbent` | full | 2859987474 | sum:dense | 20.73 | 20.74 | 1.001 |
-| `full/incumbent` | full | 2859987474 | sum:relu | 29.90 | 29.97 | 1.002 |
-| `full/incumbent` | full | 2859987474 | sum:wide | 17.53 | 17.51 | 0.999 |
-| `full/incumbent` | full | 2859987474 | bmm:dense | 42.20 | 42.37 | 1.004 |
-| `full/incumbent` | full | 2859987474 | bmm:relu | 47.06 | 47.12 | 1.001 |
-| `full/incumbent` | full | 2859987474 | bmm:wide | 35.93 | 36.01 | 1.002 |
-| `full/baseline` | full | 3307498047 | add:near-one | 29.77 | 44.47 | 1.494 |
-| `full/baseline` | full | 3307498047 | add:wide-gap | 23.69 | 44.40 | 1.874 |
-| `full/baseline` | full | 3307498047 | add:cancel | 22.37 | 35.27 | 1.577 |
-| `full/baseline` | full | 3307498047 | mul:near-one | 18.54 | 45.13 | 2.435 |
-| `full/baseline` | full | 3307498047 | mul:spread | 20.80 | 47.36 | 2.276 |
-| `full/baseline` | full | 3307498047 | mul:tiny | 18.39 | 44.57 | 2.424 |
-| `full/baseline` | full | 3307498047 | sum:dense | 20.70 | 36.36 | 1.757 |
-| `full/baseline` | full | 3307498047 | sum:relu | 29.90 | 37.85 | 1.266 |
-| `full/baseline` | full | 3307498047 | sum:wide | 17.61 | 33.16 | 1.883 |
-| `full/baseline` | full | 3307498047 | bmm:dense | 42.35 | 81.12 | 1.915 |
-| `full/baseline` | full | 3307498047 | bmm:relu | 46.81 | 69.03 | 1.475 |
-| `full/baseline` | full | 3307498047 | bmm:wide | 36.09 | 68.92 | 1.910 |
+| `add/direct` | add | 50985136 | near-one | 53.92 | 44.27 | 0.821 |
+| `add/direct` | add | 50985136 | wide-gap | 60.98 | 44.86 | 0.736 |
+| `add/direct` | add | 50985136 | cancel | 42.35 | 34.45 | 0.814 |
+| `add/fastlog` | add | 2287868891 | near-one | 56.08 | 34.27 | 0.611 |
+| `add/fastlog` | add | 2287868891 | wide-gap | 59.83 | 26.77 | 0.447 |
+| `add/fastlog` | add | 2287868891 | cancel | 41.89 | 25.51 | 0.609 |
+| `add/incumbent` | add | 3041882031 | near-one | 52.70 | 54.10 | 1.027 |
+| `add/incumbent` | add | 3041882031 | wide-gap | 60.18 | 60.59 | 1.007 |
+| `add/incumbent` | add | 3041882031 | cancel | 42.90 | 41.75 | 0.973 |
+| `add/mirror` | add | 1346276433 | near-one | 53.90 | 45.07 | 0.836 |
+| `add/mirror` | add | 1346276433 | wide-gap | 61.37 | 45.62 | 0.743 |
+| `add/mirror` | add | 1346276433 | cancel | 40.95 | 35.34 | 0.863 |
+| `add/tuned` | add | 2048804661 | near-one | 54.71 | 34.05 | 0.622 |
+| `add/tuned` | add | 2048804661 | wide-gap | 60.52 | 25.52 | 0.422 |
+| `add/tuned` | add | 2048804661 | cancel | 41.13 | 23.56 | 0.573 |
+| `add/word` | add | 2112344859 | near-one | 53.52 | 53.42 | 0.998 |
+| `add/word` | add | 2112344859 | wide-gap | 60.12 | 59.99 | 0.998 |
+| `add/word` | add | 2112344859 | cancel | 41.16 | 41.73 | 1.014 |
+| `mul/incumbent` | mul | 1862235207 | near-one | 35.75 | 35.84 | 1.003 |
+| `mul/incumbent` | mul | 1862235207 | spread | 37.45 | 37.58 | 1.004 |
+| `mul/incumbent` | mul | 1862235207 | tiny | 35.18 | 35.05 | 0.996 |
+| `mul/fast` | mul | 2623179690 | near-one | 35.70 | 19.12 | 0.536 |
+| `mul/fast` | mul | 2623179690 | spread | 37.19 | 21.61 | 0.581 |
+| `mul/fast` | mul | 2623179690 | tiny | 34.03 | 18.70 | 0.550 |
+| `mul/word` | mul | 2205922741 | near-one | 35.74 | 35.03 | 0.980 |
+| `mul/word` | mul | 2205922741 | spread | 37.15 | 37.84 | 1.019 |
+| `mul/word` | mul | 2205922741 | tiny | 35.24 | 34.74 | 0.986 |
+| `fma/incumbent` | fma | 3657630599 | near-one | 69.41 | 68.97 | 0.994 |
+| `fma/incumbent` | fma | 3657630599 | cancel | 64.48 | 65.81 | 1.021 |
+| `fma/incumbent` | fma | 3657630599 | wide | 262.95 | 260.47 | 0.991 |
+| `fma/word` | fma | 2828518775 | near-one | 68.53 | 68.85 | 1.005 |
+| `fma/word` | fma | 2828518775 | cancel | 65.65 | 65.18 | 0.993 |
+| `fma/word` | fma | 2828518775 | wide | 260.91 | 262.58 | 1.006 |
+| `div/incumbent` | div | 1415890166 | near-one | 51.43 | 51.95 | 1.010 |
+| `div/incumbent` | div | 1415890166 | spread | 53.07 | 52.47 | 0.989 |
+| `div/incumbent` | div | 1415890166 | extremes | 54.76 | 54.28 | 0.991 |
+| `div/word` | div | 2677726773 | near-one | 51.24 | 51.76 | 1.010 |
+| `div/word` | div | 2677726773 | spread | 52.76 | 53.06 | 1.006 |
+| `div/word` | div | 2677726773 | extremes | 54.02 | 54.60 | 1.011 |
+| `sqrt/incumbent` | sqrt | 395708523 | near-one | 47.60 | 47.11 | 0.990 |
+| `sqrt/incumbent` | sqrt | 395708523 | spread | 47.25 | 47.68 | 1.009 |
+| `sqrt/incumbent` | sqrt | 395708523 | subnormal | 47.24 | 47.89 | 1.014 |
+| `sqrt/word` | sqrt | 3582571020 | near-one | 48.19 | 48.04 | 0.997 |
+| `sqrt/word` | sqrt | 3582571020 | spread | 48.45 | 48.49 | 1.001 |
+| `sqrt/word` | sqrt | 3582571020 | subnormal | 48.44 | 48.59 | 1.003 |
+| `sum/incumbent` | sum | 3383002100 | dense | 46.75 | 46.99 | 1.005 |
+| `sum/incumbent` | sum | 3383002100 | relu | 43.56 | 43.38 | 0.996 |
+| `sum/incumbent` | sum | 3383002100 | wide | 45.33 | 44.96 | 0.992 |
+| `sum/tuned` | sum | 2809044874 | dense | 46.48 | 21.97 | 0.473 |
+| `sum/tuned` | sum | 2809044874 | relu | 44.16 | 31.68 | 0.717 |
+| `sum/tuned` | sum | 2809044874 | wide | 45.30 | 18.01 | 0.398 |
+| `bmm/incumbent` | bmm | 3300536711 | dense | 86.63 | 86.36 | 0.997 |
+| `bmm/incumbent` | bmm | 3300536711 | relu | 71.24 | 71.92 | 1.010 |
+| `bmm/incumbent` | bmm | 3300536711 | wide | 72.62 | 72.70 | 1.001 |
+| `bmm/fast` | bmm | 2198504985 | dense | 86.57 | 45.02 | 0.520 |
+| `bmm/fast` | bmm | 2198504985 | relu | 72.09 | 49.10 | 0.681 |
+| `bmm/fast` | bmm | 2198504985 | wide | 73.27 | 37.36 | 0.510 |
+| `full/incumbent` | full | 3817500512 | add:near-one | 31.33 | 31.81 | 1.015 |
+| `full/incumbent` | full | 3817500512 | add:wide-gap | 24.51 | 24.47 | 0.999 |
+| `full/incumbent` | full | 3817500512 | add:cancel | 22.81 | 23.04 | 1.010 |
+| `full/incumbent` | full | 3817500512 | mul:near-one | 19.02 | 18.76 | 0.986 |
+| `full/incumbent` | full | 3817500512 | mul:spread | 21.26 | 21.12 | 0.994 |
+| `full/incumbent` | full | 3817500512 | mul:tiny | 18.97 | 19.01 | 1.002 |
+| `full/incumbent` | full | 3817500512 | sum:dense | 21.20 | 21.41 | 1.010 |
+| `full/incumbent` | full | 3817500512 | sum:relu | 31.10 | 31.19 | 1.003 |
+| `full/incumbent` | full | 3817500512 | sum:wide | 17.91 | 17.96 | 1.003 |
+| `full/incumbent` | full | 3817500512 | bmm:dense | 43.08 | 43.91 | 1.019 |
+| `full/incumbent` | full | 3817500512 | bmm:relu | 48.79 | 48.32 | 0.990 |
+| `full/incumbent` | full | 3817500512 | bmm:wide | 36.89 | 37.55 | 1.018 |
+| `full/baseline` | full | 1793095140 | add:near-one | 31.24 | 44.77 | 1.433 |
+| `full/baseline` | full | 1793095140 | add:wide-gap | 24.66 | 45.34 | 1.839 |
+| `full/baseline` | full | 1793095140 | add:cancel | 22.89 | 35.71 | 1.560 |
+| `full/baseline` | full | 1793095140 | mul:near-one | 18.95 | 45.05 | 2.377 |
+| `full/baseline` | full | 1793095140 | mul:spread | 21.40 | 47.34 | 2.212 |
+| `full/baseline` | full | 1793095140 | mul:tiny | 18.82 | 44.90 | 2.385 |
+| `full/baseline` | full | 1793095140 | sum:dense | 20.81 | 37.48 | 1.801 |
+| `full/baseline` | full | 1793095140 | sum:relu | 30.70 | 39.08 | 1.273 |
+| `full/baseline` | full | 1793095140 | sum:wide | 18.03 | 33.86 | 1.878 |
+| `full/baseline` | full | 1793095140 | bmm:dense | 43.53 | 81.23 | 1.866 |
+| `full/baseline` | full | 1793095140 | bmm:relu | 47.49 | 69.59 | 1.466 |
+| `full/baseline` | full | 1793095140 | bmm:wide | 36.47 | 70.61 | 1.936 |
 
 ## 5. Sandbox containment
 
@@ -212,4 +217,4 @@ first (section 3, `exploits/eval`, gate mode).
 
 - Other hardware: everything above ran on the machine in section 1. The validator's server needs its own timing study before launch.
 - Kernels within about 1.5% of each other cannot be ranked by timing; ties need the earlier-submission rule.
-- Attacks beyond the 10 exploit fixtures: the policy is a text scan backed by the sandbox, leanchecker and the axiom audit, not a proof of completeness.
+- Attacks beyond the 15 exploit fixtures: the policy is a text scan backed by the sandbox, leanchecker and the axiom audit, not a proof of completeness.
