@@ -61,6 +61,8 @@ def recorded(verdict: Path) -> dict[str, object]:
         "verifier_fingerprint": v.get("verifier_fingerprint") or None,
         "gate_seconds": v.get("seconds"),
         "report": verdict.read_text(),
+        # Not a column: the incumbent's own bench failed, which score_one charges to the champion.
+        "incumbent_failed": v.get("incumbent_failed") is True,
     }
 
 
@@ -141,7 +143,8 @@ def run_gate(
 
 def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> str:
     # Gate one claimed submission: a run with no verdict or an undefined exit counts toward the
-    # error cap, uncharged, so nothing is retried forever.
+    # error cap, uncharged, so nothing is retried forever; a failure of a promoted champion's own
+    # bench counts against that champion instead, which is demoted at the same cap.
     logger.info(f"[worker] verifying submission {sub.id} slot={sub.slot} ({sub.hotkey[:8]}…)")
     events = get_events()
     who = {"submission_id": sub.id, "hotkey": sub.hotkey, "slot": sub.slot}
@@ -154,6 +157,7 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             champion_env(store, settings, sub),
         )
         fields = recorded(verdict)
+    incumbent_failed = bool(fields.pop("incumbent_failed", False))
     state = STATE_OF_EXIT.get(result.returncode)
 
     if state is None or not fields:
@@ -167,6 +171,21 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             exit_code=result.returncode,
             error=result.stderr[-1500:] or result.stdout[-1500:],
         )
+        failed = (
+            store.submissions.champion_failed(
+                sub.slot, str(fields.get("champion_sha256")), settings.max_gate_errors
+            )
+            if incumbent_failed
+            else None
+        )
+        if failed is not None:
+            store.submissions.requeue(sub.id, expected_attempt=sub.verification_attempt)
+            events.warning(
+                "submission_requeued",
+                **who,
+                reason=f"the champion's own bench failed; champion {failed}",
+            )
+            return SubmissionState.ERROR.value
         state_now = store.submissions.gate_crashed(
             sub.id,
             max_errors=settings.max_gate_errors,

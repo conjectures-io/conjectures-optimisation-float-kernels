@@ -38,15 +38,25 @@ KERNEL = "Kernel.lean"
 
 
 def _current_champion(session: Session, slot: str) -> str | None:
-    # The latest promotion's champion source, else the one the slot's latest verdict recorded.
-    promoted = session.execute(
+    # The latest standing promotion's champion source; with every promotion demoted, the one the
+    # first promoted submission was timed against (the shipped one); else the latest verdict's.
+    standing = session.execute(
         select(models.Promotion.champion_sha256)
-        .where(models.Promotion.slot == slot)
+        .where(models.Promotion.slot == slot, models.Promotion.demoted_at.is_(None))
         .order_by(models.Promotion.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if promoted is not None:
-        return promoted
+    if standing is not None:
+        return standing
+    shipped = session.execute(
+        select(models.Submission.champion_sha256)
+        .join(models.Promotion, models.Promotion.submission_id == models.Submission.id)
+        .where(models.Promotion.slot == slot)
+        .order_by(models.Promotion.id)
+        .limit(1)
+    ).scalar_one_or_none()
+    if shipped is not None:
+        return shipped
     return session.execute(
         select(models.Submission.champion_sha256)
         .where(models.Submission.slot == slot, models.Submission.champion_sha256.is_not(None))
@@ -430,7 +440,7 @@ class SubmissionsDb:
             query = (
                 select(models.Submission)
                 .join(models.Promotion, models.Promotion.submission_id == models.Submission.id)
-                .where(models.Promotion.slot == slot)
+                .where(models.Promotion.slot == slot, models.Promotion.demoted_at.is_(None))
             )
             if before is not None:
                 own = select(models.Promotion.id).where(models.Promotion.submission_id == before)
@@ -443,6 +453,51 @@ class SubmissionsDb:
             if row is not None:
                 session.expunge(row)
             return row
+
+    def champion_failed(self, slot: str, champion_sha256: str, max_failures: int) -> str | None:
+        # Count a gate run in which the slot's standing champion's own bench failed, demoting it at
+        # `max_failures`; None when the failed bench was not that champion's, so nothing is counted.
+        with session_scope(self._sessions) as session:
+            promotion = session.execute(
+                select(models.Promotion)
+                .where(models.Promotion.slot == slot, models.Promotion.demoted_at.is_(None))
+                .order_by(models.Promotion.id.desc())
+                .limit(1)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if promotion is None or promotion.champion_sha256 != champion_sha256:
+                return None
+            promotion.failures += 1
+            who = f"{slot} champion, submission {promotion.submission_id}"
+            if promotion.failures < max_failures:
+                logger.warning(
+                    f"[submissions] the {who} failed its bench, {promotion.failures} time(s)"
+                )
+                return "counted"
+            promotion.demoted_at = clock.now()
+            logger.warning(
+                f"[submissions] the {who} failed its bench {promotion.failures} times: demoted"
+            )
+            return "demoted"
+
+    def requeue(self, sub_id: int, *, expected_attempt: str | None = None) -> None:
+        # Back in the queue uncounted and uncharged: the champion's bench failed, not this entry.
+        with session_scope(self._sessions) as session:
+            session.execute(
+                update(models.Submission)
+                .where(
+                    models.Submission.id == sub_id,
+                    models.Submission.verification_attempt == expected_attempt
+                    if expected_attempt is not None
+                    else True,
+                )
+                .values(
+                    verification_attempt=None,
+                    state=SubmissionState.QUEUED.value,
+                    worker_id=None,
+                    claimed_at=None,
+                )
+            )
 
     def champion_kernel(self, slot: str = "add", before: int | None = None) -> bytes | None:
         # The Kernel.lean the gate times an entry against: the champion, or for a re-verified

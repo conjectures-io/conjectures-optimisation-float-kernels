@@ -269,6 +269,10 @@ class Promotion(Base):
     promoted_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Gate runs in which this champion's own bench failed; at the cap it is demoted.
+    failures: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # When it was demoted, so its predecessor is champion again; null while it holds.
+    demoted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         CheckConstraint(f"slot IN ({_in_list(SLOTS)})", name="ck_promotions_slot"),

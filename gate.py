@@ -229,8 +229,10 @@ class Verdict:
     verifier_fingerprint: str = ""
     verifier_fingerprint_end: str = ""
     seconds: float = 0.0
-    # True when the entry ran out of its time budget or over a memory cap: rejected, and charged.
+    # True when the entry ran out of its time budget or over a memory cap.
     exhausted: bool = False
+    # True when the incumbent's own bench failed: the champion's fault, never the entry's.
+    incumbent_failed: bool = False
 
 
 # ── Process helpers ──────────────────────────────────────────
@@ -548,7 +550,8 @@ def axioms(src: Path, v: Verdict) -> str | None:
 def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | str:
     # One bench process: class -> (best ns, checksum), or the failure text; the submission's own
     # (built in its layer) count against its time budget, the pinned incumbent's do not.
-    env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS)}
+    # A panic aborts the process, so a kernel cannot print into the output the gate parses.
+    env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS), "LEAN_ABORT_ON_PANIC": "1"}
     pin_cpu = ["taskset", "-c", _BENCH_CPU] if _BENCH_CPU and shutil.which("taskset") else []
     code, out = (own if build else run)(
         pin_cpu + [str(binary)],
@@ -563,8 +566,15 @@ def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | s
         return f"{binary.name}: over the entry's {_BUDGET_SECONDS:.0f}s time budget"
     if code != 0:
         return f"{binary.name} exit {code}: {out[-300:]}"
-    rows = [ln.split() for ln in out.splitlines() if len(ln.split()) == 4]
+    rows = [p for p in (ln.split() for ln in out.splitlines()) if _row(p)]
     return {name: (int(ns), int(sum_)) for name, _, ns, sum_ in rows}
+
+
+def _row(fields: list[str]) -> bool:
+    # Whether a line is a bench row, `name timed ns sum`, so a stray line is skipped, never parsed.
+    return (
+        len(fields) == 4 and fields[1] in ("true", "false") and all(f.isdigit() for f in fields[2:])
+    )
 
 
 def score(src: Path, v: Verdict) -> str | None:
@@ -577,6 +587,9 @@ def score(src: Path, v: Verdict) -> str | None:
         order = [("inc", slot.pinned, ""), ("sub", BUILD / "bin" / slot.bench, "read")]
         for who, binary, build in order if r % 2 == 0 else order[::-1]:
             res = bench(binary, v.seed, build)
+            if isinstance(res, str) and who == "inc":
+                v.incumbent_failed = True
+                return f"gate error: the incumbent's bench failed: {res}"
             if isinstance(res, str):
                 return res
             runs[who].append(res)
