@@ -9,6 +9,7 @@ import random
 import pytest
 import sqlalchemy as sa
 
+import admission
 import reward
 import treasury
 from chain.schedule import blocks_until_next_epoch
@@ -342,3 +343,17 @@ def test_verifier_drift_keeps_previous_winner(store, monkeypatch):
     accept(store, "hk-old", 0.40, uid=1)
     monkeypatch.setenv("GATE_REQUIRED_FINGERPRINT", "e" * 64)
     assert pay(store).weights == {"hk-old": WHOLE}
+
+
+def test_admission_is_reused_until_a_verdict_or_the_bar_changes(store, monkeypatch):
+    # The bootstrap runs once per change of evidence or policy, not once per read.
+    calls = []
+    decide = admission.decide
+    monkeypatch.setattr(admission, "decide", lambda *a: calls.append(1) or decide(*a))
+    accept(store, "alice", 0.80)
+    first = store.scoring.admission("full", 0.97)
+    assert store.scoring.admission("full", 0.97) == first and len(calls) == 1
+    accept(store, "bob", 0.70, uid=2)
+    assert store.scoring.admission("full", 0.97) != first and len(calls) == 2
+    store.scoring.admission("full", 0.90)
+    assert len(calls) == 3

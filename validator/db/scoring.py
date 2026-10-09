@@ -43,6 +43,8 @@ class ScoringDb:
         # Reads through the leaderboard query, so what a miner sees ranked is what gets scored.
         self._sessions = sessions
         self._submissions = SubmissionsDb(sessions)
+        # Per slot, the last admission decisions and the evidence and policy they were made from.
+        self._decided: dict[str, tuple[object, list[admission.Decision]]] = {}
 
     def best_per_hotkey(self, slot: str = "add") -> list[ScoredSubmission]:
         # Each hotkey's best accepted ratio in `slot` against its current incumbent, fastest first.
@@ -52,7 +54,18 @@ class ScoringDb:
         ]
 
     def admission(self, slot: str, bar: float) -> list[admission.Decision]:
-        # The statistical admission decisions over every comparable accepted submission.
+        # The statistical admission decisions over every comparable accepted submission, reused
+        # until a verdict, the bar or the policy changes: the bootstrap is the expensive part.
+        key = (bar, admission.POLICY_VERSION, self._submissions.evidence_key(slot))
+        cached = self._decided.get(slot)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        decisions = self._decide(slot, bar)
+        self._decided[slot] = (key, decisions)
+        return decisions
+
+    def _decide(self, slot: str, bar: float) -> list[admission.Decision]:
+        # Admission computed afresh over the slot's comparable accepted submissions.
         evidence = [
             admission.Evidence(
                 r.id,
