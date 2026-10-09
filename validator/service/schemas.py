@@ -53,7 +53,9 @@ class SubmissionView(BaseModel):
     classes: dict[str, object] | None = None
     seed: int | None = None
     incumbent_sha256: str | None = None
-    # The verifier the verdict came from; an accepted one counts only while it is current.
+    # The champion's Kernel.lean this was measured against; only the current one's count.
+    champion_sha256: str | None = None
+    # The verifier the verdict came from, as provenance: an older one still counts.
     verifier_fingerprint: str | None = None
     verification_current: bool | None = None
 
@@ -75,6 +77,8 @@ class Leaderboard(BaseModel):
     # One slot's board, fastest first; `qualifies` marks ratios at or below the promotion bar.
     slot: str
     incumbent_sha256: str | None = None
+    # The champion this board's ratios are measured against.
+    champion_sha256: str | None = None
     verifier_fingerprint: str
     promotion_bar: float
     # The admitted leader's submission id; null when none leads.

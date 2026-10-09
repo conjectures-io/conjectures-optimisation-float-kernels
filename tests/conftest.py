@@ -138,6 +138,7 @@ if "MISCONFIGURED" in kernel:
     print("pin failed"); sys.exit(2)
 base = {"submission": Path(sys.argv[1]).name, "mode": "gate", "seed": 7,
         "incumbent_sha256": "a" * 64, "seconds": 1.5, "classes": {},
+        "champion_sha256": "d" * 64 if "PROMOTED" in kernel else "c" * 64,
         "verifier_fingerprint": "e" * 64 if "STALE" in kernel
         else os.environ.get("GATE_REQUIRED_FINGERPRINT", "f" * 64)}
 if "CRASH" in kernel:

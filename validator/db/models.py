@@ -88,6 +88,8 @@ class Submission(Base):
     seed: Mapped[int | None] = mapped_column(BigInteger)
     # The incumbent used for this measurement; informational provenance.
     incumbent_sha256: Mapped[str | None] = mapped_column(Text)
+    # The champion's Kernel.lean this was measured against; the board counts the latest one's only.
+    champion_sha256: Mapped[str | None] = mapped_column(Text)
     # The verifier the verdict came from; informational provenance.
     verifier_fingerprint: Mapped[str | None] = mapped_column(Text)
     gate_seconds: Mapped[float | None] = mapped_column(Float)
@@ -117,6 +119,10 @@ class Submission(Base):
         CheckConstraint(
             "incumbent_sha256 IS NULL OR incumbent_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_submissions_incumbent_sha256",
+        ),
+        CheckConstraint(
+            "champion_sha256 IS NULL OR champion_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_submissions_champion_sha256",
         ),
         CheckConstraint(
             "verifier_fingerprint IS NULL OR verifier_fingerprint ~ '^[0-9a-f]{64}$'",

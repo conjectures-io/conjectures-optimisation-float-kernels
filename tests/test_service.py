@@ -276,7 +276,7 @@ def test_the_kernel_lives_in_the_store_and_the_verdict_becomes_the_report(
 
 
 def test_ratios_from_an_older_incumbent_stay_on_the_board(client, store, drain, tmp_path):
-    # Incumbent changes are provenance and do not remove accepted results.
+    # A rebuilt incumbent binary (a bench hotfix, same champion) is provenance: results stay.
     enrol(store, ALICE, BOB)
     post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50"))
     drain()
@@ -287,6 +287,37 @@ def test_ratios_from_an_older_incumbent_stay_on_the_board(client, store, drain, 
     board = client.get(f"{api()}/leaderboard").json()
     assert board["incumbent_sha256"] == "b" * 64
     assert [x["hotkey"] for x in board["ranking"]] == [ALICE.ss58_address, BOB.ss58_address]
+
+
+def test_a_promotion_starts_a_fresh_board(client, store, drain, tmp_path):
+    # Ratios against a promoted champion are not comparable with the old one's, so they go.
+    enrol(store, ALICE, BOB)
+    post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50"))
+    drain()
+    assert client.get(f"{api()}/leaderboard").json()["leader"] is not None
+    post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.95 PROMOTED"))
+    drain()
+    board = client.get(f"{api()}/leaderboard").json()
+    assert board["champion_sha256"] == "d" * 64
+    assert [x["hotkey"] for x in board["ranking"]] == [BOB.ss58_address]
+    assert [r.hotkey for r in store.submissions.scorable("add")] == [BOB.ss58_address]
+
+
+def test_after_a_promotion_older_results_are_remeasured_free(client, store, drain, tmp_path):
+    # remeasure() requeues verdicts against the old champion; re-accepted, they rejoin the board.
+    enrol(store, ALICE, BOB, slots=1)
+    post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50"))
+    drain()
+    post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.95 PROMOTED"))
+    drain()
+    old = [r.id for r in store.submissions.outdated("add")]
+    assert old and store.submissions.remeasure("add") == old
+    gate = Path(worker.GATE)
+    gate.write_text(gate.read_text().replace('"c" * 64', '"d" * 64'))
+    drain()
+    board = client.get(f"{api()}/leaderboard").json()
+    assert {x["hotkey"] for x in board["ranking"]} == {ALICE.ss58_address, BOB.ss58_address}
+    assert store.registrations.available_slots(ALICE.ss58_address) == 0
 
 
 # ── Liveness and readiness ────────────────────────────────────────────────

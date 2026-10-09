@@ -51,6 +51,7 @@ def recorded(verdict: Path) -> dict[str, object]:
         "rounds": v.get("rounds") or None,
         "seed": v.get("seed") or None,
         "incumbent_sha256": v.get("incumbent_sha256") or None,
+        "champion_sha256": v.get("champion_sha256") or None,
         "verifier_fingerprint": v.get("verifier_fingerprint") or None,
         "gate_seconds": v.get("seconds"),
         "report": verdict.read_text(),
@@ -167,6 +168,7 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
     provenance = {
         "verifier_fingerprint": fields.get("verifier_fingerprint"),
         "incumbent_sha256": fields.get("incumbent_sha256"),
+        "champion_sha256": fields.get("champion_sha256"),
     }
     observe(store.sessions, sub.slot, provenance)
     end = json.loads(str(fields["report"])).get("verifier_fingerprint_end")

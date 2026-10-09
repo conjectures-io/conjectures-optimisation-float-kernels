@@ -27,6 +27,7 @@ SCORE_FIELDS = frozenset(
         "rounds",
         "seed",
         "incumbent_sha256",
+        "champion_sha256",
         "verifier_fingerprint",
         "gate_seconds",
         "report",
@@ -262,13 +263,42 @@ class SubmissionsDb:
     def reverify(self, fingerprint: str) -> list[int]:
         # Send every accepted verdict from another verifier back through the gate; it keeps the
         # registration it spent (claim_slot is idempotent), so a re-acceptance costs nothing.
+        return self._requeue(self._from_other_verifier(fingerprint))
+
+    def stale(self, fingerprint: str) -> list[models.Submission]:
+        # Accepted submissions whose verdict came from another verifier, oldest first.
+        return self._accepted_where(self._from_other_verifier(fingerprint))
+
+    def remeasure(self, slot: str) -> list[int]:
+        # After a promotion, send the slot's accepted verdicts against an older champion back
+        # through the gate, free, so they rejoin the fresh board measured against the new one.
+        return self._requeue(self._against_older_champion(slot))
+
+    def outdated(self, slot: str) -> list[models.Submission]:
+        # The slot's accepted submissions measured against an older champion, oldest first.
+        return self._accepted_where(self._against_older_champion(slot))
+
+    def _from_other_verifier(self, fingerprint: str) -> list[Any]:
+        # Accepted verdicts whose recorded verifier is not `fingerprint`.
+        return [
+            models.Submission.state == SubmissionState.ACCEPTED.value,
+            models.Submission.verifier_fingerprint.is_distinct_from(fingerprint),
+        ]
+
+    def _against_older_champion(self, slot: str) -> list[Any]:
+        # The slot's accepted verdicts whose recorded champion is not its current one.
+        return [
+            models.Submission.slot == slot,
+            models.Submission.state == SubmissionState.ACCEPTED.value,
+            models.Submission.champion_sha256.is_distinct_from(self.current_champion(slot)),
+        ]
+
+    def _requeue(self, where: list[Any]) -> list[int]:
+        # Queue the matching submissions again, keeping each one's spent registration.
         with session_scope(self._sessions) as session:
             ids = session.execute(
                 update(models.Submission)
-                .where(
-                    models.Submission.state == SubmissionState.ACCEPTED.value,
-                    models.Submission.verifier_fingerprint.is_distinct_from(fingerprint),
-                )
+                .where(*where)
                 .values(
                     state=SubmissionState.QUEUED.value,
                     verification_attempt=None,
@@ -280,16 +310,13 @@ class SubmissionsDb:
             )
             return sorted(int(i) for i in ids.scalars())
 
-    def stale(self, fingerprint: str) -> list[models.Submission]:
-        # Accepted submissions whose verdict came from another verifier, oldest first.
+    def _accepted_where(self, where: list[Any]) -> list[models.Submission]:
+        # The matching submissions, oldest first, detached so they stay readable.
         with session_scope(self._sessions) as session:
             rows = (
                 session.execute(
                     select(models.Submission)
-                    .where(
-                        models.Submission.state == SubmissionState.ACCEPTED.value,
-                        models.Submission.verifier_fingerprint.is_distinct_from(fingerprint),
-                    )
+                    .where(*where)
                     .order_by(models.Submission.submitted_at, models.Submission.id)
                 )
                 .scalars()
@@ -348,13 +375,30 @@ class SubmissionsDb:
                 .limit(1)
             ).scalar_one_or_none()
 
+    def current_champion(self, slot: str = "add") -> str | None:
+        # The champion source the slot's latest verdict was measured against: a promotion moves it.
+        with session_scope(self._sessions) as session:
+            return session.execute(
+                select(models.Submission.champion_sha256)
+                .where(
+                    models.Submission.slot == slot,
+                    models.Submission.champion_sha256.is_not(None),
+                )
+                .order_by(models.Submission.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
     def _comparable(self, slot: str) -> list[Any]:
-        # Provenance never decides eligibility; operators choose whether to reverify.
-        return [
+        # Ratios against the current champion only, so a promotion starts a fresh board; the
+        # fingerprint and incumbent binary stay provenance, so a hotfix keeps every result.
+        where = [
             models.Submission.slot == slot,
             models.Submission.state == SubmissionState.ACCEPTED.value,
             models.Submission.ratio.is_not(None),
         ]
+        if (champion := self.current_champion(slot)) is not None:
+            where.append(models.Submission.champion_sha256 == champion)
+        return where
 
     def scorable(self, slot: str = "add") -> list[models.Submission]:
         # Every comparable accepted submission, in submission order: admission's input.

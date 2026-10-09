@@ -70,6 +70,7 @@ def submission_view(row: models.Submission) -> schemas.SubmissionView:
         classes=row.classes,
         seed=row.seed,
         incumbent_sha256=row.incumbent_sha256,
+        champion_sha256=row.champion_sha256,
         verifier_fingerprint=row.verifier_fingerprint,
         verification_current=(
             row.verifier_fingerprint == required_fingerprint()
@@ -217,6 +218,7 @@ def leaderboard(request: Request, competition: str) -> schemas.Leaderboard:
     return schemas.Leaderboard(
         slot=slot,
         incumbent_sha256=store.submissions.current_incumbent(slot),
+        champion_sha256=store.submissions.current_champion(slot),
         verifier_fingerprint=required_fingerprint(),
         promotion_bar=PROMOTION_BAR,
         leader=admission.leader(decisions),

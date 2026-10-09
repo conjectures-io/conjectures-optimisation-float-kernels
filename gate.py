@@ -211,6 +211,9 @@ class Verdict:
     # statistical admission resamples (validator/admission.py).
     rounds: list[list[int]] = field(default_factory=list)
     incumbent_sha256: str = ""
+    # The champion's Kernel.lean, hashed: a promotion changes it and starts a fresh board, while a
+    # bench or gate hotfix (a new incumbent binary, a new fingerprint) does not.
+    champion_sha256: str = ""
     # Verifier provenance; neither hash controls eligibility.
     verifier_fingerprint: str = ""
     verifier_fingerprint_end: str = ""
@@ -538,6 +541,7 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
         slot=slot,
         mode=mode,
         incumbent_sha256=digest,
+        champion_sha256=hashlib.sha256(SLOTS[slot].incumbent.read_bytes()).hexdigest(),
         verifier_fingerprint=fingerprint,
     )
     src, t0 = sub_dir / "Kernel.lean", time.monotonic()
