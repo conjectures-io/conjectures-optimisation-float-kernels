@@ -98,20 +98,27 @@ def accept(
     true_ratio: float | None = None,
     slot: str = "full",
 ) -> int:
-    # One accepted submission through the store, so the scorer reads real rows; its rounds sit
-    # at `true_ratio`, the headline `ratio` unless a lucky run is being simulated.
+    # One accepted submission through the store, timed against the slot's current champion and
+    # promoted when it beats it, as the worker does; its rounds sit at `true_ratio`, the headline
+    # `ratio` unless a lucky run is being simulated.
     register(store, hotkey, uid=uid, block=1000 + uid)
     digest = hashlib.sha256(f"{hotkey}{ratio}{incumbent}{slot}".encode()).hexdigest()
     sub_id, _ = store.submissions.add(hotkey, digest, slot)
-    store.submissions.claim_next("w")
+    sub = store.submissions.claim_next("w")
+    rounds = paired(ratio if true_ratio is None else true_ratio, hotkey)
+    evidence = admission.Evidence(
+        sub_id, hotkey, ratio, sub.submitted_at, tuple((i, s) for i, s in rounds)
+    )
     store.submissions.finish(
         sub_id,
         SubmissionState.ACCEPTED,
+        promote=admission.assess(evidence, reward.PROMOTION_BAR).outcome == "qualifies",
         ratio=ratio,
         stage="score",
         incumbent_sha256=incumbent,
+        champion_sha256=store.submissions.current_champion(slot),
         verifier_fingerprint=FINGERPRINT,
-        rounds=paired(ratio if true_ratio is None else true_ratio, hotkey),
+        rounds=rounds,
     )
     return sub_id
 
@@ -121,7 +128,7 @@ WHOLE = 1.0
 
 
 def pay(store) -> reward.Scoring:
-    # What the weight setter would pay: each paying slot's admitted leader its slot's part.
+    # What the weight setter would pay: each paying slot's champion its slot's part.
     config = reward.ScoringConfig()
     boards = [store.scoring.board(slot, config.max_ratio) for slot in reward.PAYING_SLOTS]
     return reward.score(boards, config)
@@ -138,21 +145,22 @@ def test_the_fastest_hotkey_takes_its_slots_share(store, clock):
     assert result.weights == {"hk-fast": WHOLE}
 
 
-def test_a_tie_goes_to_the_earlier_submission(store, clock):
+def test_a_copy_of_the_champion_pays_nothing(store, clock):
+    # Timed against the champion it copies, a copy sits at 1.00: the champion keeps the share.
     accept(store, "hk-first", 0.60, uid=1)
     clock["tick"](10)
-    accept(store, "hk-second", 0.60, uid=2)
+    accept(store, "hk-second", 1.00, uid=2)
     result = pay(store)
     assert result.weights == {"hk-first": WHOLE}
 
 
-def test_a_lucky_later_copy_does_not_take_the_share(store, clock):
-    # Same kernel, one lucky round: it ranks first on the headline ratio, but its rounds are no
-    # faster than the leader's, so admission keeps the earlier submission paid.
+def test_a_lucky_copy_of_the_champion_is_not_promoted(store, clock):
+    # Same kernel, one lucky round: its headline ratio passes the bar, but its rounds are no faster
+    # than the champion's, so admission keeps the champion paid.
     accept(store, "hk-first", 0.60, uid=1)
     clock["tick"](10)
-    accept(store, "hk-copy", 0.58, uid=2, true_ratio=0.60)
-    assert [r.hotkey for r in store.scoring.best_per_hotkey("full")] == ["hk-copy", "hk-first"]
+    accept(store, "hk-copy", 0.96, uid=2, true_ratio=1.00)
+    assert [r.hotkey for r in store.scoring.best_per_hotkey("full")] == ["hk-first", "hk-copy"]
     assert pay(store).weights == {"hk-first": WHOLE}
 
 
@@ -177,10 +185,10 @@ def test_a_ratio_on_the_promotion_bar_pays(store):
 
 
 def test_incumbent_drift_keeps_previous_winner(store, clock):
-    # A different incumbent hash does not remove the previous winner.
+    # A rebuilt incumbent binary (a bench hotfix) does not remove the champion.
     accept(store, "hk-old", 0.40, incumbent="b" * 64, uid=1)
     clock["tick"](10)
-    accept(store, "hk-new", 0.90, incumbent="c" * 64, uid=2)
+    accept(store, "hk-new", 1.01, incumbent="c" * 64, uid=2)
     result = pay(store)
     assert result.weights == {"hk-old": WHOLE}
 
@@ -348,12 +356,15 @@ def test_verifier_drift_keeps_previous_winner(store, monkeypatch):
 def test_admission_is_reused_until_a_verdict_or_the_bar_changes(store, monkeypatch):
     # The bootstrap runs once per change of evidence or policy, not once per read.
     calls = []
-    decide = admission.decide
-    monkeypatch.setattr(admission, "decide", lambda *a: calls.append(1) or decide(*a))
+    assess = admission.assess
+    monkeypatch.setattr(admission, "assess", lambda *a: calls.append(1) or assess(*a))
     accept(store, "alice", 0.80)
+    accept(store, "bob", 1.01, uid=2)
+    calls.clear()
     first = store.scoring.admission("full", 0.97)
     assert store.scoring.admission("full", 0.97) == first and len(calls) == 1
-    accept(store, "bob", 0.70, uid=2)
+    accept(store, "carol", 1.02, uid=3)
+    calls.clear()
     assert store.scoring.admission("full", 0.97) != first and len(calls) == 2
     store.scoring.admission("full", 0.90)
-    assert len(calls) == 3
+    assert len(calls) == 4

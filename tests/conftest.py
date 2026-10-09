@@ -130,15 +130,20 @@ def register(store, hotkey: str, *, uid: int = 0, block: int = 1000) -> int:
 
 # Stands in for gate.py (same args, verdict JSON, exit codes); markers pick the outcome.
 STUB_GATE = """
-import json, os, sys
+import hashlib, json, os, sys
 from pathlib import Path
 kernel = (Path(sys.argv[1]) / "Kernel.lean").read_text()
 verdict = Path(sys.argv[sys.argv.index("--verdict") + 1])
 if "MISCONFIGURED" in kernel:
     print("pin failed"); sys.exit(2)
+# The champion it times against, as gate.py records it: the worker's promoted file, if any.
+slot = sys.argv[sys.argv.index("--slot") + 1] if "--slot" in sys.argv else "add"
+pointed = os.environ.get("GATE_INCUMBENT" if slot == "add" else "GATE_INCUMBENT_" + slot.upper())
+champion = (hashlib.sha256(Path(pointed).read_bytes()).hexdigest() if pointed
+            else "d" * 64 if "PROMOTED" in kernel else "c" * 64)
 base = {"submission": Path(sys.argv[1]).name, "mode": "gate", "seed": 7,
         "incumbent_sha256": "a" * 64, "seconds": 1.5, "classes": {},
-        "champion_sha256": "d" * 64 if "PROMOTED" in kernel else "c" * 64,
+        "champion_sha256": champion,
         "verifier_fingerprint": "e" * 64 if "STALE" in kernel
         else os.environ.get("GATE_REQUIRED_FINGERPRINT", "f" * 64)}
 if "CRASH" in kernel:

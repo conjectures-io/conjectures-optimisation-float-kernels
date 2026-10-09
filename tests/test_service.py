@@ -33,7 +33,7 @@ def enrol(store, *keypairs, slots: int = 4):
 
 
 def test_submit_verify_rank(client, store, drain, tmp_path):
-    # Two miners; Bob's kernel is faster; both accepted; Bob first.
+    # Alice beats the shipped champion and is promoted; Bob, timed against her kernel, beats it.
     enrol(store, ALICE, BOB)
     ra = post_submission(client, ALICE, kernel_file(tmp_path, "alice", "RATIO=0.80"))
     rb = post_submission(client, BOB, kernel_file(tmp_path, "bob", "RATIO=0.53"))
@@ -47,15 +47,17 @@ def test_submit_verify_rank(client, store, drain, tmp_path):
     assert a["state"] == "accepted" and a["stage"] == "score" and a["ratio"] == 0.80
     assert a["incumbent_sha256"] == "a" * 64 and a["seed"] == 7
     assert a["classes"]["near-one"]["ratio"] == 0.80
+    b = client.get(f"{api()}/submissions/{sb}").json()
+    assert b["champion_sha256"] == a["digest"]
 
     board = client.get(f"{api()}/leaderboard").json()
     assert board["incumbent_sha256"] == "a" * 64 and board["promotion_bar"] == 0.97
-    # This is the add practice board: it ranks and names a leader, but does not pay.
+    # This is the add practice board: it promotes and names a champion, but does not pay.
     assert board["slot"] == "add" and board["pays"] is False
     assert client.get("/v1/competitions/floatlib/leaderboard").json()["pays"] is True
-    assert [x["submission"] for x in board["ranking"]] == [sb, sa]
-    assert [x["rank"] for x in board["ranking"]] == [1, 2]
-    assert [x["qualifies"] for x in board["ranking"]] == [True, True]
+    assert board["leader"] == sb and board["champion_sha256"] == b["digest"]
+    assert [x["submission"] for x in board["ranking"]] == [sb]
+    assert [x["admission"] for x in board["ranking"]] == ["leader"]
 
 
 def test_a_kernel_no_faster_than_the_bar_is_ranked_but_does_not_qualify(
@@ -68,23 +70,22 @@ def test_a_kernel_no_faster_than_the_bar_is_ranked_but_does_not_qualify(
     assert entry["ratio"] == 0.99 and entry["qualifies"] is False
 
 
-def test_leaderboard_keeps_each_hotkeys_best_and_ties_go_to_the_earlier(
+def test_a_copy_of_the_champion_ranks_below_it_and_is_not_promoted(
     client, store, drain, tmp_path, clock
 ):
     enrol(store, ALICE, BOB)
     post_submission(client, ALICE, kernel_file(tmp_path, "a1", "RATIO=0.80"))
     clock["tick"](60)
-    post_submission(client, BOB, kernel_file(tmp_path, "b1", "RATIO=0.60"))
+    # Timed against Alice's kernel, a copy of it sits at 1.00, above the bar.
+    post_submission(client, BOB, kernel_file(tmp_path, "b1", "RATIO=1.00"))
     clock["tick"](60)
-    # Alice ties Bob, later: Bob keeps the rank.
-    post_submission(client, ALICE, kernel_file(tmp_path, "a2", "RATIO=0.60"))
+    post_submission(client, ALICE, kernel_file(tmp_path, "a2", "RATIO=0.99"))
     drain()
     board = client.get(f"{api()}/leaderboard").json()
     ranking = board["ranking"]
-    assert [x["hotkey"] for x in ranking] == [BOB.ss58_address, ALICE.ss58_address]
-    assert [x["ratio"] for x in ranking] == [0.60, 0.60]
-    # Bob's run was significantly faster than Alice's first; her later tie is not, so Bob leads.
-    assert [x["admission"] for x in ranking] == ["leader", "not-significant"]
+    # The champion stands in for its author's line; the copy ranks below it.
+    assert [x["hotkey"] for x in ranking] == [ALICE.ss58_address, BOB.ss58_address]
+    assert [x["admission"] for x in ranking] == ["leader", "above-bar"]
     assert board["leader"] == ranking[0]["submission"]
 
 
@@ -300,7 +301,7 @@ def test_ratios_from_an_older_incumbent_stay_on_the_board(client, store, drain, 
     drain()
     gate = Path(worker.GATE)
     gate.write_text(gate.read_text().replace('"a" * 64', '"b" * 64'))
-    post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.95"))
+    post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=1.01"))
     drain()
     board = client.get(f"{api()}/leaderboard").json()
     assert board["incumbent_sha256"] == "b" * 64
@@ -308,34 +309,57 @@ def test_ratios_from_an_older_incumbent_stay_on_the_board(client, store, drain, 
 
 
 def test_a_promotion_starts_a_fresh_board(client, store, drain, tmp_path):
-    # Ratios against a promoted champion are not comparable with the old one's, so they go.
+    # Beating the champion makes an entry the champion: the board then counts against it alone.
+    enrol(store, ALICE, BOB, CHARLIE)
+    post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50"))
+    drain()
+    alice = client.get(f"{api()}/leaderboard").json()["leader"]
+    assert alice is not None
+    sb = post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.90")).json()["submission"]
+    post_submission(client, CHARLIE, kernel_file(tmp_path, "c", "RATIO=1.02"))
+    drain()
+    board = client.get(f"{api()}/leaderboard").json()
+    assert board["leader"] == sb != alice
+    assert board["champion_sha256"] == store.submissions.get(sb).digest
+    assert [x["hotkey"] for x in board["ranking"]] == [BOB.ss58_address, CHARLIE.ss58_address]
+
+
+def test_an_entry_queued_before_a_promotion_is_timed_against_the_new_champion(
+    client, store, drain, tmp_path
+):
+    # The worker points the gate at the champion as it is when the entry's turn comes.
     enrol(store, ALICE, BOB)
-    post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50"))
-    drain()
-    assert client.get(f"{api()}/leaderboard").json()["leader"] is not None
-    post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.95 PROMOTED"))
-    drain()
-    board = client.get(f"{api()}/leaderboard").json()
-    assert board["champion_sha256"] == "d" * 64
-    assert [x["hotkey"] for x in board["ranking"]] == [BOB.ss58_address]
-    assert [r.hotkey for r in store.submissions.scorable("add")] == [BOB.ss58_address]
+    sa = post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50")).json()[
+        "submission"
+    ]
+    sb = post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=1.01")).json()["submission"]
+    assert drain() == 2
+    assert store.submissions.get(sb).champion_sha256 == store.submissions.get(sa).digest
 
 
-def test_after_a_promotion_older_results_are_remeasured_free(client, store, drain, tmp_path):
-    # remeasure() requeues verdicts against the old champion; re-accepted, they rejoin the board.
-    enrol(store, ALICE, BOB, slots=1)
-    post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50"))
+def test_reverifying_the_champion_keeps_it_champion_timed_against_its_predecessor(
+    client, store, drain, tmp_path
+):
+    # After a gate update, the champion is re-checked against the one before it, never against
+    # itself, and is not promoted a second time.
+    enrol(store, ALICE, BOB)
+    alice_id = post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.50")).json()[
+        "submission"
+    ]
+    bob_id = post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.90")).json()[
+        "submission"
+    ]
     drain()
-    post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.95 PROMOTED"))
-    drain()
-    old = [r.id for r in store.submissions.outdated("add")]
-    assert old and store.submissions.remeasure("add") == old
-    gate = Path(worker.GATE)
-    gate.write_text(gate.read_text().replace('"c" * 64', '"d" * 64'))
-    drain()
-    board = client.get(f"{api()}/leaderboard").json()
-    assert {x["hotkey"] for x in board["ranking"]} == {ALICE.ss58_address, BOB.ss58_address}
-    assert store.registrations.available_slots(ALICE.ss58_address) == 0
+    assert sorted(store.submissions.reverify("d" * 64)) == [alice_id, bob_id]
+    assert drain() == 2
+    alice, bob = store.submissions.get(alice_id), store.submissions.get(bob_id)
+    assert bob.state == "accepted" and bob.champion_sha256 == alice.digest
+    assert store.submissions.champion("add").id == bob_id
+    with store_pkg.session_scope(store.sessions) as session:
+        assert (
+            session.execute(sa.select(sa.func.count()).select_from(models.Promotion)).scalar() == 2
+        )
+    assert client.get(f"{api()}/leaderboard").json()["leader"] == bob_id
 
 
 # ── Liveness and readiness ────────────────────────────────────────────────
@@ -363,7 +387,7 @@ def toolchain_present() -> bool:
 @pytest.mark.slow
 @pytest.mark.skipif(not toolchain_present(), reason="no Lean toolchain or build - run ./setup.sh")
 def test_the_real_gate_ranks_real_kernels(client, store, settings, monkeypatch):
-    # fastlog and the incumbent through the real gate.py; wrong is rejected at statement.
+    # fastlog is promoted by the real gate.py, the incumbent then timed against it; wrong fails.
     enrol(store, ALICE, BOB, CHARLIE)
     monkeypatch.setattr(worker, "GATE", REPO / "gate.py")
     monkeypatch.setattr(worker, "TOTAL_TIMEOUT", 1800.0)
@@ -376,7 +400,9 @@ def test_the_real_gate_ranks_real_kernels(client, store, settings, monkeypatch):
     board = client.get(f"{api()}/leaderboard").json()
     ratios = {x["hotkey"]: x["ratio"] for x in board["ranking"]}
     assert set(ratios) == {ALICE.ss58_address, BOB.ss58_address}
-    assert ratios[ALICE.ss58_address] < 0.6 < 0.97 < ratios[BOB.ss58_address] < 1.03
+    assert ratios[ALICE.ss58_address] < 0.6 and 1.5 < ratios[BOB.ss58_address] < 2.2
+    assert board["leader"] == store.submissions.champion("add").id
+    assert store.submissions.champion("add").hotkey == ALICE.ss58_address
     wrong = [
         s
         for s in (store.submissions.get(i) for i in range(1, 4))
