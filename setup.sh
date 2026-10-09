@@ -27,6 +27,7 @@ have curl "apt install curl"
 have git "apt install git"
 have bwrap "apt install bubblewrap, or run the gate with GATE_SANDBOX=0 (never on a validator)"
 have taskset "apt install util-linux, or run the gate with BENCH_CPU= (noisier timing)"
+have prlimit "apt install util-linux, or run the gate with GATE_FILE_MB=0 (no per-file disk cap)"
 have lake "installed below via elan"
 # The service's Postgres runs under docker compose (skip with a managed DATABASE_URL); pm2 runs its processes.
 if [ "$service" = 1 ]; then

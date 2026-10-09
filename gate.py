@@ -173,11 +173,19 @@ _MAX_BYTES = 256_000
 # GB, benches near 20 MB), so a runaway is killed rather than swapping; 0 lifts both.
 _BUILD_MEMORY_MB = int(os.environ.get("GATE_BUILD_MEMORY_MB", "4096"))
 _BENCH_MEMORY_MB = int(os.environ.get("GATE_BENCH_MEMORY_MB", "512"))
+# Disk caps in MB: any one file a sandboxed command writes (a bench binary is about 150 MB), and all
+# an entry's builds write in total; over either is a charged rejection. 0 lifts a cap.
+_FILE_MB = int(os.environ.get("GATE_FILE_MB", "512"))
+_BUILD_DISK_MB = int(os.environ.get("GATE_BUILD_DISK_MB", "1024"))
+# Days the gate keeps its own per-run logs and results; 0 keeps them forever.
+_KEEP_DAYS = float(os.environ.get("GATE_KEEP_DAYS", "14"))
 # Processes per scope; Lean spawns a handful, a fork bomb far more.
 _TASKS_MAX = int(os.environ.get("GATE_TASKS_MAX", "256"))
 
 AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
-OPTIONS = {"maxHeartbeats", "maxRecDepth", "synthInstance.maxHeartbeats"}
+# The options a submission may set, each with the highest value allowed: room for a heavy proof,
+# never unlimited (0 lifts a heartbeat limit), so elaboration always ends on its own.
+OPTIONS = {"maxHeartbeats": 4_000_000, "maxRecDepth": 8192, "synthInstance.maxHeartbeats": 400_000}
 ATTRIBUTES = {
     "inline",
     "noinline",
@@ -191,7 +199,8 @@ ATTRIBUTES = {
 BANNED = re.compile(
     r"\b(sorry|admit|native_decide|axiom|implemented_by|extern|export|csimp|init|initialize"
     r"|builtin_initialize|run_cmd|run_elab|run_meta|macro|macro_rules|elab|elab_rules|syntax"
-    r"|attribute|IO|include_str|include_bytes|includeStr)\b|unsafe|Unchecked|dbg|#[a-z_]+"
+    r"|attribute|IO|include_str|include_bytes|includeStr|run_tac|declare_simp_like_tactic)\b"
+    r"|\w*simproc\w*|\bregister_\w+|\w+_elab\b|\w*_syntax_\w*|unsafe|Unchecked|dbg|#[a-z_]+"
 )
 
 
@@ -246,11 +255,22 @@ def check_limits() -> None:
         )
         if probe.returncode != 0:
             raise RuntimeError(f"systemd resource limits are unavailable: {probe.stderr.strip()}")
+    if _FILE_MB > 0 and not shutil.which("prlimit"):
+        raise RuntimeError("prlimit (util-linux) is required for GATE_FILE_MB; 0 lifts the cap")
 
 
 def killed(code: int) -> bool:
     # SIGKILL, as a negative Popen code or a shell's 128+9: the memory cap's OOM kill.
     return code in (-signal.SIGKILL, 128 + signal.SIGKILL)
+
+
+def overfile(code: int) -> bool:
+    # SIGXFSZ, as a negative Popen code or a shell's 128+25: a file past the per-file disk cap.
+    return code in (-signal.SIGXFSZ, 128 + signal.SIGXFSZ)
+
+
+# The exit code own() reports when an entry's builds wrote more than the total disk cap.
+OVER_DISK = 253
 
 
 def run(
@@ -285,7 +305,8 @@ def run(
         shutil.rmtree(SCRATCH, ignore_errors=True)
         shutil.copytree(CONFIG, SCRATCH, symlinks=True)
         box += ["--bind", str(SCRATCH), str(CONFIG)]
-    argv = limits(memory_mb) + (box + ["--"] if _SANDBOX else []) + cmd
+    fsize = ["prlimit", f"--fsize={_FILE_MB * 2**20}", "--"] if _FILE_MB > 0 else []
+    argv = limits(memory_mb) + fsize + (box + ["--"] if _SANDBOX else []) + cmd
     t0 = time.monotonic()
     with subprocess.Popen(
         argv,
@@ -327,9 +348,29 @@ def own(cmd: list[str], cap: float, **kw) -> tuple[int, str]:
     t0 = time.monotonic()
     code, out = run(cmd, max(min(cap, _budget.left), 1.0), **kw)
     _budget.left -= time.monotonic() - t0
-    if code == 124 or killed(code):
+    if kw.get("build") == "write" and _BUILD_DISK_MB > 0 and code == 0:
+        if disk_mb(LAYER / "upper") > _BUILD_DISK_MB:
+            code = OVER_DISK
+    if code in (124, OVER_DISK) or killed(code) or overfile(code):
         _budget.exhausted = True
     return code, out
+
+
+def disk_mb(path: Path) -> float:
+    # What a directory tree holds on disk, in MB.
+    files = (p for p in path.rglob("*") if p.is_file() and not p.is_symlink())
+    return sum(p.stat().st_blocks * 512 for p in files) / 2**20
+
+
+def prune(directory: Path, patterns: tuple[str, ...]) -> int:
+    # Deletes this gate's own per-run files older than GATE_KEEP_DAYS, so logs cannot fill the disk.
+    if _KEEP_DAYS <= 0 or not directory.is_dir():
+        return 0
+    cutoff = time.time() - _KEEP_DAYS * 86400
+    old = [f for pat in patterns for f in directory.glob(pat) if f.stat().st_mtime < cutoff]
+    for f in old:
+        f.unlink(missing_ok=True)
+    return len(old)
 
 
 def wipe(path: Path) -> None:
@@ -351,6 +392,10 @@ def errors(out: str, code: int = 1) -> str:
         return f"killed: over the {_BUILD_MEMORY_MB} MB build memory cap"
     if code == 124:
         return f"over the entry's {_BUDGET_SECONDS:.0f}s time budget"
+    if overfile(code):
+        return f"a file over the {_FILE_MB} MB disk cap"
+    if code == OVER_DISK:
+        return f"the build wrote over the {_BUILD_DISK_MB} MB disk cap"
     return " | ".join(ln.strip() for ln in out.splitlines() if "error" in ln)[:600]
 
 
@@ -399,14 +444,28 @@ def policy(src: Path, v: Verdict) -> str | None:
             return f"import other than {contract}: {line.strip()!r}"
     if m := BANNED.search(text):
         return f"banned name {m.group(0)!r} at line {text.count(chr(10), 0, m.start()) + 1}"
-    for opt in re.findall(r"set_option\s+([\w.]+)", text):
-        if opt not in OPTIONS:
-            return f"set_option {opt} is not allowed"
+    if reason := options(text):
+        return reason
     for attrs in re.findall(r"@\[([^\]]*)\]", text):
         for a in attrs.split(","):
             name = a.split()[-1] if a.split() else ""
             if name not in ATTRIBUTES:
                 return f"attribute {a.strip()!r} is not allowed"
+    return None
+
+
+def options(text: str) -> str | None:
+    # Every set_option names an allowed option with a value in range, read with comments removed so
+    # none can hide between them; one the reader cannot account for is refused, not skipped.
+    plain = re.sub(r"--[^\n]*", " ", re.sub(r"/-.*?-/", " ", text, flags=re.S))
+    found = re.findall(r"\bset_option\s+(\S+)\s+(\S+)", plain)
+    if len(found) != len(re.findall(r"\bset_option\b", text)):
+        return "a set_option the policy cannot read (hidden in or between comments or strings)"
+    for name, value in found:
+        if name not in OPTIONS:
+            return f"set_option {name} is not allowed"
+        if not value.isdigit() or not 0 < int(value) <= OPTIONS[name]:
+            return f"set_option {name} {value}: allowed values are 1 to {OPTIONS[name]}"
     return None
 
 
@@ -432,7 +491,8 @@ def kernel(src: Path, v: Verdict) -> str | None:
     for module in ("Submission", SLOTS[v.slot].verify):
         code, out = own([LAKE, "env", "leanchecker", module], _BUILD_TIMEOUT, build="read")
         if code != 0:
-            detail = errors(out, code) if killed(code) or code == 124 else out.strip()[-300:]
+            limit = killed(code) or overfile(code) or code == 124
+            detail = errors(out, code) if limit else out.strip()[-300:]
             return f"leanchecker rejects {module}: {detail}"
         logger.info(f"[kernel] {module} replays cleanly")
     return None
@@ -613,6 +673,10 @@ def main() -> int:
         return 2
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_to("gate", stamp)
+    if pruned := prune(HERE / "logs", ("gate-*.log",)) + prune(
+        HERE / "results", ("*-gate-*.json", "*-bench-*.json")
+    ):
+        logger.info(f"[gate] pruned {pruned} per-run file(s) older than {_KEEP_DAYS:g} days")
     results = HERE / "results"
     results.mkdir(exist_ok=True)
     failed, broken = 0, False
