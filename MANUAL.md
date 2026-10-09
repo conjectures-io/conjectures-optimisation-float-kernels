@@ -418,12 +418,12 @@ file over 256,000 bytes; 429 past the rate limit.
 
 **What the service enforces:**
 - The signature must match the hotkey and this exact file, and its timestamp must be within 5 minutes of the validator's clock, so a captured upload cannot be replayed.
-- **One registration buys one accepted submission.** A rejection costs nothing: fix it and resubmit. An acceptance spends one registration; to submit again, register again.
-- **Except an entry that holds the gate.** Each entry has a time budget for its own builds, kernel replays and timing runs, 600 seconds in all (a full entry uses about two minutes): one that runs out, or goes over a memory cap (4096 MB to build, 512 MB to time), is rejected *and* spends a registration, so a slow file cannot be resubmitted for free. Check yours with `gate.py` first.
+- **One registration buys one entry.** Every verdict spends one registration, accepted or rejected; to submit again, register again. So run `gate.py` on your entry first: it is the same gate. Only a validator error (`error`) and a refusal at the door (4xx) spend nothing.
+- **A time budget per entry.** Each entry has a time budget for its own builds, kernel replays and timing runs, 600 seconds in all (a full entry uses about two minutes): one that runs out, or goes over a memory cap (4096 MB to build, 512 MB to time), is rejected. Check yours with `gate.py` first.
 - At most 10 signed writes a minute per hotkey, and at most as many queued submissions as you have unspent registrations.
 - The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
 - A signature is bound to its slot's slug: one made for `floatlib` (the full entry) does not verify for `floatlib-add`, and the other way round, nor for any other competition on the platform.
-- Registrations are shared across slots: one registration buys one accepted submission in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `full` or one of the practice boards.)
+- Registrations are shared across slots: one registration buys one entry in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `full` or one of the practice boards.)
 - **One board pays: the full entry.** Its champion's author receives the competition's share; while the shipped champion holds, the share goes to the treasury. The practice boards are ranked and shown, but unpaid.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
 - **A verdict keeps counting after a gate update.** Every verdict records the verifier fingerprint and incumbent it was judged by, as provenance; when the validator updates its gate, contract or bench, the change is logged and older accepted submissions stay on the board. The operator may choose to re-verify them, at no cost to you: a re-acceptance reuses the registration already spent.
