@@ -6,7 +6,7 @@
 - **Practice boards.** Every kernel also has its own unpaid board (`--slot add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`), the quickest way to try one idea. Sections 1 to 11 teach the gate on the `add` board; sections 13 and 14 cover the other kernels; section 15 puts them together.
 - You submit one Lean file, `Kernel.lean`: a binary32 addition `Submission.add` and a proof `Submission.add_spec` that it equals FloatLib's reference `ExecFloat.Spec.add` on every pair of inputs, NaNs, infinities and signed zeros included. The gate checks the proof, re-checks it in the kernel, audits axioms, then times your kernel against the incumbent. Lower time wins.
 - The incumbent is FloatLib's own certified kernel (`ExecFloat.add`, about 30 to 50 ns per addition depending on the machine). The best proven kernel so far, `kernels/add/tuned`, runs at **0.50x** of its time (`fastlog`, 0.53x); an unproved textbook adder reaches **0.40x**. The gap between those two is what is left to win.
-- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 43 expected verdicts in about 30 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
+- Setup is one command, `./setup.sh` (about 15 minutes the first time), and `selftest.py` checks the whole environment against 48 expected verdicts in about 30 minutes. Measure before you prove: `gate.py --bench` times an unproved kernel in about 30 seconds. `gate.py` then runs the real six-stage gate.
 - The proof is smaller than it looks. Fall back to `ExecFloat.add` for every case you do not handle, and reuse FloatLib's own theorems: `direct`, `mirror`, `fastlog` and `tuned` are four accepted kernels whose proofs add no floating-point reasoning at all, only the plumbing in section 7.
 - Four more slots, binary32 `mul`, `fma`, `div` and `sqrt`, run on the same gate with `--slot` (section 13). `kernels/mul/fast` is a proven multiplication at **0.55x**, built almost entirely from `tuned`'s lemmas; nothing faster is proven for `fma`, `div` or `sqrt` yet.
 - Status: the gate, the bench and the submission service are real and tested; the rewards and the exact promotion bar are proposed, not final (section 12).
@@ -14,7 +14,7 @@
 ```bash
 ./setup.sh                                                  # toolchain, Mathlib cache, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                                # 43/43 cases as expected = ready
+.venv/bin/python selftest.py                                # 48/48 cases as expected = ready
 cp -r kernels/add/textbook-unproved my-kernel               # the fast adder, one sorry left
 .venv/bin/python gate.py --slot add --bench my-kernel       # speed only, proof not checked
 .venv/bin/python gate.py --slot add my-kernel               # the real gate: all six stages
@@ -65,7 +65,7 @@ policy hold on their own. A healthy machine ends with:
 [selftest] ok   mul/incumbent          mul  gate
 ...
 [selftest] ok   fma/wrong              fma  gate
-[selftest] 43/43 cases as expected
+[selftest] 48/48 cases as expected
 ```
 
 Exit code 0 means the toolchain, the build, the sandbox, the kernel re-check and the timing all
@@ -300,8 +300,8 @@ The policy runs on the raw text, comments included, so keep these words out of y
 | no `unsafe...`, `Unchecked...`, `dbg...` (as prefixes: `unsafeBaseIO` counts) | escape purity or the certificates |
 | no `implemented_by`, `extern`, `export`, `csimp`, `init`, `initialize`, `builtin_initialize` | swap compiled code or run code at start-up |
 | no `include_str`, `include_bytes`, `includeStr` | read a file at build time; kernels need no file input |
-| no `#` commands (`#eval`, `#print`, `#exit`...), `run_cmd`, `run_elab`, `run_meta`, `macro`, `elab`, `syntax`, `attribute`, `IO` | run your code while the gate elaborates the file |
-| `set_option` only `maxHeartbeats`, `maxRecDepth`, `synthInstance.maxHeartbeats` | `debug.skipKernelTC` would switch off the kernel |
+| no `#` commands (`#eval`, `#print`, `#exit`...), `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `macro`, `elab`, `syntax`, `attribute`, `IO`, and no `simproc`/`dsimproc`, `register_...`, `..._elab` or `..._syntax_...` declarations | run your code while the gate elaborates the file |
+| `set_option` only `maxHeartbeats` (1 to 4,000,000), `maxRecDepth` (1 to 8192), `synthInstance.maxHeartbeats` (1 to 400,000), as plain digits; options are read with comments removed, and one the policy cannot read is refused | `debug.skipKernelTC` would switch off the kernel, and `0` would let elaboration run forever |
 | `@[...]` only `inline`, `noinline`, `always_inline`, `specialize`, `simp`, `reducible`, `irreducible` | `@[command_elab]` and friends register your own elaborator |
 
 `kernels/exploits/*` has one file per rule, each rejected; the two that matter most

@@ -7,14 +7,14 @@
 - **TorchLean without a TorchLean dependency:** the rules for `sum` and `bmm` are restated over FloatLib in `ContractTensor`, so validators need neither TorchLean nor a C compiler; `lean/stage2/Stage2/Link.lean` proves them equal to TorchLean's by definition.
 - **Practice boards, unpaid:** every kernel also has a single-kernel board (`add`, `mul`, `fma`, `div`, `sqrt`, `sum`, `bmm`) for trying one idea at a time. Best proven there: `add` 0.50x (`tuned`; an unproved textbook adder reaches 0.40x), `mul` 0.55x, `sum` 0.52x, `bmm` 0.57x.
 - **Miners: read [`MANUAL.md`](MANUAL.md)** for setup, what to submit, how to measure, what to prove and what gets rejected; section 14 covers the TorchLean slots. This README is the overview for operators and reviewers.
-- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 43 expected verdicts across the full entry and the practice boards (about 30 minutes).
+- One command sets up a fresh clone (about 15 minutes); one command tests the whole environment against 48 expected verdicts across the full entry and the practice boards (about 30 minutes).
 - A validator service is included: miners submit signed kernels over HTTP (`miner/submit.py`), a worker runs the gate, and a leaderboard ranks them.
 
 ```bash
 git clone <this repo> && cd conjectures-floatlib-competition
 ./setup.sh                                          # elan + Lean v4.34.0, FloatLib + Mathlib, build, .venv
 export PATH=$HOME/.elan/bin:$PATH
-.venv/bin/python selftest.py                        # 43/43 cases as expected = ready
+.venv/bin/python selftest.py                        # 48/48 cases as expected = ready
 .venv/bin/python gate.py kernels/full/incumbent     # a full entry: add, mul, sum, bmm (the default slot)
 .venv/bin/python gate.py --slot add kernels/add/fastlog   # one kernel on its practice board
 .venv/bin/python gate.py --bench my-entry           # time an unproved entry; never a verdict
@@ -70,11 +70,16 @@ beating it means proving a new rounding argument, FloatLib's own being 563 lines
 | a build-time file read reaching a secret (`include_str`, and any read at all) | policy bans `include_str`; the sandbox hides the real HOME (the validator wallet) and the repo root (its `.env`, its stored submissions) behind tmpfs and restores only the toolchain and the Lean workspace read-only, and the build runs with a minimal environment, not the validator's |
 | a build or bench exhausting the validator's memory or process table | every sandboxed command runs in a systemd scope: 4096 MB for builds and kernel checks, 512 MB for benches, no swap, 256 tasks; the OOM kill rejects the submission, and a host that cannot apply the caps fails the gate as a validator error |
 | a slow file holding the single gate worker, resubmitted for free | every command the entry controls (its builds, kernel replays and bench runs) shares one time budget, `GATE_BUDGET_SECONDS` (600; a full entry uses about 120); running out of it or over a memory cap rejects the entry and spends a registration, where any other rejection is free |
+| a build filling the validator's disk | every sandboxed command runs under `prlimit`, so no file it writes can pass `GATE_FILE_MB` (512; a bench binary is about 150), and the entry's build layer is measured after each build against `GATE_BUILD_DISK_MB` (1024); either is a charged rejection. The gate deletes its own per-run logs and results after `GATE_KEEP_DAYS` (14) |
+| build-time meta code a word list could miss (`simproc`, `run_tac`) or an option hidden behind a comment | policy bans the simproc family, `run_tac` and `register_`/`_elab`/`_syntax_` declarations; it reads every `set_option` with comments removed, caps the values (no unlimited `maxHeartbeats 0`) and refuses one it cannot read |
+| work left running to slow the incumbent's turn | every command runs in its own pid namespace, so nothing it starts outlives it (`tests/test_gate_limits.py` checks this in the real sandbox) |
 | a build overwriting trusted files | builds write into a throwaway overlay; any file there not stemmed `Submission`, `Verify`, `Main` or `bench` rejects; FloatLib and Mathlib sit read-only under `.lake/packages` |
 | slowing the incumbent (`csimp`, `@[export]`) | the incumbent is a separate binary built from `kernels/add/incumbent` and pinned, rebuilt only when its sources change |
 | tuning for known operands | a fresh seed per run; three timed classes (near-one, wide-gap, cancellation) plus raw bit patterns checksummed |
 
-`kernels/exploits/*` has one file per threat. Nine are rejected at policy, and the two that
+`kernels/exploits/*` has one file per threat. Thirteen are rejected at policy (among them `simproc`,
+`runtac`, `heartbeats` and `hiddenoption`), `sorryax` names the escape hatch past the word list and
+is rejected at the axiom audit, and the two that
 matter most are also rejected by the later stages when policy is skipped: `exploits/forge` at
 `kernel`, `exploits/tamper` at `statement`. `exploits/membomb` is proved and correct but allocates
 gigabytes per call; the bench memory cap rejects it at `score`, and charges it a registration. `selftest.py` runs all of these.
