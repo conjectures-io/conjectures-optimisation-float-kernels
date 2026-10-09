@@ -15,6 +15,7 @@ import admission
 import db
 import reward
 from db import SLOTS, SubmissionState, iso, models
+from db.submissions import QueueFull
 from db.verifier import required_fingerprint
 
 from . import schemas, security, sig
@@ -160,15 +161,14 @@ async def submit(
     # A slot is required here but spent only on acceptance, so a rejection costs nothing.
     if not store.registrations.is_registered(hotkey):
         raise refuse(402, "this hotkey is not registered on the subnet")
-    allowed, slots, pending = store.submissions.may_queue(hotkey)
-    if not allowed:
+    try:
+        sub_id, fresh, slots = store.submissions.enqueue(hotkey, digest, slot, lean)
+    except QueueFull as full:
         raise refuse(
             402,
-            f"{slots} unclaimed registration(s) and {pending} already in the queue: "
+            f"{full.slots} unclaimed registration(s) and {full.pending} already in the queue: "
             "one registration buys one accepted submission, so register again to submit again",
-        )
-
-    sub_id, fresh = store.submissions.add(hotkey, digest, slot, kernel=lean)
+        ) from full
     row = store.submissions.get(sub_id)
     assert row is not None, "add() either inserted this row or found the existing one"
     logger.info(

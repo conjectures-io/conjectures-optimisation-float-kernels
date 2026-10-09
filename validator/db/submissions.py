@@ -37,6 +37,13 @@ SCORE_FIELDS = frozenset(
 KERNEL = "Kernel.lean"
 
 
+class QueueFull(Exception):
+    # A hotkey already has as much work queued as its unclaimed registrations can pay for.
+    def __init__(self, slots: int, pending: int) -> None:
+        super().__init__(f"{slots} unclaimed registration(s) and {pending} already in the queue")
+        self.slots, self.pending = slots, pending
+
+
 class SubmissionsDb:
     # The submission queue, its verdicts and the leaderboard.
     def __init__(self, sessions: sessionmaker[Session]) -> None:
@@ -78,6 +85,46 @@ class SubmissionsDb:
                 )
             ).scalar_one()
             return int(existing), False
+
+    def enqueue(self, hotkey: str, digest: str, slot: str, kernel: bytes) -> tuple[int, bool, int]:
+        # Queue a submission if the hotkey can pay for it, atomically under a per-hotkey lock, so
+        # two API processes cannot both spend one free registration; returns (id, fresh, slots).
+        with session_scope(self._sessions) as session:
+            session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(hotkey, 0))))
+            slots = _available_slots(session, hotkey)
+            existing = session.execute(
+                select(models.Submission.id).where(
+                    models.Submission.hotkey == hotkey,
+                    models.Submission.slot == slot,
+                    models.Submission.digest == digest,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                # A retry of the same file is the same submission, even with no registration left.
+                return int(existing), False, slots
+            pending = int(
+                session.execute(
+                    select(func.count())
+                    .select_from(models.Submission)
+                    .where(
+                        models.Submission.hotkey == hotkey,
+                        models.Submission.state.in_([s.value for s in PENDING]),
+                    )
+                ).scalar_one()
+            )
+            if pending >= slots:
+                raise QueueFull(slots, pending)
+            row = models.Submission(
+                hotkey=hotkey,
+                slot=slot,
+                digest=digest,
+                submitted_at=clock.now(),
+                state=SubmissionState.QUEUED.value,
+            )
+            session.add(row)
+            session.flush()
+            session.add(models.SubmissionFile(submission_id=row.id, name=KERNEL, content=kernel))
+            return int(row.id), True, slots
 
     def claim_next(self, worker_id: str) -> models.Submission | None:
         # Claim the oldest queued submission, fewest gate crashes first, so one that crashes the
@@ -335,22 +382,6 @@ class SubmissionsDb:
                 session.expunge(row)
             return row
 
-    def may_queue(self, hotkey: str) -> tuple[bool, int, int]:
-        # (allowed, slots, pending): a hotkey may not queue more work than its slots can pay for.
-        with session_scope(self._sessions) as session:
-            slots = _available_slots(session, hotkey)
-            pending = int(
-                session.execute(
-                    select(func.count())
-                    .select_from(models.Submission)
-                    .where(
-                        models.Submission.hotkey == hotkey,
-                        models.Submission.state.in_([s.value for s in PENDING]),
-                    )
-                ).scalar_one()
-            )
-            return pending < slots, slots, pending
-
     def queue_depth(self) -> int:
         # How many submissions are queued or being verified.
         with session_scope(self._sessions) as session:
@@ -416,6 +447,22 @@ class SubmissionsDb:
             for row in rows:
                 session.expunge(row)
             return list(rows)
+
+    def evidence_key(self, slot: str = "add") -> tuple[tuple[int, float, str], ...]:
+        # What admission's decisions depend on, read without the rounds: each comparable accepted
+        # submission's id, ratio and verdict time (a re-verification moves the time).
+        where = self._comparable(slot)
+        with session_scope(self._sessions) as session:
+            rows = session.execute(
+                select(
+                    models.Submission.id,
+                    models.Submission.ratio,
+                    models.Submission.finished_at,
+                )
+                .where(*where)
+                .order_by(models.Submission.id)
+            ).all()
+            return tuple((int(i), float(r or 0.0), str(f)) for i, r, f in rows)
 
     def leaderboard(self, slot: str = "add") -> list[models.Submission]:
         # Each hotkey's best comparable accepted ratio, fastest first, ties earlier.

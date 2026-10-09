@@ -196,6 +196,47 @@ def test_a_claim_committed_after_the_snapshot_is_no_slot_not_a_crash(store, data
     assert claims(store) == [(reg, rival)]
 
 
+def test_two_api_processes_cannot_queue_two_entries_on_one_registration(store, database_url):
+    # Each round, two stores race to queue different files for one free registration: one wins.
+    from db.submissions import QueueFull
+
+    for round_ in range(10):
+        hotkey = f"racer{round_}"
+        register(store, hotkey, uid=100 + round_, block=2000 + round_)
+        stores = [store_pkg.connect(database_url) for _ in range(2)]
+        barrier = threading.Barrier(2)
+        outcomes: list[str] = []
+
+        def send(i: int, hotkey: str = hotkey) -> None:
+            barrier.wait()
+            try:
+                stores[i].submissions.enqueue(hotkey, f"{round_}{i}".ljust(64, "a"), "full", b"x")
+                outcomes.append("queued")
+            except QueueFull:
+                outcomes.append("full")
+
+        threads = [threading.Thread(target=send, args=(i,)) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        for s in stores:
+            s.close()
+        assert sorted(outcomes) == ["full", "queued"], f"round {round_}: {outcomes}"
+
+
+def test_a_retry_of_a_queued_file_is_answered_even_with_no_registration_free(
+    client, store, tmp_path
+):
+    # The same file again is the same submission, not a second claim on a registration.
+    register(store, ALICE.ss58_address)
+    path = kernel_file(tmp_path, "a", "RATIO=0.9")
+    first = post_submission(client, ALICE, path).json()
+    again = post_submission(client, ALICE, path)
+    assert again.status_code == 200
+    assert again.json()["submission"] == first["submission"] and again.json()["created"] is False
+
+
 def test_the_database_itself_refuses_a_double_spend(store):
     # Belt and braces: even a direct insert cannot spend one registration twice.
     reg = register(store, ALICE.ss58_address)
