@@ -153,7 +153,7 @@ def test_rejected_submission_is_reported_not_ranked(client, store, drain, tmp_pa
 
 
 def test_validator_error_stops_the_worker_and_blames_nobody(client, store, drain, tmp_path):
-    # Exit 2 is the validator's fault: requeued untouched, and the drain stops for an operator.
+    # Exit 2 is the validator's fault: requeued uncharged, and the drain stops for an operator.
     enrol(store, ALICE, BOB)
     ida = post_submission(client, ALICE, kernel_file(tmp_path, "a", "MISCONFIGURED")).json()[
         "submission"
@@ -166,17 +166,24 @@ def test_validator_error_stops_the_worker_and_blames_nobody(client, store, drain
     assert client.get(f"{api()}/submissions/{idb}").json()["state"] == "queued"
 
 
-def test_a_gate_crash_without_a_verdict_is_retried_without_limit(
+def test_a_gate_run_without_a_verdict_is_retried_up_to_the_cap(
     client, store, settings, drain, tmp_path
 ):
-    # No verdict means the gate failed before reaching the submission: never counted against it.
-    enrol(store, ALICE)
-    sid = post_submission(client, ALICE, kernel_file(tmp_path, "a", "MISCONFIGURED")).json()[
-        "submission"
-    ]
-    for _ in range(settings.max_gate_errors + 2):
+    # No verdict counts like a crash, so nothing is retried forever: at the cap it ends in error.
+    enrol(store, ALICE, slots=1)
+    d = kernel_file(tmp_path, "a", "MISCONFIGURED")
+    sid = post_submission(client, ALICE, d).json()["submission"]
+    for attempt in range(1, settings.max_gate_errors):
         assert drain() == 0
-    assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "queued"
+        assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "queued"
+        assert store.submissions.get(sid).gate_errors == attempt
+    assert drain() == 0
+    s = client.get(f"{api()}/submissions/{sid}").json()
+    assert s["state"] == "error" and s["exit_code"] == 2
+    assert store.registrations.available_slots(ALICE.ss58_address) == 1
+    # Sending the same file again puts it back in the queue with a fresh count.
+    again = post_submission(client, ALICE, d).json()
+    assert again["submission"] == sid and again["state"] == "queued"
     assert store.submissions.get(sid).gate_errors == 0
 
 

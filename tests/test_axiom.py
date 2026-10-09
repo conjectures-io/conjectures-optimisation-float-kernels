@@ -268,7 +268,7 @@ def test_a_claim_and_its_verdict_are_reported(client, store, drain, tmp_path):
     assert verdict["severity"] == "info" and verdict["stage"] == "score"
 
 
-def test_a_validator_error_is_an_error_and_the_submission_goes_back(client, store, drain, tmp_path):
+def test_a_validator_error_is_an_error_and_counts_toward_the_cap(client, store, drain, tmp_path):
     capture = Capture()
     axiom.init("competition-gate-worker", client=axiom_client(capture))
     register(store, ALICE.ss58_address)
@@ -276,4 +276,5 @@ def test_a_validator_error_is_an_error_and_the_submission_goes_back(client, stor
     drain()
     records = flushed(capture)
     assert of_type(records, "gate_validator_error")[0]["severity"] == "error"
-    assert of_type(records, "submission_requeued")[0]["severity"] == "warning"
+    (verdict,) = of_type(records, "gate_verdict")
+    assert verdict["severity"] == "error" and verdict["state"] == "queued"
