@@ -111,15 +111,14 @@ class SubmissionsDb:
             session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(hotkey, 0))))
             slots = _available_slots(session, hotkey)
             existing = session.execute(
-                select(models.Submission.id).where(
+                select(models.Submission)
+                .where(
                     models.Submission.hotkey == hotkey,
                     models.Submission.slot == slot,
                     models.Submission.digest == digest,
                 )
+                .with_for_update()
             ).scalar_one_or_none()
-            if existing is not None:
-                # A retry of the same file is the same submission, even with no registration left.
-                return int(existing), False, slots
             pending = int(
                 session.execute(
                     select(func.count())
@@ -130,6 +129,17 @@ class SubmissionsDb:
                     )
                 ).scalar_one()
             )
+            if existing is not None:
+                # A retry of the same file is the same submission, even with no registration left;
+                # one the gate gave up on goes back in the queue when the hotkey can pay for it.
+                if existing.state == SubmissionState.ERROR.value and pending < slots:
+                    existing.state = SubmissionState.QUEUED.value
+                    existing.gate_errors = 0
+                    existing.submitted_at = clock.now()
+                    existing.exit_code = existing.stage = existing.reason = None
+                    existing.finished_at = None
+                    logger.info(f"[submissions] submission {existing.id} resent after an error")
+                return int(existing.id), False, slots
             if pending >= slots:
                 raise QueueFull(slots, pending)
             row = models.Submission(
@@ -206,6 +216,15 @@ class SubmissionsDb:
                     )
                     return SubmissionState.REJECTED.value
                 logger.info(f"[submissions] submission {sub_id} spent registration {registration}")
+                if promote:
+                    # One promotion per slot at a time: two winners can't replace one champion.
+                    session.execute(
+                        select(
+                            func.pg_advisory_xact_lock(
+                                func.hashtextextended(f"promote:{row.slot}", 0)
+                            )
+                        )
+                    )
                 promoted = session.execute(
                     select(models.Promotion.id).where(models.Promotion.submission_id == sub_id)
                 ).first()
@@ -232,25 +251,6 @@ class SubmissionsDb:
             row.state = state.value
             return state.value
 
-    def requeue(self, sub_id: int, *, expected_attempt: str | None = None) -> None:
-        # Requeue without charging: the gate hit a validator-side error, not the miner's.
-        with session_scope(self._sessions) as session:
-            session.execute(
-                update(models.Submission)
-                .where(
-                    models.Submission.id == sub_id,
-                    models.Submission.verification_attempt == expected_attempt
-                    if expected_attempt is not None
-                    else True,
-                )
-                .values(
-                    verification_attempt=None,
-                    state=SubmissionState.QUEUED.value,
-                    worker_id=None,
-                    claimed_at=None,
-                )
-            )
-
     def gate_crashed(
         self,
         sub_id: int,
@@ -259,8 +259,8 @@ class SubmissionsDb:
         expected_attempt: str | None = None,
         **fields: object,
     ) -> str:
-        # The gate crashed on this submission: requeue it, or at `max_errors` end it in `error` with
-        # the gate's verdict, uncharged either way, and return the new state.
+        # The gate crashed or gave no verdict: requeue the submission, or at `max_errors` end it in
+        # `error` with whatever the gate recorded, uncharged either way, and return the new state.
         unknown = set(fields) - SCORE_FIELDS
         if unknown:
             raise ValueError(f"not submission columns: {sorted(unknown)}")

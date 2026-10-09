@@ -140,8 +140,8 @@ def run_gate(
 
 
 def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> str:
-    # Gate one claimed submission: no verdict requeues it uncharged, and a verdict with an undefined
-    # exit (a stage crashed on it) counts toward the error cap.
+    # Gate one claimed submission: a run with no verdict or an undefined exit counts toward the
+    # error cap, uncharged, so nothing is retried forever.
     logger.info(f"[worker] verifying submission {sub.id} slot={sub.slot} ({sub.hotkey[:8]}…)")
     events = get_events()
     who = {"submission_id": sub.id, "hotkey": sub.hotkey, "slot": sub.slot}
@@ -167,29 +167,21 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             exit_code=result.returncode,
             error=result.stderr[-1500:] or result.stdout[-1500:],
         )
-        if not fields:
-            store.submissions.requeue(sub.id, expected_attempt=sub.verification_attempt)
-            events.warning(
-                "submission_requeued",
-                submission_id=sub.id,
-                reason=f"validator error (exit {result.returncode}), no verdict",
-            )
-        else:
-            state_now = store.submissions.gate_crashed(
-                sub.id,
-                max_errors=settings.max_gate_errors,
-                expected_attempt=sub.verification_attempt,
-                exit_code=result.returncode,
-                **fields,
-            )
-            events.error(
-                "gate_verdict",
-                **who,
-                state=state_now,
-                stage=fields.get("stage"),
-                reason=fields.get("reason"),
-                exit_code=result.returncode,
-            )
+        state_now = store.submissions.gate_crashed(
+            sub.id,
+            max_errors=settings.max_gate_errors,
+            expected_attempt=sub.verification_attempt,
+            exit_code=result.returncode,
+            **fields,
+        )
+        events.error(
+            "gate_verdict",
+            **who,
+            state=state_now,
+            stage=fields.get("stage"),
+            reason=fields.get("reason") or f"no verdict (exit {result.returncode})",
+            exit_code=result.returncode,
+        )
         return SubmissionState.ERROR.value
 
     promote = state is SubmissionState.ACCEPTED and beats_champion(sub, fields)

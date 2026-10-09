@@ -27,6 +27,8 @@ BUILD = LIB / ".lake" / "build"
 CONFIG = LIB / ".lake" / "config"
 SCRATCH = HERE / ".sandbox" / "config"
 LAYER = HERE / ".sandbox" / "layer"
+# The throwaway layer a champion's bench is built in: a miner's file, so never in the shared tree.
+PIN_LAYER = HERE / ".sandbox" / "pin"
 # Build outputs a submission may write, by file stem: its module, the gates, the bench binaries.
 OWN_STEMS = {"Submission", "Verify", "Main", "bench"}
 for _op in ("Mul", "Fma", "Div", "Sqrt", "Sum", "Bmm", "Full"):
@@ -279,6 +281,7 @@ def run(
     build: str = "",
     env_extra: dict | None = None,
     memory_mb: int = _BUILD_MEMORY_MB,
+    layer: Path = LAYER,
 ):
     # Runs `cmd` in bwrap with no network, a minimal environment and a `memory_mb` scope, HOME and
     # the repo root hidden behind tmpfs and only the toolchain, the Lean workspace and `pinned`
@@ -296,7 +299,7 @@ def run(
     if build == "trusted":
         box += ["--bind", str(BUILD), str(BUILD)]
     elif build == "write":
-        box += ["--overlay-src", str(BUILD), "--overlay", str(LAYER / "upper"), str(LAYER / "work")]
+        box += ["--overlay-src", str(BUILD), "--overlay", str(layer / "upper"), str(layer / "work")]
         box += [str(BUILD)]
     elif build == "read":
         box += ["--overlay-src", str(BUILD), "--overlay-src", str(LAYER / "upper")]
@@ -406,17 +409,49 @@ def pin(slot: Slot) -> str:
     stamp = slot.pinned.with_name("inputs.sha256")
     if not slot.pinned.exists() or not stamp.exists() or stamp.read_text() != inputs:
         logger.info(f"[pin] building {slot.bench} from {slot.incumbent}, inputs {inputs[:16]}")
+        shipped = KERNELS / slot.name / "incumbent" / "Kernel.lean"
         WORK.parent.mkdir(exist_ok=True)
-        shutil.copy2(slot.incumbent, WORK)
+        # The shared build tree is refreshed from operator code only: the shipped incumbent.
+        shutil.copy2(shipped, WORK)
         code, out = run([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="trusted")
         if code != 0:
-            raise RuntimeError(f"the {slot.name} incumbent bench does not build: {errors(out)}")
+            raise RuntimeError(
+                f"the {slot.name} shipped incumbent bench does not build: {errors(out)}"
+            )
         slot.pinned.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(BUILD / "bin" / slot.bench, slot.pinned)
+        if slot.incumbent.resolve() == shipped.resolve():
+            shutil.copy2(BUILD / "bin" / slot.bench, slot.pinned)
+        else:
+            try:
+                shutil.copy2(champion_bench(slot), slot.pinned)
+            finally:
+                wipe(PIN_LAYER)
         stamp.write_text(inputs)
     digest = hashlib.sha256(slot.pinned.read_bytes()).hexdigest()
     logger.info(f"[pin] {slot.name} incumbent {slot.pinned} sha256={digest[:16]}")
     return digest
+
+
+def champion_bench(slot: Slot) -> Path:
+    # Builds a champion's bench, a miner's file, in a throwaway layer under the same checks as an
+    # entry's build, and returns the binary as the layered build tree shows it.
+    wipe(PIN_LAYER)
+    (PIN_LAYER / "upper").mkdir(parents=True)
+    (PIN_LAYER / "work").mkdir()
+    shutil.copy2(slot.incumbent, WORK)
+    code, out = run([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="write", layer=PIN_LAYER)
+    if code != 0:
+        raise RuntimeError(f"the {slot.name} champion bench does not build: {errors(out, code)}")
+    if not _SANDBOX:
+        return BUILD / "bin" / slot.bench
+    upper = PIN_LAYER / "upper"
+    if bad := foreign(upper):
+        raise RuntimeError(f"the {slot.name} champion build wrote outside its modules: {bad[:5]}")
+    if _BUILD_DISK_MB > 0 and disk_mb(upper) > _BUILD_DISK_MB:
+        raise RuntimeError(f"the {slot.name} champion build wrote over {_BUILD_DISK_MB} MB")
+    # Lake writes nothing when the champion is the file the shared tree was just built from.
+    built = upper / "bin" / slot.bench
+    return built if built.exists() else BUILD / "bin" / slot.bench
 
 
 # ── Stages ───────────────────────────────────────────────────

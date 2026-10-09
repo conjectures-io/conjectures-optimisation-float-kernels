@@ -10,12 +10,12 @@ class SubmissionState(StrEnum):
     QUEUED = "queued"
     # Claimed; gate.py is running against it.
     VERIFYING = "verifying"
-    # Gate exit 0: proven and scored; the only state that spends a registration.
+    # Gate exit 0: proven and scored; it spends the entry's registration.
     ACCEPTED = "accepted"
-    # Gate exit 1: the submission was refused, and a corrected one may be sent for free.
+    # Gate exit 1: the submission was refused; it spends the entry's registration too.
     REJECTED = "rejected"
-    # The gate crashed on this submission SERVICE_MAX_GATE_ERRORS times, so it is given up uncharged
-    # (fewer crashes, or no verdict, requeue it instead).
+    # The gate crashed or gave no verdict on this submission SERVICE_MAX_GATE_ERRORS times, so it is
+    # given up uncharged (fewer times requeue it instead).
     ERROR = "error"
 
 
