@@ -134,7 +134,7 @@ directory itself and names them `floatlib-*`, so they sit beside another competi
 | `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is the full entry; `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm` the practice boards): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`; plus `GET /health`, `GET /ready` (example responses in MANUAL section 12) |
 | `floatlib-gate-worker` (`python -m service.worker`) | claims queued submissions oldest first, writes their `Kernel.lean` from the store, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission the gate crashes on `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`; at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
 | `floatlib-chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
-| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose admitted leader takes the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and records the vector, its per-hotkey lines and the published snapshot; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
+| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose admitted leader takes the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and publishes changed results, reusing unchanged snapshots; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
 
 **Weights.** The vector is the whole validator's, as in the DEFLATE competition
 (`validator/treasury.py`): the treasury, uid 121 on netuid 66, takes 80%; the competition's 20% goes
@@ -149,6 +149,19 @@ Only one process may set weights per validator hotkey, and two would overwrite e
 every epoch, so turn it off only once it is decided which competition's weight setter submits on
 SN66. **Pausing a round** is `WEIGHT_BURN_MODE=1`: the competition's share burns to
 `WEIGHT_BURN_UID` (default 121, the treasury itself) and the treasury is paid as usual.
+
+**Snapshot storage:** unchanged polls reuse the latest stored publication, even after a restart.
+Changes to scoring, policy, the vector, dry-run mode or submission state publish a new snapshot.
+Every actual chain submission gets its own history row. The original publication time and
+chain outcome are preserved when an idle poll reuses it.
+
+The weight setter checks for expired API payloads every 60 seconds, clearing up to 10 per
+batch after one hour. It always keeps the latest valid snapshot per subnet, even when older.
+Only `api_snapshot` is cleared; weight-set rows and score history remain. Configure this with
+`API_SNAPSHOT_RETENTION_SECONDS`, `API_SNAPSHOT_CLEANUP_INTERVAL_SECONDS` and
+`API_SNAPSHOT_CLEANUP_BATCH_SIZE`. Cleanup failures are logged and retried independently of
+weight setting. Consumers must handle an expired snapshot by restarting pagination.
+Apply migration 0013 before restarting the weight setter. No gate rebuild is needed.
 
 **Changing the verifier** does not retire accepted verdicts or stop scoring. Fingerprints
 and incumbent hashes are informational provenance. The gate worker records observed hashes

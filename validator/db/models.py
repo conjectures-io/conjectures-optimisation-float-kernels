@@ -182,13 +182,30 @@ class WeightSet(Base):
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    scoring_content_sha256: Mapped[str | None] = mapped_column(Text)
     # The scoring this vector was computed from, as the platform publishes it (reward.py).
     api_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    __table_args__ = (Index("ix_weight_sets_created_at", "created_at"),)
+    __table_args__ = (
+        Index("ix_weight_sets_created_at", "created_at"),
+        Index("ix_weight_sets_netuid_id", "netuid", "id"),
+        Index(
+            "ix_weight_sets_snapshot_latest",
+            "netuid",
+            "id",
+            postgresql_where=api_snapshot.is_not(None),
+        ),
+        Index(
+            "ix_weight_sets_snapshot_expiry",
+            "netuid",
+            "created_at",
+            "id",
+            postgresql_where=api_snapshot.is_not(None),
+        ),
+    )
 
 
 class ScoreSnapshot(Base):
