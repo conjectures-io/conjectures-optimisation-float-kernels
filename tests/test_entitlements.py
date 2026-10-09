@@ -1,4 +1,4 @@
-"""One registration buys one accepted submission, even when two acceptances race."""
+"""One registration buys one entry, accepted or rejected, even when two acceptances race."""
 
 from __future__ import annotations
 
@@ -77,21 +77,21 @@ def test_acceptance_spends_a_slot(client, store, drain, tmp_path):
     assert store.registrations.available_slots(ALICE.ss58_address) == 0
 
 
-def test_rejection_is_a_free_retry(client, store, drain, tmp_path):
-    register(store, ALICE.ss58_address)
-    post_submission(client, ALICE, kernel_file(tmp_path, "bad", "REJECT"))
+def test_a_rejection_spends_the_registration(client, store, drain, tmp_path):
+    # One registration buys one entry, whatever its verdict, so the next one needs another.
+    reg = register(store, ALICE.ss58_address)
+    sid = post_submission(client, ALICE, kernel_file(tmp_path, "bad", "REJECT")).json()[
+        "submission"
+    ]
     drain()
-    assert claims(store) == []
-    assert store.registrations.available_slots(ALICE.ss58_address) == 1
-    # And the corrected submission goes through on the same registration.
-    good = post_submission(client, ALICE, kernel_file(tmp_path, "good", "RATIO=0.92"))
-    assert good.status_code == 200
-    drain()
-    assert len(claims(store)) == 1
+    assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "rejected"
+    assert claims(store) == [(reg, sid)]
+    assert store.registrations.available_slots(ALICE.ss58_address) == 0
+    assert post_submission(client, ALICE, kernel_file(tmp_path, "good")).status_code == 402
 
 
 def test_exhausting_the_gate_is_a_charged_rejection(client, store, drain, tmp_path):
-    # An entry that runs out of its time budget or over a memory cap held the gate: no free retry.
+    # An entry that runs out of its time budget or over a memory cap is charged like any rejection.
     reg = register(store, ALICE.ss58_address)
     r = post_submission(client, ALICE, kernel_file(tmp_path, "slow", "EXHAUSTED"))
     sid = r.json()["submission"]
