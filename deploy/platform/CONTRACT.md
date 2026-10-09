@@ -31,7 +31,7 @@ On the FloatLib host:
 ```bash
 set -a; . ./.env; set +a                 # PLATFORM_API_PASSWORD, and COMPOSE_FILE with the overlay
 docker compose up -d db                  # joins ${PLATFORM_NETWORK:-conjectures-api_default}
-docker compose up migrate                # head: 0015
+docker compose up migrate                # head: 0016
 deploy/platform/grant.sh                 # creates/rotates platform_api, resets its grants
 ```
 
@@ -75,11 +75,12 @@ migration `0006` on.
 
 ### `promotions`
 
-`(id, slot, submission_id, champion_sha256, promoted_at)`, one row per submission that became its slot's champion
+`(id, slot, submission_id, champion_sha256, promoted_at, failures, demoted_at)`, one row per submission that became its slot's champion
 (`submission_id` unique, `champion_sha256` its `Kernel.lean` digest, index `ix_promotions_slot_id`). The gate
 worker inserts it in the same transaction as the verdict, when an accepted entry timed against the current champion
 has a ratio at or below `promotion_bar` and a positive 5th-percentile bootstrapped gain. A slot's champion is its
-latest promotion; with none, the shipped champion holds. `platform_api` has no grant on it: the published snapshot
+latest promotion not demoted; with none, the shipped champion holds. `failures` counts gate runs in which the
+champion's own bench failed; at 3 it is demoted (`demoted_at`, migration 0016). `platform_api` has no grant on it: the published snapshot
 names the champion as `leader`.
 
 ### Scoring
@@ -166,7 +167,7 @@ and `routes.py`:
 ## What this repository provides
 
 - Migration `0006`: `submission_files`, `submissions.report`, `submissions.account_id`, `weight_sets.api_snapshot`;
-  migrations up to `0014` for slots, provenance, snapshot retention and `champion_sha256`; `0015` for `promotions`.
+  migrations up to `0014` for slots, provenance, snapshot retention and `champion_sha256`; `0015` for `promotions`; `0016` for champion failures and demotion.
 - The gate worker reads `Kernel.lean` from `submission_files`.
 - `platform_api.sql`, `grant.sh`, the compose overlay, and `tests/test_platform_grants.py`.
 - The platform's signed message and request shape, in the miner client and in this repository's own API.

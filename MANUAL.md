@@ -432,6 +432,8 @@ file over 256,000 bytes; 429 past the rate limit.
 **Round rules:**
 - **Every entry is timed against the current champion,** the best submission so far in its slot; for the full entry, `kernels/full/incumbent` until a submission beats it.
 - **Promotion is automatic: beat the champion by 3%, with evidence.** An accepted entry becomes the new champion when its ratio is 0.97 or lower *and* its 5th-percentile bootstrapped gain over the champion is positive. The gate records every round's paired champion and submission timings, and the validator bootstraps them (2000 draws, a seed derived from the timings themselves, so every validator agrees). So a copy of the champion, or the same kernel with one lucky round, is never promoted; a genuinely faster kernel is, and the next entry must beat it by 3%. The one-hour timing study shows noise under 1% per run, so 3% leaves margin. This is the admission test the DEFLATE competition uses.
+- **A champion whose own bench fails is demoted.** If the champion's timing run crashes, runs out of time or goes over a memory cap while it is timed against your entry, that is never your entry's fault: it goes back in the queue, uncharged. A champion that fails in 3 gate runs is demoted, and the champion before it holds again.
+- **A panic ends your bench.** Benches run with `LEAN_ABORT_ON_PANIC=1`, so a `panic!` your kernel reaches rejects the entry.
 - **Emission:** as in the DEFLATE competition, the validator's treasury takes 80% and the competition 20%; the full entry's champion's author receives the competition's share, and while the shipped champion holds, it goes to the treasury.
 
 ## 13. The other slots: multiplication, fused multiply-add, division and square root
