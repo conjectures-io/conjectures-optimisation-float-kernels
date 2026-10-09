@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import shutil
 from pathlib import Path
@@ -232,6 +233,23 @@ def test_a_gate_that_never_finishes_is_a_rejection(client, store, drain, tmp_pat
     s = client.get(f"{api()}/submissions/{sid}").json()
     assert s["state"] == "rejected" and s["stage"] == "timeout"
     assert "did not finish within" in s["reason"]
+    # The worker's own timeout verdict has no provenance, so it records no false drift.
+    with store.engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT count(*) FROM observed_states")).scalar() == 0
+
+
+def test_a_busy_gate_leaves_the_submission_queued_not_rejected(client, store, drain, tmp_path):
+    # An operator run holding the gate claims nothing, so waiting never eats a submission's time.
+    enrol(store, ALICE)
+    sid = post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.8")).json()[
+        "submission"
+    ]
+    with open(worker.GATE_LOCK, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        assert drain() == 0
+        assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "queued"
+    assert drain() == 1
+    assert client.get(f"{api()}/submissions/{sid}").json()["state"] == "accepted"
 
 
 def test_a_worker_that_died_mid_gate_is_reclaimed(client, store, settings, drain, tmp_path, clock):

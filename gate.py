@@ -617,7 +617,9 @@ def main() -> int:
     results.mkdir(exist_ok=True)
     failed, broken = 0, False
     with open(HERE / "gate.lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        # The worker takes the lock before claiming a submission and says so; any other run waits.
+        if os.environ.get("GATE_LOCK_HELD") != "1":
+            fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             check_limits()
             digest = pin(SLOTS[slot])

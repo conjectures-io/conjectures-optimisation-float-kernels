@@ -180,6 +180,7 @@ def stub_gate(tmp_path, monkeypatch):
     path = tmp_path / "gate.py"
     path.write_text(STUB_GATE)
     monkeypatch.setattr(worker_mod, "GATE", path)
+    monkeypatch.setattr(worker_mod, "GATE_LOCK", tmp_path / "gate.lock")
     return path
 
 

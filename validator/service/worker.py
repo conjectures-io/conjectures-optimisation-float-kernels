@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
@@ -9,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -25,6 +28,8 @@ from .settings import Settings, load
 
 VALIDATOR = Path(__file__).resolve().parent.parent
 GATE = VALIDATOR.parent / "gate.py"
+# The lock gate.py takes for every run: the worker holds it from before a claim to the verdict.
+GATE_LOCK = VALIDATOR.parent / "gate.lock"
 
 # The whole gate, every stage; a typical run takes under a minute.
 TOTAL_TIMEOUT = float(os.environ.get("VERIFY_TOTAL_TIMEOUT", "1800"))
@@ -83,7 +88,7 @@ def run_gate(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=dict(os.environ),
+        env={**os.environ, "GATE_LOCK_HELD": "1"},
         start_new_session=True,
     ) as process:
         try:
@@ -170,7 +175,9 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
         "incumbent_sha256": fields.get("incumbent_sha256"),
         "champion_sha256": fields.get("champion_sha256"),
     }
-    observe(store.sessions, sub.slot, provenance)
+    if any(provenance.values()):
+        # A verdict written by the worker itself (a timeout) carries no provenance to observe.
+        observe(store.sessions, sub.slot, provenance)
     end = json.loads(str(fields["report"])).get("verifier_fingerprint_end")
     if end and end != provenance["verifier_fingerprint"]:
         # Forward a mid-run transition even on the first observation in this database.
@@ -197,21 +204,43 @@ def drain(store: db.Store, settings: Settings) -> int:
     return _drain(store, settings)[0]
 
 
+@contextmanager
+def gate_slot() -> Iterator[bool]:
+    # The gate's lock, taken without waiting: False while an operator run or another worker has it.
+    with open(GATE_LOCK, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def _drain(store: db.Store, settings: Settings) -> tuple[int, bool]:
-    # `drain`, also saying whether it stopped on a validator error.
+    # `drain`, also saying whether it stopped on a validator error; a busy gate claims nothing, so
+    # waiting for it never counts against a submission's time limit.
     done = 0
-    while (sub := store.submissions.claim_next(settings.worker_id)) is not None:
-        get_events().info(
-            "submission_claimed",
-            submission_id=sub.id,
-            hotkey=sub.hotkey,
-            slot=sub.slot,
-            worker_id=settings.worker_id,
-        )
-        if score_one(store, settings, sub) == SubmissionState.ERROR.value:
-            return done, True
+    while True:
+        with gate_slot() as free:
+            if not free:
+                logger.debug("[worker] the gate is busy (an operator run or another worker)")
+                return done, False
+            sub = store.submissions.claim_next(settings.worker_id)
+            if sub is None:
+                return done, False
+            get_events().info(
+                "submission_claimed",
+                submission_id=sub.id,
+                hotkey=sub.hotkey,
+                slot=sub.slot,
+                worker_id=settings.worker_id,
+            )
+            if score_one(store, settings, sub) == SubmissionState.ERROR.value:
+                return done, True
         done += 1
-    return done, False
 
 
 def sweep(store: db.Store, settings: Settings) -> None:
