@@ -8,7 +8,7 @@ select = ["E", "W", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 # The evidence report is Markdown built line by line; wrapping its table rows would hurt more than it helps.
-"tools/evidence.py" = ["E501"]
+"validator/tools/evidence.py" = ["E501"]
 # Alembic autogenerate writes long SQL constraint strings; they are compared, not hand-edited.
 "deploy/migrate/alembic/versions/*.py" = ["E501"]
 

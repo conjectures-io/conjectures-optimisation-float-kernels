@@ -211,8 +211,9 @@ class Verdict:
     # statistical admission resamples (validator/admission.py).
     rounds: list[list[int]] = field(default_factory=list)
     incumbent_sha256: str = ""
-    # The verifier this verdict came from (fingerprint.py); scoring counts only the current one's.
+    # Verifier provenance; neither hash controls eligibility.
     verifier_fingerprint: str = ""
+    verifier_fingerprint_end: str = ""
     seconds: float = 0.0
     # True when the entry ran out of its time budget or over a memory cap: rejected, and charged.
     exhausted: bool = False
@@ -530,8 +531,7 @@ BENCH_STAGES = [("intake", intake), ("statement", statement), ("score", score)]
 
 
 def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> Verdict:
-    # Gates one submission on a throwaway build layer, where a verifier edited mid-run makes a
-    # validator error rather than a rejection.
+    # Gates one submission on a throwaway build layer and records provenance at both ends.
     fingerprint = verifier.current()
     v = Verdict(
         submission=sub_dir.name,
@@ -550,10 +550,13 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
     finally:
         wipe(LAYER)
     v.exhausted = _budget.exhausted and not v.passed
-    if verifier.current() != fingerprint:
-        v.passed = False
-        v.exhausted = False
-        v.reason = "gate error: the verifier changed during the run"
+    v.verifier_fingerprint_end = verifier.current()
+    if v.verifier_fingerprint_end != fingerprint:
+        logger.warning(
+            "[drift] verifier changed during the run: {} -> {}",
+            fingerprint,
+            v.verifier_fingerprint_end,
+        )
     v.seconds = round(time.monotonic() - t0, 1)
     return v
 

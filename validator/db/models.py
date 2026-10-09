@@ -86,9 +86,9 @@ class Submission(Base):
     # Per round, [incumbent ns, submission ns] over the timed classes: admission's evidence.
     rounds: Mapped[list[list[float]] | None] = mapped_column(JSONB)
     seed: Mapped[int | None] = mapped_column(BigInteger)
-    # The incumbent the ratio was measured against; ratios compare only within one incumbent.
+    # The incumbent used for this measurement; informational provenance.
     incumbent_sha256: Mapped[str | None] = mapped_column(Text)
-    # The verifier the verdict came from (fingerprint.py); only the current one's verdicts score.
+    # The verifier the verdict came from; informational provenance.
     verifier_fingerprint: Mapped[str | None] = mapped_column(Text)
     gate_seconds: Mapped[float | None] = mapped_column(Float)
     # The gate's verdict JSON in full: what a miner reads to see why, and what the platform serves.
@@ -223,3 +223,11 @@ class RateLimitWindow(Base):
     hits: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     __table_args__ = (Index("ix_rate_limit_windows_window_start", "window_start"),)
+
+
+class ObservedState(Base):
+    """Last observed gate provenance per slot, surviving worker restarts."""
+
+    __tablename__ = "observed_states"
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    details: Mapped[dict] = mapped_column(JSONB)

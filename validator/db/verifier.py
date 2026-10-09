@@ -19,5 +19,5 @@ def _load():
 
 
 def required_fingerprint() -> str:
-    # What scoring accepts: this checkout's verifier, or GATE_REQUIRED_FINGERPRINT.
+    # Informational reference, or GATE_REQUIRED_FINGERPRINT for a remote API host.
     return str(_load().required())

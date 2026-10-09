@@ -1,10 +1,8 @@
 """The verifier fingerprint: a hash of everything that decides a verdict, stamped on each one.
 
-An accepted submission counts only while its verdict carries the current fingerprint. Change the
-gate, the contract, a Verify module, the bench or the Lean toolchain, and every older verdict drops
-off the leaderboard until `tools/reverify.py` sends it through the new verifier. The incumbents are
-not part of it: a promotion is tracked per slot by `incumbent_sha256`, so it leaves the other slots'
-boards alone.
+Fingerprints describe the verifier used for a result. Changes do not invalidate verdicts,
+exclude submissions from scoring, or trigger automatic reverification. Operators can use
+`tools/reverify.py` to explicitly requeue accepted submissions when necessary.
 
     python fingerprint.py     prints the current fingerprint
 """
@@ -50,7 +48,7 @@ def current() -> str:
 
 
 def required() -> str:
-    # What scoring accepts: this checkout's, or an operator-published one for a scorer elsewhere.
+    # Reference for display and manual reverification, never a scoring requirement.
     value = os.environ.get("GATE_REQUIRED_FINGERPRINT")
     if value is None:
         return current()

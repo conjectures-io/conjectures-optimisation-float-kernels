@@ -18,6 +18,7 @@ import db
 import log
 from axiom import config_error, get_events, init
 from db import SubmissionState, models
+from db.drift import observe
 
 from . import storage
 from .settings import Settings, load
@@ -163,6 +164,15 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
         exit_code=result.returncode,
         **fields,
     )
+    provenance = {
+        "verifier_fingerprint": fields.get("verifier_fingerprint"),
+        "incumbent_sha256": fields.get("incumbent_sha256"),
+    }
+    observe(store.sessions, sub.slot, provenance)
+    end = json.loads(str(fields["report"])).get("verifier_fingerprint_end")
+    if end and end != provenance["verifier_fingerprint"]:
+        # Forward a mid-run transition even on the first observation in this database.
+        observe(store.sessions, sub.slot, {**provenance, "verifier_fingerprint": end})
     events.emit(
         "info" if final == SubmissionState.ACCEPTED.value else "warning",
         "gate_verdict",
