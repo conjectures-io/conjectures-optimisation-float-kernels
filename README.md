@@ -177,9 +177,15 @@ its registration. While deliberately requeued, a submission is temporarily off t
 ```
 
 **Promoting a winner** is an operator step: copy the winning `Kernel.lean` somewhere stable, set
-`GATE_INCUMBENT` to it in `.env` (`GATE_INCUMBENT_MUL`, `GATE_INCUMBENT_FMA` for the other slots),
-and restart the gate worker. The gate rebuilds that slot's pinned binary under `pinned/<slot>/`
-on its next run. Existing ratios stay eligible; decide explicitly whether to remeasure them.
+`GATE_INCUMBENT_<SLOT>` to it in `.env` (`GATE_INCUMBENT_FULL` for the paid entry, plain
+`GATE_INCUMBENT` for `add`), and restart the gate worker. The gate rebuilds that slot's pinned
+binary under `pinned/<slot>/` on its next run. Every verdict records the champion's source hash
+(`champion_sha256`), and the board counts only ratios against the latest one, so the first verdict
+after a promotion starts a fresh board: older ratios were measured against a slower champion and are
+not comparable. Then run `validator/tools/reverify.py --slot full --apply`: it requeues the
+entries measured against the old champion, free, so they rejoin the board measured against the new
+one. A gate, contract or bench hotfix keeps the champion's source, so it keeps the board; the
+fingerprint and the incumbent binary's hash are provenance only.
 
 ### Serving through the conjectures platform
 
