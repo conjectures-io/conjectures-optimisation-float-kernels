@@ -129,7 +129,7 @@ $EDITOR .env                                # POSTGRES_PASSWORD, the validator w
 docker compose up -d db                     # Postgres 17 on 127.0.0.1:POSTGRES_PORT (default 5433)
 docker compose up migrate                   # alembic upgrade head
 pm2 start deploy/pm2.config.js              # the four floatlib-* processes below
-curl http://127.0.0.1:9300/health           # {"ok":true,"queued":0,"promotion_bar":0.97}
+curl http://127.0.0.1:9300/health           # {"ok":true,"queued":0,"promotion_bar":0.97,...}
 ```
 
 Each process runs from `validator/` (`cd validator && python -m service.api`); pm2 sets that
@@ -137,7 +137,7 @@ directory itself and names them `floatlib-*`, so they sit beside another competi
 
 | process | what it does |
 |---|---|
-| `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is the full entry; `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm` the practice boards): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`; plus `GET /health`, `GET /ready` (example responses in MANUAL section 12) |
+| `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is the full entry; `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm` the practice boards): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`, `GET …/champions`; plus `GET /health`, `GET /ready` (example responses in MANUAL section 12) |
 | `floatlib-gate-worker` (`python -m service.worker`) | takes the gate's lock first (while an operator run or another worker holds it, it claims nothing and waits), then claims queued submissions oldest first, writes their `Kernel.lean` from the store, points the gate at the slot's current champion, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report, promoting an entry that beats the champion; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission that hits one `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`, uncharged, so nothing is retried forever, and sending the same file again requeues it; when the champion's own bench fails, the entry is requeued uncounted and the champion is charged, and a champion that fails `SERVICE_MAX_GATE_ERRORS` times is demoted; at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
 | `floatlib-chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
 | `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose champion's author takes the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and publishes changed results, reusing unchanged snapshots; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |

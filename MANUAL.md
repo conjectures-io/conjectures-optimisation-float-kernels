@@ -375,8 +375,9 @@ Each slot is its own competition slug: `floatlib` is the full entry, `floatlib-a
 | `POST …/submissions` | one multipart part, `Kernel.lean`, and three headers: `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp` (unix seconds) and `X-Conjectures-Signature`, an sr25519 signature over the five lines `conjectures-competition-submit-v1` / `competition: <slug>` / `digest: <sha256(Kernel.lean)>` / `hotkey: <ss58>` / `timestamp: <seconds>` (`miner/sig.py`) |
 | `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed or gave no verdict on it three times: uncharged and worth reporting; send the same file again to retry), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed; the verdict still counts) |
 | `GET …/submissions/{id}/report` | the gate's full verdict JSON: every stage it reached and why it stopped |
-| `GET …/leaderboard` | the slot's board: the champion first (its ratio is against the champion it took over from), then every other hotkey's best accepted ratio against the current champion (`champion_sha256`), fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's outcome (`leader` for the champion, `qualifies`, `not-significant`, `above-bar`, `no-evidence`), `leader` the champion's submission id (null while the shipped champion holds), and `pays` whether this board pays its author (only the full entry's does) |
-| `GET /health` | liveness, queue length, the promotion bar |
+| `GET …/leaderboard` | the slot's board: the champion first (its ratio is against the champion it took over from), then every other hotkey's best accepted ratio against the current champion (`champion_sha256`), fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's outcome (`leader` for the champion, `qualifies`, `not-significant`, `above-bar`, `no-evidence`), `leader` the champion's submission id (null while the shipped champion holds), and `pays` whether this board pays its author (only the full entry's does); each row's `kernels` are its nanoseconds per operation per kernel (`add`, `mul`, `sum`, `bmm` on the full entry, the board's own kernel on a practice board), and the champion's row carries `promoted_at`, when it took over |
+| `GET …/champions` | every submission the board has promoted, newest first: `submission`, `hotkey`, `ratio` (against the champion it took over from), `promoted_at`, `demoted_at` (set only when its own bench failed too often) and `current`, true for the one champion now; a newer promotion supersedes a champion without demoting it, and a demotion hands the board back to the newest one before it not demoted |
+| `GET /health` | liveness, queue length, the promotion bar, the competition's share of the validator's emission as the latest published scoring applied it (`competition_share`, null before the first publication) and the admission bootstrap (`admission`: `draws`, `quantile`) |
 | `GET /ready` | the same plus `database`; 503 while the database is unreachable |
 
 What they return, from a live run before the champion was raised (an entry at 0.555 of the baseline it then had; hashes shortened):
@@ -405,10 +406,16 @@ GET  /v1/competitions/floatlib/leaderboard                  200
   {"slot": "full", "incumbent_sha256": "119f1106…", "verifier_fingerprint": "8f2a164a…",
    "promotion_bar": 0.97, "leader": 2, "pays": true,
    "ranking": [{"rank": 1, "submission": 2, "hotkey": "5Grw…", "ratio": 0.5552,
-                "qualifies": true, "admission": "leader", "submitted_at": "…"}]}
+                "qualifies": true, "admission": "leader", "submitted_at": "…",
+                "kernels": {"add": …, "mul": …, "sum": …, "bmm": …},
+                "promoted_at": "…"}]}
   (/v1/competitions/floatlib-add/leaderboard: the same shape, "slot": "add", "pays": false)
-GET  /health    200  {"ok": true, "queued": 0, "promotion_bar": 0.97}
-GET  /ready     200  {"ok": true, "queued": 0, "promotion_bar": 0.97, "database": true}
+GET  /v1/competitions/floatlib/champions                    200
+  [{"submission": 2, "hotkey": "5Grw…", "ratio": 0.5552, "promoted_at": "…",
+    "demoted_at": null, "current": true}]
+GET  /health    200  {"ok": true, "queued": 0, "promotion_bar": 0.97, "competition_share": 0.2,
+                      "admission": {"draws": 2000, "quantile": 0.05}}
+GET  /ready     200  the same, plus "database": true
 ```
 
 A refusal is a 4xx with one reason, `{"detail": {"reason": "…"}}`: 400 for a malformed hotkey,
