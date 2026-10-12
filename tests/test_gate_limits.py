@@ -126,6 +126,18 @@ def test_nothing_a_sandboxed_command_starts_outlives_it():
 
 
 @pytest.mark.skipif(not _sandbox_works(), reason="no working sandbox on this host")
+def test_a_run_cannot_leave_the_config_copy_unremovable():
+    # The config copy is writable in every run, so one that locks a dir in it must not stop the
+    # next run, the champion's bench included, from starting on a fresh copy.
+    cfg = gate.CONFIG
+    plant = f"mkdir -p {cfg}/x/y && touch {cfg}/x/y/f && chmod 000 {cfg}/x && echo planted"
+    code, out = gate.run(["sh", "-c", plant], 30)
+    assert code == 0 and "planted" in out
+    code, out = gate.run(["sh", "-c", f"[ -e {cfg}/x ] && echo stale || echo fresh"], 30)
+    assert code == 0 and "fresh" in out
+
+
+@pytest.mark.skipif(not _sandbox_works(), reason="no working sandbox on this host")
 def test_the_per_file_cap_bites_inside_the_real_sandbox(monkeypatch):
     # prlimit's file-size limit reaches through systemd-run and bwrap to whatever writes the file.
     monkeypatch.setattr(gate, "_FILE_MB", 1)

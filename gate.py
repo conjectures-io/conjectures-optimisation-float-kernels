@@ -307,7 +307,8 @@ def run(
         box += ["--overlay-src", str(BUILD), "--overlay-src", str(LAYER / "upper")]
         box += ["--ro-overlay", str(BUILD)]
     if _SANDBOX:
-        shutil.rmtree(SCRATCH, ignore_errors=True)
+        # The last run could write here and leave mode-000 dirs a bare rmtree cannot remove.
+        wipe(SCRATCH)
         shutil.copytree(CONFIG, SCRATCH, symlinks=True)
         box += ["--bind", str(SCRATCH), str(CONFIG)]
     fsize = ["prlimit", f"--fsize={_FILE_MB * 2**20}", "--"] if _FILE_MB > 0 else []
