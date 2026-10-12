@@ -80,8 +80,9 @@ migration `0006` on.
 worker inserts it in the same transaction as the verdict, when an accepted entry timed against the current champion
 has a ratio at or below `promotion_bar` and a positive 5th-percentile bootstrapped gain. A slot's champion is its
 latest promotion not demoted; with none, the shipped champion holds. `failures` counts gate runs in which the
-champion's own bench failed; at 3 it is demoted (`demoted_at`, migration 0016). `platform_api` has no grant on it: the published snapshot
-names the champion as `leader`.
+champion's own bench failed; at 3 it is demoted (`demoted_at`, migration 0016). `platform_api` may read it (`SELECT`): the
+platform serves every board's champion, its promotion date and the history of champions, while the published snapshot names
+only the paid board's `leader`.
 
 ### Scoring
 

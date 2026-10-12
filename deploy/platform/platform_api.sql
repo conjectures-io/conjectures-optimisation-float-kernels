@@ -37,3 +37,7 @@ GRANT SELECT ON registrations, entitlement_claims TO platform_api;
 -- Reads: the scoring the weight setter published (weight_sets.api_snapshot carries the
 -- admission outcomes too), and its per-hotkey lines.
 GRANT SELECT ON weight_sets, score_snapshots TO platform_api;
+
+-- Reads: every board's champions, current and past, and when each took over or was demoted.
+-- The published snapshot names only the paid board's leader; the platform serves all eight.
+GRANT SELECT ON promotions TO platform_api;

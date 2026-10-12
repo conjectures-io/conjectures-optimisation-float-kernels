@@ -37,6 +37,7 @@ EXPECTED: dict[str, set[str]] = {
     "entitlement_claims": {"SELECT"},
     "weight_sets": {"SELECT"},
     "score_snapshots": {"SELECT"},
+    "promotions": {"SELECT"},
 }
 EXPECTED_SEQUENCES = {"submissions_id_seq"}
 TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
