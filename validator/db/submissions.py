@@ -242,7 +242,10 @@ class SubmissionsDb:
                 if promote and promoted is None and row.champion_sha256 == current:
                     session.add(
                         models.Promotion(
-                            slot=row.slot, submission_id=sub_id, champion_sha256=row.digest
+                            slot=row.slot,
+                            submission_id=sub_id,
+                            champion_sha256=row.digest,
+                            promoted_at=row.finished_at,
                         )
                     )
                     logger.info(f"[submissions] submission {sub_id} is the new {row.slot} champion")
@@ -453,6 +456,21 @@ class SubmissionsDb:
             if row is not None:
                 session.expunge(row)
             return row
+
+    def champions(self, slot: str = "add") -> list[tuple[models.Submission, models.Promotion]]:
+        # Every submission ever promoted in the slot with its promotion, newest first: the first
+        # one not demoted is the champion, every other one held the slot before it.
+        with session_scope(self._sessions) as session:
+            rows = session.execute(
+                select(models.Submission, models.Promotion)
+                .join(models.Promotion, models.Promotion.submission_id == models.Submission.id)
+                .where(models.Promotion.slot == slot)
+                .order_by(models.Promotion.id.desc())
+            ).all()
+            for row, promotion in rows:
+                session.expunge(row)
+                session.expunge(promotion)
+            return [(row, promotion) for row, promotion in rows]
 
     def champion_failed(self, slot: str, champion_sha256: str, max_failures: int) -> str | None:
         # Count a gate run in which the slot's standing champion's own bench failed, demoting it at

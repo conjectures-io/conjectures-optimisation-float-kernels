@@ -11,6 +11,7 @@ from typing import cast
 from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 from loguru import logger
 
+import admission
 import db
 import reward
 from db import SLOTS, SubmissionState, iso, models
@@ -54,6 +55,21 @@ def _client(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def kernel_times(slot: str, classes: dict[str, object] | None) -> dict[str, float] | None:
+    # Nanoseconds per operation for each kernel, summed over its timed classes: the full entry's
+    # classes carry their kernel (`add:near-one`, `bmm:relu`), a practice board's are all its own.
+    if not classes:
+        return None
+    times: dict[str, float] = {}
+    for name, timing in classes.items():
+        ns = timing.get("submission_ns") if isinstance(timing, dict) else None
+        if not isinstance(ns, int | float):
+            continue
+        kernel = name.split(":", 1)[0] if ":" in name else slot
+        times[kernel] = times.get(kernel, 0.0) + float(ns)
+    return times or None
+
+
 def submission_view(row: models.Submission) -> schemas.SubmissionView:
     # A submission row as the miner sees it.
     return schemas.SubmissionView(
@@ -80,15 +96,36 @@ def submission_view(row: models.Submission) -> schemas.SubmissionView:
     )
 
 
+def _admission_rule() -> schemas.AdmissionRule:
+    # The bootstrap the board's admission outcomes come from, as admission.py runs it.
+    return schemas.AdmissionRule(draws=admission.DRAWS, quantile=admission.QUANTILE)
+
+
+def _competition_share(store: db.Store) -> float | None:
+    # The competition's share as the weight setter last published it; only it knows the share.
+    policy = store.scoring.published_policy()
+    share = policy.get("competition_share") if policy else None
+    return float(share) if isinstance(share, int | float) else None
+
+
 @router.get("/health", response_model=schemas.Health)
 def health(request: Request) -> schemas.Health:
-    # Liveness and queue length (null if the store is down) - it must not fail with the store.
+    # Liveness, queue length and the published share (null if the store is down) - it must not
+    # fail with the store.
     try:
-        queued = _store(request).submissions.queue_depth()
+        store = _store(request)
+        queued = store.submissions.queue_depth()
+        share = _competition_share(store)
     except Exception as exc:  # noqa: BLE001 - liveness must not depend on the store
-        logger.warning(f"[api] health without queue length: {exc}")
-        queued = None
-    return schemas.Health(ok=True, queued=queued, promotion_bar=PROMOTION_BAR)
+        logger.warning(f"[api] health without the store: {exc}")
+        queued = share = None
+    return schemas.Health(
+        ok=True,
+        queued=queued,
+        promotion_bar=PROMOTION_BAR,
+        competition_share=share,
+        admission=_admission_rule(),
+    )
 
 
 @router.get("/ready", response_model=schemas.Ready)
@@ -98,10 +135,18 @@ def ready(request: Request) -> schemas.Ready:
     try:
         database = store.ping()
         queued = store.submissions.queue_depth()
+        share = _competition_share(store)
     except Exception as exc:  # noqa: BLE001 - any store failure is "not ready"
         logger.warning(f"[api] not ready: {exc}")
         raise HTTPException(503, {"reason": "the store is not reachable"}) from exc
-    return schemas.Ready(ok=True, queued=queued, promotion_bar=PROMOTION_BAR, database=database)
+    return schemas.Ready(
+        ok=True,
+        queued=queued,
+        promotion_bar=PROMOTION_BAR,
+        competition_share=share,
+        admission=_admission_rule(),
+        database=database,
+    )
 
 
 def _slot(competition: str) -> str:
@@ -214,13 +259,20 @@ def leaderboard(request: Request, competition: str) -> schemas.Leaderboard:
     rows = store.submissions.leaderboard(slot)
     decisions = store.scoring.admission(slot, PROMOTION_BAR)
     outcome = {d.submission_id: d.outcome for d in decisions}
+    leader = next((d.submission_id for d in decisions if d.outcome == "leader"), None)
+    # When the champion took over; the leader is the only row that carries it.
+    promoted = {
+        row.id: iso(p.promoted_at)
+        for row, p in store.submissions.champions(slot)
+        if row.id == leader
+    }
     return schemas.Leaderboard(
         slot=slot,
         incumbent_sha256=store.submissions.current_incumbent(slot),
         champion_sha256=store.submissions.current_champion(slot),
         verifier_fingerprint=required_fingerprint(),
         promotion_bar=PROMOTION_BAR,
-        leader=next((d.submission_id for d in decisions if d.outcome == "leader"), None),
+        leader=leader,
         pays=slot in reward.PAYING_SLOTS,
         ranking=[
             schemas.Ranking(
@@ -232,7 +284,27 @@ def leaderboard(request: Request, competition: str) -> schemas.Leaderboard:
                 qualifies=(row.ratio or 1.0) <= PROMOTION_BAR,
                 admission=outcome.get(row.id),
                 submitted_at=iso(row.submitted_at),
+                kernels=kernel_times(row.slot, row.classes),
+                promoted_at=promoted.get(row.id),
             )
             for i, row in enumerate(rows)
         ],
     )
+
+
+@router.get(f"{PREFIX}/champions", response_model=list[schemas.Champion])
+def champions(request: Request, competition: str) -> list[schemas.Champion]:
+    # Every champion the board has had, newest first, the current one marked.
+    history = _store(request).submissions.champions(_slot(competition))
+    current = next((p.id for _, p in history if p.demoted_at is None), None)
+    return [
+        schemas.Champion(
+            submission=row.id,
+            hotkey=row.hotkey,
+            ratio=row.ratio,
+            promoted_at=iso(p.promoted_at),
+            demoted_at=iso(p.demoted_at) if p.demoted_at is not None else None,
+            current=p.id == current,
+        )
+        for row, p in history
+    ]

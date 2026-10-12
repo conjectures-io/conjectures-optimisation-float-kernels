@@ -8,7 +8,7 @@ import hashlib
 import json
 from typing import cast
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 import admission
@@ -103,6 +103,21 @@ class ScoringDb:
         if row is None:
             return None
         return ScoredSubmission(row.id, row.hotkey, float(row.ratio or 0.0), row.submitted_at)
+
+    def published_policy(self) -> dict[str, object] | None:
+        # The policy the latest published scoring was computed under (reward.publication), or
+        # None before the first publication: the competition's share lives only there.
+        with session_scope(self._sessions) as session:
+            policy = session.execute(
+                select(models.WeightSet.api_snapshot["policy"])
+                .where(
+                    models.WeightSet.api_snapshot.is_not(None),
+                    func.jsonb_typeof(models.WeightSet.api_snapshot) == "object",
+                )
+                .order_by(models.WeightSet.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+        return policy if isinstance(policy, dict) else None
 
     def submission_state_key(self) -> str:
         """Detect queue and verdict changes without duplicating submissions in the payload."""
