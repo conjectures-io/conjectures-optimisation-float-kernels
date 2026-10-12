@@ -269,7 +269,7 @@ class Promotion(Base):
     promoted_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    # Gate runs in which this champion's own bench failed; at the cap it is demoted.
+    # Historical benchmark failure count; failures no longer automatically demote champions.
     failures: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     # When it was demoted, so its predecessor is champion again; null while it holds.
     demoted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
@@ -279,3 +279,23 @@ class Promotion(Base):
         CheckConstraint("champion_sha256 ~ '^[0-9a-f]{64}$'", name="ck_promotions_champion_sha256"),
         Index("ix_promotions_slot_id", "slot", "id"),
     )
+
+
+class SlotPause(Base):
+    """An unavailable reference and the challenger waiting to retry it."""
+
+    __tablename__ = "slot_pauses"
+    slot: Mapped[str] = mapped_column(Text, primary_key=True)
+    challenger_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("submissions.id", ondelete="SET NULL")
+    )
+    reference_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("submissions.id", ondelete="SET NULL")
+    )
+    reference_sha256: Mapped[str | None] = mapped_column(Text)
+    revision: Mapped[str] = mapped_column(Text, nullable=False)
+    paused_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_failure_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    next_retry_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    phase: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)

@@ -99,7 +99,7 @@ class Champion(BaseModel):
     # Its ratio against the champion it took over from.
     ratio: float | None = None
     promoted_at: str
-    # When its own bench failed too often and it was demoted; null if it never was.
+    # When an operator demoted it; null if it never was.
     demoted_at: str | None = None
     current: bool
 

@@ -22,7 +22,7 @@ from db.scoring import Board, ScoredSubmission
 from service.settings import PROMOTION_BAR
 
 # The scoring rule a published snapshot was computed under; bump it when the rule changes.
-POLICY_VERSION = "auto-promotion-full-entry-v1"
+POLICY_VERSION = "auto-promotion-slot-pauses-v2"
 
 # The boards that pay and each one's part of the competition's budget, listed here rather than taken
 # from db.SLOTS so a board pays only once it is added on purpose.
@@ -37,6 +37,11 @@ class ScoringConfig:
     # The promotion bar a submission must reach to become champion, published with the policy and
     # the same one the leaderboard's `qualifies` uses.
     max_ratio: float = PROMOTION_BAR
+    paused_slot_policy: str = "preserve"
+
+    def __post_init__(self):
+        if self.paused_slot_policy not in ("preserve", "treasury"):
+            raise ValueError("WEIGHT_PAUSED_SLOT_POLICY must be preserve or treasury")
 
     @classmethod
     def from_env(cls) -> ScoringConfig:
@@ -44,7 +49,7 @@ class ScoringConfig:
         share = float(os.environ.get("WEIGHT_WINNER_SHARE", str(cls().winner_share)))
         if not 0.0 <= share <= 1.0:
             raise ValueError("WEIGHT_WINNER_SHARE must be between 0 and 1")
-        return cls(share)
+        return cls(share, paused_slot_policy=os.getenv("WEIGHT_PAUSED_SLOT_POLICY", "preserve"))
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -121,7 +126,12 @@ def score(boards: Sequence[Board], config: ScoringConfig) -> Scoring:
     scores: list[HotkeyScore] = []
     for board in boards:
         if board.slot in SLOT_SHARES:
-            scores += score_board(board.slot, board.best, config, board.leader)
+            scores += score_board(
+                board.slot,
+                board.best,
+                config,
+                None if board.paused and config.paused_slot_policy == "treasury" else board.leader,
+            )
     return Scoring(tuple(scores))
 
 
@@ -140,6 +150,8 @@ def publication(
     for board in boards:
         outcome = {d.submission_id: d.outcome for d in board.decisions}
         slots[board.slot] = {
+            "paused": board.paused,
+            "paused_reward_policy": config.paused_slot_policy,
             "share": SLOT_SHARES.get(board.slot, 0.0),
             "leader": board.leader.submission_id if board.leader else None,
             "items": [

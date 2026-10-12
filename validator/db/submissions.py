@@ -7,7 +7,7 @@ import uuid
 from typing import Any, cast
 
 from loguru import logger
-from sqlalchemy import CursorResult, func, select, update
+from sqlalchemy import CursorResult, case, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -164,27 +164,68 @@ class SubmissionsDb:
             session.add(models.SubmissionFile(submission_id=row.id, name=KERNEL, content=kernel))
             return int(row.id), True, slots
 
-    def claim_next(self, worker_id: str) -> models.Submission | None:
-        # Claim the oldest queued submission, fewest gate crashes first, so one that crashes the
-        # gate cannot hold up the rest; SKIP LOCKED lets several workers drain one queue.
+    def claim_next(
+        self, worker_id: str, *, prefer_healthy: bool = False, retry_seconds: float = 300
+    ) -> models.Submission | None:
+        # Paused slots retain their designated challenger; terminal/deleted entries advance to
+        # the oldest queued entry. Never wait in this query for another worker's claim.
         with session_scope(self._sessions) as session:
-            row = session.execute(
+            pauses = session.scalars(select(models.SlotPause).with_for_update()).all()
+            excluded = []
+            for pause in pauses:
+                waiting = (
+                    session.get(models.Submission, pause.challenger_id)
+                    if (pause.challenger_id is not None)
+                    else None
+                )
+                if waiting is None or waiting.state not in PENDING:
+                    pause.challenger_id = session.scalar(
+                        select(models.Submission.id)
+                        .where(
+                            models.Submission.slot == pause.slot,
+                            models.Submission.state == "queued",
+                        )
+                        .order_by(models.Submission.submitted_at, models.Submission.id)
+                        .limit(1)
+                    )
+                excluded.append(
+                    (models.Submission.slot == pause.slot)
+                    & (
+                        (models.Submission.id != pause.challenger_id)
+                        if pause.challenger_id is not None
+                        else True
+                    )
+                )
+                if pause.next_retry_at > clock.now():
+                    excluded.append(models.Submission.slot == pause.slot)
+            paused_slots = [p.slot for p in pauses]
+            priority = case((models.Submission.slot.in_(paused_slots), 1), else_=0)
+            order = [priority if prefer_healthy else -priority]
+            # Rotate due slots by their retry deadlines; healthy entries retain normal ordering.
+            deadlines = {p.slot: p.next_retry_at.timestamp() for p in pauses}
+            if deadlines:
+                order.append(case(deadlines, value=models.Submission.slot, else_=0.0))
+            row = session.scalar(
                 select(models.Submission)
-                .where(models.Submission.state == SubmissionState.QUEUED.value)
+                .where(models.Submission.state == "queued", *(~e for e in excluded))
                 .order_by(
+                    *order,
                     models.Submission.gate_errors,
                     models.Submission.submitted_at,
                     models.Submission.id,
                 )
                 .limit(1)
                 .with_for_update(skip_locked=True)
-            ).scalar_one_or_none()
+            )
             if row is None:
                 return None
             row.state = SubmissionState.VERIFYING.value
             row.worker_id = worker_id
             row.claimed_at = clock.now()
             row.verification_attempt = uuid.uuid4().hex
+            for pause in pauses:
+                if pause.slot == row.slot:
+                    pause.next_retry_at = clock.now() + dt.timedelta(seconds=retry_seconds)
             session.flush()
             session.expunge(row)
             return row
@@ -471,32 +512,6 @@ class SubmissionsDb:
                 session.expunge(row)
                 session.expunge(promotion)
             return [(row, promotion) for row, promotion in rows]
-
-    def champion_failed(self, slot: str, champion_sha256: str, max_failures: int) -> str | None:
-        # Count a gate run in which the slot's standing champion's own bench failed, demoting it at
-        # `max_failures`; None when the failed bench was not that champion's, so nothing is counted.
-        with session_scope(self._sessions) as session:
-            promotion = session.execute(
-                select(models.Promotion)
-                .where(models.Promotion.slot == slot, models.Promotion.demoted_at.is_(None))
-                .order_by(models.Promotion.id.desc())
-                .limit(1)
-                .with_for_update()
-            ).scalar_one_or_none()
-            if promotion is None or promotion.champion_sha256 != champion_sha256:
-                return None
-            promotion.failures += 1
-            who = f"{slot} champion, submission {promotion.submission_id}"
-            if promotion.failures < max_failures:
-                logger.warning(
-                    f"[submissions] the {who} failed its bench, {promotion.failures} time(s)"
-                )
-                return "counted"
-            promotion.demoted_at = clock.now()
-            logger.warning(
-                f"[submissions] the {who} failed its bench {promotion.failures} times: demoted"
-            )
-            return "demoted"
 
     def requeue(self, sub_id: int, *, expected_attempt: str | None = None) -> None:
         # Back in the queue uncounted and uncharged: the champion's bench failed, not this entry.

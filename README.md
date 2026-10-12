@@ -138,7 +138,7 @@ directory itself and names them `floatlib-*`, so they sit beside another competi
 | process | what it does |
 |---|---|
 | `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is the full entry; `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm` the practice boards): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`, `GET …/champions`; plus `GET /health`, `GET /ready` (example responses in MANUAL section 12) |
-| `floatlib-gate-worker` (`python -m service.worker`) | takes the gate's lock first (while an operator run or another worker holds it, it claims nothing and waits), then claims queued submissions oldest first, writes their `Kernel.lean` from the store, points the gate at the slot's current champion, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report, promoting an entry that beats the champion; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission that hits one `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`, uncharged, so nothing is retried forever, and sending the same file again requeues it; when the champion's own bench fails, the entry is requeued uncounted and the champion is charged, and a champion that fails `SERVICE_MAX_GATE_ERRORS` times is demoted; at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
+| `floatlib-gate-worker` (`python -m service.worker`) | takes the gate's lock first (while an operator run or another worker holds it, it claims nothing and waits), then claims queued submissions oldest first, writes their `Kernel.lean` from the store, points the gate at the slot's current champion, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report, promoting an entry that beats the champion; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission that hits one `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`, uncharged, so nothing is retried forever, and sending the same file again requeues it; when the reference cannot build or benchmark, only its slot pauses and the same challenger retries without penalty (see below); at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
 | `floatlib-chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
 | `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose champion's author takes the competition's budget: `validator/admission.py` and the rule in `validator/reward.py`) and publishes changed results, reusing unchanged snapshots; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
 
@@ -167,6 +167,44 @@ Only `api_snapshot` is cleared; weight-set rows and score history remain. Config
 `API_SNAPSHOT_CLEANUP_BATCH_SIZE`. Cleanup failures are logged and retried independently of
 weight setting. Consumers must handle an expired snapshot by restarting pagination.
 Apply migration 0013 before restarting the weight setter. No gate rebuild is needed.
+
+### Unavailable champions
+
+A champion or shipped baseline that cannot build or finish its benchmark pauses its slot.
+The same challenger stays first in that slot, queued and uncharged. The worker retries normal
+verification after `CHAMPION_RETRY_SECONDS` (default 300 seconds after failure). Later submissions
+cannot overtake it. Other slots run during the cooldown and receive a turn between retries;
+actual verification remains serial and bounded by the existing timeouts.
+
+There is no automatic demotion for these failures. Successful champion benchmarking clears the
+pause. A challenger rejected before testing the champion is handled normally; the slot stays
+paused and advances to its next challenger. With no queued challengers, it waits for new work.
+Pauses survive restarts; warnings occur on entry or a changed failure, with a recovery message
+on resume. Repeated identical failures are debug-level.
+
+`WEIGHT_PAUSED_SLOT_POLICY=preserve` keeps normal rewards (default). Set it to `treasury` to
+redirect a paused paid slot's miner share to the treasury until recovery, without changing its
+champion. Changes apply on the next scoring tick and permitted chain update, not retroactively.
+Retry timestamps and error details do not create new scoring snapshots.
+
+Run these commands as the worker user, from the repository, with its database environment loaded
+(e.g. `set -a; . ./.env; set +a`):
+
+```bash
+.venv/bin/python validator/tools/slots.py status
+.venv/bin/python validator/tools/slots.py retry --slot full
+.venv/bin/python validator/tools/slots.py demote --slot full --submission-id 123 --reason "audit result"
+```
+
+Mutating commands refuse while the gate is busy; retry after it finishes. Demotion requires the
+current champion's exact ID. Its predecessor (or shipped baseline) is used on the waiting
+challenger's next attempt; the slot remains paused until the replacement succeeds. These tools
+and the worker use the same host gate lock; do not run gate workers on multiple hosts sharing
+one queue.
+
+**Deploy:** stop the gate and weight workers, deploy, apply migration 0017 with `docker compose run --build --rm migrate`,
+then restart both workers. No historical submissions are reverified automatically. Existing
+promotion failure counts are retained for history, but no longer trigger demotion.
 
 **Changing the verifier** does not retire accepted verdicts or stop scoring. Fingerprints
 and incumbent hashes are informational provenance. The gate worker records observed hashes

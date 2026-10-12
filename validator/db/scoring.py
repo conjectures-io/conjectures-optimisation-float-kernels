@@ -8,7 +8,7 @@ import hashlib
 import json
 from typing import cast
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 import admission
@@ -35,6 +35,7 @@ class Board:
     best: list[ScoredSubmission]
     decisions: list[admission.Decision]
     leader: ScoredSubmission | None
+    paused: bool = False
 
 
 def evidence_of(row: models.Submission) -> admission.Evidence:
@@ -94,8 +95,14 @@ class ScoringDb:
 
     def board(self, slot: str, bar: float) -> Board:
         # Everything the weight setter needs for one slot.
+        with session_scope(self._sessions) as session:
+            paused = session.get(models.SlotPause, slot) is not None
         return Board(
-            slot, self.best_per_hotkey(slot), self.admission(slot, bar), self.leader(slot, bar)
+            slot,
+            self.best_per_hotkey(slot),
+            self.admission(slot, bar),
+            self.leader(slot, bar),
+            paused,
         )
 
     def _leader(self, row: models.Submission | None) -> ScoredSubmission | None:
@@ -121,14 +128,21 @@ class ScoringDb:
 
     def submission_state_key(self) -> str:
         """Detect queue and verdict changes without duplicating submissions in the payload."""
+        # A paused slot remains publicly waiting while its protected challenger retries. Do not
+        # publish a new scoring snapshot merely because that retry obtained a fresh attempt ID.
+        retrying = (models.SlotPause.challenger_id == models.Submission.id) & (
+            models.Submission.state == "verifying"
+        )
         with session_scope(self._sessions) as session:
             rows = session.execute(
                 select(
                     models.Submission.id,
-                    models.Submission.state,
-                    models.Submission.verification_attempt,
+                    case((retrying, "queued"), else_=models.Submission.state),
+                    case((retrying, None), else_=models.Submission.verification_attempt),
                     models.Submission.finished_at,
-                ).order_by(models.Submission.id)
+                )
+                .outerjoin(models.SlotPause, models.SlotPause.challenger_id == models.Submission.id)
+                .order_by(models.Submission.id)
             ).all()
         return hashlib.sha256(
             json.dumps([list(row) for row in rows], default=str).encode()
