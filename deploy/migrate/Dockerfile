@@ -10,13 +10,17 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Dependency layer, cached across source edits. Only what alembic/env.py imports:
-# alembic itself, SQLAlchemy (the models) and the driver.
+# alembic itself, SQLAlchemy (the models), the driver, and loguru, which the store's
+# modules log through (pinned as in requirements/gate.txt).
 RUN pip install --no-cache-dir \
-      "alembic>=1.13" "sqlalchemy>=2.0.30" "psycopg[binary]>=3.2"
+      "alembic>=1.13" "sqlalchemy>=2.0.30" "psycopg[binary]>=3.2" "loguru==0.7.3"
 
 # The models are the schema's source of truth, so autogenerate and the migration
-# tests have something to compare against.
+# tests have something to compare against. Importing them imports the store package,
+# which also imports two sibling modules: admission (scoring.py) and axiom (the
+# event sink); both are standard library plus loguru.
 COPY validator/db ./validator/db
+COPY validator/admission.py validator/axiom.py ./validator/
 
 # Alembic config and revisions are ops artifacts, not part of any package.
 COPY deploy/migrate/alembic.ini ./alembic.ini
