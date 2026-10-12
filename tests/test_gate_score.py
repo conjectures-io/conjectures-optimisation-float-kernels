@@ -47,3 +47,27 @@ def test_a_panic_aborts_the_bench(monkeypatch):
     monkeypatch.setattr(gate, "run", run)
     gate.bench(Path("bench"), 1, "")
     assert seen["LEAN_ABORT_ON_PANIC"] == "1"
+
+
+def test_successful_reference_can_recover_despite_checksum_rejection(monkeypatch):
+    monkeypatch.setattr(gate, "_ROUNDS", 2)
+    monkeypatch.setattr(
+        gate, "bench", lambda binary, seed, build: {"near-one": (100, 8 if build else 7)}
+    )
+    verdict = gate.Verdict(submission="probe", slot="add")
+    assert "checksum mismatch" in gate.score(Path("Kernel.lean"), verdict)
+    assert verdict.reference_complete and not verdict.incumbent_failed
+
+
+def test_reference_exception_and_empty_output_are_reference_failures(monkeypatch):
+    def broken(*args):
+        raise OSError("reference process could not start")
+
+    monkeypatch.setattr(gate, "bench", broken)
+    verdict = gate.Verdict(submission="probe", slot="add")
+    assert "could not start" in gate.score(Path("Kernel.lean"), verdict)
+    assert verdict.incumbent_failed
+    monkeypatch.setattr(gate, "bench", lambda *args: {})
+    verdict = gate.Verdict(submission="probe", slot="add")
+    assert "output is incomplete" in gate.score(Path("Kernel.lean"), verdict)
+    assert verdict.incumbent_failed and not verdict.reference_complete

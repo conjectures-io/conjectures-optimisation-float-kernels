@@ -170,7 +170,8 @@ classes = {"near-one": {"incumbent_ns": 30.0, "submission_ns": 30.0 * ratio, "ra
 jitter = [1 + ((i * 7919) % 11 - 5) / 1000 for i in range(25)]
 rounds = [[3e7 * j, 3e7 * ratio / j] for j in jitter]
 verdict.write_text(json.dumps({**base, "stage": "score", "passed": True, "reason": "",
-                               "ratio": ratio, "classes": classes, "rounds": rounds}))
+                               "ratio": ratio, "classes": classes, "rounds": rounds,
+                               "reference_complete": True}))
 sys.exit(0)
 """
 

@@ -231,8 +231,10 @@ class Verdict:
     seconds: float = 0.0
     # True when the entry ran out of its time budget or over a memory cap.
     exhausted: bool = False
-    # True when the incumbent's own bench failed: the champion's fault, never the entry's.
+    # The reference could not run; this does not establish whose fault it is.
     incumbent_failed: bool = False
+    reference_failure_phase: str = ""
+    reference_complete: bool = False
 
 
 # ── Process helpers ──────────────────────────────────────────
@@ -403,6 +405,16 @@ def errors(out: str, code: int = 1) -> str:
     if code == OVER_DISK:
         return f"the build wrote over the {_BUILD_DISK_MB} MB disk cap"
     return " | ".join(ln.strip() for ln in out.splitlines() if "error" in ln)[:600]
+
+
+def progress(phase: str, **fields) -> None:
+    # Written by trusted orchestration, outside the miner sandbox. Atomic for timeout readers.
+    if path := os.environ.get("GATE_PROGRESS_PATH"):
+        target = Path(path)
+        previous = json.loads(target.read_text()) if target.exists() else {}
+        temporary = target.with_suffix(".tmp")
+        temporary.write_text(json.dumps({**previous, **fields, "phase": phase}))
+        temporary.replace(target)
 
 
 def pin(slot: Slot) -> str:
@@ -587,13 +599,33 @@ def score(src: Path, v: Verdict) -> str | None:
     for r in range(_ROUNDS):
         order = [("inc", slot.pinned, ""), ("sub", BUILD / "bin" / slot.bench, "read")]
         for who, binary, build in order if r % 2 == 0 else order[::-1]:
-            res = bench(binary, v.seed, build)
+            progress("reference-benchmark" if who == "inc" else "challenger")
+            try:
+                res = bench(binary, v.seed, build)
+            except Exception as exc:
+                if who != "inc":
+                    raise
+                v.incumbent_failed = True
+                v.reference_failure_phase = "reference-benchmark"
+                return f"gate error: the incumbent's bench failed: {exc}"
             if isinstance(res, str) and who == "inc":
                 v.incumbent_failed = True
+                v.reference_failure_phase = "reference-benchmark"
                 return f"gate error: the incumbent's bench failed: {res}"
             if isinstance(res, str):
                 return res
+            if who == "inc" and (
+                not res
+                or not any(ns > 0 for ns, _ in res.values())
+                or (runs[who] and res.keys() != runs[who][0].keys())
+            ):
+                v.incumbent_failed = True
+                v.reference_failure_phase = "reference-benchmark"
+                return "gate error: the incumbent's benchmark output is incomplete"
             runs[who].append(res)
+            if who == "inc" and len(runs[who]) == _ROUNDS:
+                v.reference_complete = True
+                progress("challenger", reference_complete=True)
     inc, sub = runs["inc"], runs["sub"]
     for name, (_, want) in inc[0].items():
         if any(s.get(name, (0, None))[1] != want for s in sub):
@@ -734,10 +766,29 @@ def main() -> int:
         if os.environ.get("GATE_LOCK_HELD") != "1":
             fcntl.flock(lock, fcntl.LOCK_EX)
         try:
+            reference = SLOTS[slot].incumbent
+            reference_hash = (
+                hashlib.sha256(reference.read_bytes()).hexdigest() if (reference.is_file()) else ""
+            )
+            progress("reference-build", champion_sha256=reference_hash, reference_complete=False)
             check_limits()
             digest = pin(SLOTS[slot])
+            progress("challenger")
         except Exception:  # noqa: BLE001 - no limits or no pinned incumbent: nothing can be scored
             logger.exception("[pin] failed")
+            if verdict_path is not None:
+                verdict_path.write_text(
+                    json.dumps(
+                        {
+                            "passed": False,
+                            "stage": "pin",
+                            "incumbent_failed": True,
+                            "reference_failure_phase": "reference-build",
+                            "champion_sha256": locals().get("reference_hash", ""),
+                            "reason": f"reference preparation failed: {sys.exception()}",
+                        }
+                    )
+                )
             return 2
         for arg in args:
             v = gate(Path(arg).resolve(), digest, mode, slot)

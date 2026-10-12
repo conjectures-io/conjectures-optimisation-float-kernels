@@ -6,6 +6,7 @@ from sqlalchemy import Engine, text
 
 from .clock import iso, now
 from .engine import create_db_engine, database_url, session_factory, session_scope
+from .pauses import PausesDb
 from .ratelimit import RateLimiter
 from .registrations import NoSlot, RegistrationsDb
 from .scoring import ScoredSubmission, ScoringDb
@@ -52,6 +53,7 @@ class Store:
         self.submissions = SubmissionsDb(self.sessions)
         self.registrations = RegistrationsDb(self.sessions)
         self.scoring = ScoringDb(self.sessions)
+        self.pauses = PausesDb(self.sessions)
         self.rate = RateLimiter(self.sessions, limit=rate_limit, window_seconds=rate_window_seconds)
 
     def ping(self) -> bool:
