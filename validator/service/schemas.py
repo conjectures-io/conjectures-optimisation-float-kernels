@@ -7,11 +7,23 @@ from typing import ClassVar
 from pydantic import BaseModel, ConfigDict
 
 
+class AdmissionRule(BaseModel):
+    # The bootstrap behind admission (admission.py): resamples drawn, and the one-sided quantile of
+    # the gain that must be above zero for a submission to be promoted.
+    draws: int
+    quantile: float
+
+
 class Health(BaseModel):
-    # Liveness, the queue length (null when the store is down) and the promotion bar.
+    # Liveness, the queue length (null when the store is down), the promotion bar and the rules a
+    # page states: the competition's share of the validator's emission, as the latest published
+    # scoring applied it (null before the first publication or while the store is down), and the
+    # admission bootstrap.
     ok: bool
     queued: int | None
     promotion_bar: float
+    competition_share: float | None = None
+    admission: AdmissionRule
 
 
 class Ready(Health):
@@ -71,6 +83,25 @@ class Ranking(BaseModel):
     # itself, the one paid), qualifies, not-significant, above-bar or no-evidence.
     admission: str | None = None
     submitted_at: str
+    # Nanoseconds per operation for each kernel (add, mul, sum, bmm on the full entry; the board's
+    # own kernel on a practice board), the sum of its timed classes as the ratio sums them.
+    kernels: dict[str, float] | None = None
+    # When the champion took over the board; null on every other row.
+    promoted_at: str | None = None
+
+
+class Champion(BaseModel):
+    # One submission that was promoted to its board's champion, and whether it still is: a newer
+    # promotion supersedes it without demoting it, and a demotion hands the board back to the
+    # newest one before it that was not demoted.
+    submission: int
+    hotkey: str
+    # Its ratio against the champion it took over from.
+    ratio: float | None = None
+    promoted_at: str
+    # When its own bench failed too often and it was demoted; null if it never was.
+    demoted_at: str | None = None
+    current: bool
 
 
 class Leaderboard(BaseModel):

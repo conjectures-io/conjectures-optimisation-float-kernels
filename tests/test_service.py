@@ -398,11 +398,108 @@ def test_reverifying_the_champion_keeps_it_champion_timed_against_its_predecesso
 
 def test_health_is_liveness_and_ready_is_the_store(client, store, tmp_path):
     enrol(store, ALICE)
-    assert client.get("/health").json() == {"ok": True, "queued": 0, "promotion_bar": 0.97}
+    assert client.get("/health").json() == {
+        "ok": True,
+        "queued": 0,
+        "promotion_bar": 0.97,
+        "competition_share": None,
+        "admission": {"draws": 2000, "quantile": 0.05},
+    }
     ready = client.get("/ready").json()
     assert ready["ok"] is True and ready["database"] is True
     post_submission(client, ALICE, kernel_file(tmp_path, "alice"))
     assert client.get("/health").json()["queued"] == 1
+
+
+def test_health_states_the_share_the_latest_publication_applied(client, store):
+    # The share lives only in what the weight setter published; the newest publication wins.
+    for share in (0.2, 0.25):
+        store.scoring.record_weight_set(
+            netuid=66,
+            block=1,
+            uids=[0],
+            weights=[1.0],
+            summary=None,
+            accepted=True,
+            api_snapshot={"policy": {"competition_share": share}},
+        )
+    assert client.get("/health").json()["competition_share"] == 0.25
+    assert client.get("/ready").json()["competition_share"] == 0.25
+
+
+# ── The page's reads: kernel times, champions ─────────────────────────────
+
+
+def test_kernel_times_sum_each_kernels_classes():
+    from service.routes import kernel_times
+
+    classes = {
+        "add:near-one": {"submission_ns": 2.0},
+        "add:wide": {"submission_ns": 3.0},
+        "mul:near-one": {"submission_ns": 4.0},
+        "sum:relu": {"submission_ns": 5.0},
+        "bmm:relu": {"submission_ns": 6.0},
+    }
+    assert kernel_times("full", classes) == {"add": 5.0, "mul": 4.0, "sum": 5.0, "bmm": 6.0}
+    # A practice board times one kernel, so its unprefixed classes are all that kernel's.
+    assert kernel_times("mul", {"a": {"submission_ns": 1.0}, "b": {"submission_ns": 2.5}}) == {
+        "mul": 3.5
+    }
+    assert kernel_times("add", None) is None and kernel_times("add", {}) is None
+
+
+def test_the_board_carries_kernel_times_and_when_the_champion_took_over(
+    client, store, drain, tmp_path, clock
+):
+    enrol(store, ALICE, BOB)
+    alice = post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.80")).json()
+    drain()
+    clock["tick"](60)
+    # Timed against Alice's kernel, Bob's is above the bar: ranked, not promoted.
+    post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.99"))
+    drain()
+    champion, challenger = client.get(f"{api()}/leaderboard").json()["ranking"]
+    assert champion["submission"] == alice["submission"]
+    assert champion["promoted_at"] == "2026-10-01T12:00:00Z"
+    assert champion["kernels"] == {"add": pytest.approx(24.0)}
+    assert challenger["promoted_at"] is None
+    assert challenger["kernels"] == {"add": pytest.approx(30.0 * 0.99)}
+
+
+def test_champions_lists_every_champion_newest_first(client, store, drain, tmp_path, clock):
+    enrol(store, ALICE, BOB)
+    a = post_submission(client, ALICE, kernel_file(tmp_path, "a", "RATIO=0.80")).json()
+    drain()
+    clock["tick"](60)
+    b = post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.53")).json()
+    drain()
+    history = client.get(f"{api()}/champions").json()
+    assert [(c["submission"], c["current"]) for c in history] == [
+        (b["submission"], True),
+        (a["submission"], False),
+    ]
+    assert history[0] == {
+        "submission": b["submission"],
+        "hotkey": BOB.ss58_address,
+        "ratio": 0.53,
+        "promoted_at": "2026-10-01T12:01:00Z",
+        "demoted_at": None,
+        "current": True,
+    }
+    # Superseded, Alice was never demoted; demoting Bob hands the board back to her.
+    assert history[1]["demoted_at"] is None
+    clock["tick"](60)
+    bob = store.submissions.get(b["submission"])
+    assert store.submissions.champion_failed("add", bob.digest, max_failures=1) == "demoted"
+    history = client.get(f"{api()}/champions").json()
+    assert [(c["submission"], c["current"]) for c in history] == [
+        (b["submission"], False),
+        (a["submission"], True),
+    ]
+    assert history[0]["demoted_at"] == "2026-10-01T12:02:00Z"
+    # The full entry has had no champion, and an unknown slug is a 404.
+    assert client.get("/v1/competitions/floatlib/champions").json() == []
+    assert client.get("/v1/competitions/nope/champions").status_code == 404
 
 
 # ── The real gate ─────────────────────────────────────────────────────────
