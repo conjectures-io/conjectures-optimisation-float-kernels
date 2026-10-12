@@ -61,8 +61,10 @@ def recorded(verdict: Path) -> dict[str, object]:
         "verifier_fingerprint": v.get("verifier_fingerprint") or None,
         "gate_seconds": v.get("seconds"),
         "report": verdict.read_text(),
-        # Not a column: the incumbent's own bench failed, which score_one charges to the champion.
+        # Not a column: a reference failure pauses its slot without charging either submission.
         "incumbent_failed": v.get("incumbent_failed") is True,
+        "reference_failure_phase": v.get("reference_failure_phase"),
+        "reference_complete": v.get("reference_complete") is True,
     }
 
 
@@ -110,17 +112,41 @@ def run_gate(
     # Run gate.py over one submission directory in its slot, capped; a timeout rejects.
     cmd = [sys.executable, str(GATE), str(submission_dir), "--verdict", str(verdict)]
     cmd += ["--slot", slot]
+    progress_path = verdict.with_suffix(".progress.json")
     with subprocess.Popen(
         cmd,
         cwd=GATE.parent,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={**os.environ, **(env or {}), "GATE_LOCK_HELD": "1"},
+        env={
+            **os.environ,
+            **(env or {}),
+            "GATE_LOCK_HELD": "1",
+            "GATE_PROGRESS_PATH": str(progress_path),
+        },
         start_new_session=True,
     ) as process:
         try:
             stdout, stderr = process.communicate(timeout=TOTAL_TIMEOUT)
+            if process.returncode != 0 and not verdict.exists() and progress_path.exists():
+                progress = json.loads(progress_path.read_text())
+                if str(progress.get("phase", "")).startswith("reference-"):
+                    verdict.write_text(
+                        json.dumps(
+                            {
+                                "incumbent_failed": True,
+                                "reference_failure_phase": progress["phase"],
+                                "champion_sha256": progress.get("champion_sha256"),
+                                "stage": progress["phase"],
+                                "reason": (
+                                    "reference process ended without a verdict "
+                                    f"(exit {process.returncode})"
+                                ),
+                                "passed": False,
+                            }
+                        )
+                    )
             return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGTERM)
@@ -129,25 +155,34 @@ def run_gate(
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 stdout, stderr = process.communicate()
+            progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
+            reference_failed = str(progress.get("phase", "")).startswith("reference-")
             verdict.write_text(
                 json.dumps(
                     {
+                        "incumbent_failed": reference_failed,
+                        "reference_failure_phase": progress.get("phase")
+                        if reference_failed
+                        else None,
+                        "champion_sha256": progress.get("champion_sha256"),
+                        "reference_complete": progress.get("reference_complete", False),
                         "stage": "timeout",
                         "reason": f"the gate did not finish within {TOTAL_TIMEOUT:.0f}s",
                         "passed": False,
                     }
                 )
             )
-            return subprocess.CompletedProcess(cmd, 1, stdout, stderr)
+            return subprocess.CompletedProcess(cmd, 2 if reference_failed else 1, stdout, stderr)
 
 
 def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> str:
     # Gate one claimed submission: a run with no verdict or an undefined exit counts toward the
-    # error cap, uncharged, so nothing is retried forever; a failure of a promoted champion's own
-    # bench counts against that champion instead, which is demoted at the same cap.
+    # error cap, uncharged. Reference failures instead pause only their slot and never demote.
     logger.info(f"[worker] verifying submission {sub.id} slot={sub.slot} ({sub.hotkey[:8]}…)")
     events = get_events()
     who = {"submission_id": sub.id, "hotkey": sub.hotkey, "slot": sub.slot}
+    pause = store.pauses.all().get(sub.slot)
+    reference = store.submissions.champion(sub.slot, before=sub.id)
     with tempfile.TemporaryDirectory(prefix=f"gate-{sub.id}-") as tmp:
         verdict = Path(tmp) / "verdict.json"
         result = run_gate(
@@ -158,6 +193,22 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
         )
         fields = recorded(verdict)
     incumbent_failed = bool(fields.pop("incumbent_failed", False))
+    failure_phase = fields.pop("reference_failure_phase", None)
+    reference_complete = fields.pop("reference_complete", False)
+    if incumbent_failed:
+        store.pauses.fail(
+            sub,
+            reference_id=reference.id if reference else None,
+            reference_sha256=fields.get("champion_sha256"),
+            phase=failure_phase or "reference-benchmark",
+            reason=str(fields.get("reason") or "reference failed"),
+            retry_seconds=settings.champion_retry_seconds,
+        )
+        return "paused"
+    if reference_complete:
+        store.pauses.recover(sub, pause.revision if pause else None)
+    else:
+        store.pauses.defer(sub, pause.revision if pause else None, settings.champion_retry_seconds)
     state = STATE_OF_EXIT.get(result.returncode)
 
     if state is None or not fields:
@@ -171,21 +222,6 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
             exit_code=result.returncode,
             error=result.stderr[-1500:] or result.stdout[-1500:],
         )
-        failed = (
-            store.submissions.champion_failed(
-                sub.slot, str(fields.get("champion_sha256")), settings.max_gate_errors
-            )
-            if incumbent_failed
-            else None
-        )
-        if failed is not None:
-            store.submissions.requeue(sub.id, expected_attempt=sub.verification_attempt)
-            events.warning(
-                "submission_requeued",
-                **who,
-                reason=f"the champion's own bench failed; champion {failed}",
-            )
-            return SubmissionState.ERROR.value
         state_now = store.submissions.gate_crashed(
             sub.id,
             max_errors=settings.max_gate_errors,
@@ -265,12 +301,18 @@ def _drain(store: db.Store, settings: Settings) -> tuple[int, bool]:
     # `drain`, also saying whether it stopped on a validator error; a busy gate claims nothing, so
     # waiting for it never counts against a submission's time limit.
     done = 0
+    prefer_healthy = True
     while True:
         with gate_slot() as free:
             if not free:
                 logger.debug("[worker] the gate is busy (an operator run or another worker)")
                 return done, False
-            sub = store.submissions.claim_next(settings.worker_id)
+            pauses = store.pauses.all()
+            sub = store.submissions.claim_next(
+                settings.worker_id,
+                prefer_healthy=prefer_healthy,
+                retry_seconds=settings.champion_retry_seconds,
+            )
             if sub is None:
                 return done, False
             get_events().info(
@@ -280,7 +322,12 @@ def _drain(store: db.Store, settings: Settings) -> tuple[int, bool]:
                 slot=sub.slot,
                 worker_id=settings.worker_id,
             )
-            if score_one(store, settings, sub) == SubmissionState.ERROR.value:
+            prefer_healthy = sub.slot in pauses
+            outcome = score_one(store, settings, sub)
+            if outcome == "paused":
+                prefer_healthy = True
+                continue
+            if outcome == SubmissionState.ERROR.value:
                 return done, True
         done += 1
 

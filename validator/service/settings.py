@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # Gate crashes on one submission before it ends in `error`, uncharged, off the queue.
     max_gate_errors: int = Field(default=3, ge=1)
 
+    champion_retry_seconds: float = Field(
+        default=300, gt=0, validation_alias="CHAMPION_RETRY_SECONDS"
+    )
+
     @field_validator("files")
     @classmethod
     def _absolute(cls, value: Path) -> Path:

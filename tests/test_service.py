@@ -331,28 +331,32 @@ def test_a_promotion_starts_a_fresh_board(client, store, drain, tmp_path):
     assert [x["hotkey"] for x in board["ranking"]] == [BOB.ss58_address, CHARLIE.ss58_address]
 
 
-def test_a_champion_whose_own_bench_keeps_failing_is_demoted(
-    client, store, settings, drain, tmp_path
+def test_a_failing_champion_pauses_until_explicit_demotion(
+    client, store, settings, drain, tmp_path, clock
 ):
     # Its failures are never the challenger's: the challenger is requeued uncounted and uncharged,
-    # and at the cap the champion is demoted, so the challenger is timed against its predecessor.
+    # even after many retries. Only an explicit operator action demotes the champion.
     enrol(store, ALICE, BOB, slots=1)
     a = kernel_file(tmp_path, "a", "RATIO=0.50 BROKEN")
     sa = post_submission(client, ALICE, a).json()["submission"]
     drain()
     assert client.get(f"{api()}/leaderboard").json()["leader"] == sa
     sb = post_submission(client, BOB, kernel_file(tmp_path, "b", "RATIO=0.90")).json()["submission"]
-    for _ in range(settings.max_gate_errors):
+    for _ in range(settings.max_gate_errors + 1):
         assert drain() == 0
         assert store.submissions.get(sb).state == "queued"
         assert store.submissions.get(sb).gate_errors == 0
         assert store.registrations.available_slots(BOB.ss58_address) == 1
+        assert store.submissions.champion("add").id == sa
+        clock["tick"](settings.champion_retry_seconds)
+    store.pauses.demote("add", sa, "operator confirmed broken champion")
     assert store.submissions.champion("add") is None
     assert drain() == 1
     bob = store.submissions.get(sb)
     assert bob.state == "accepted"
     assert bob.champion_sha256 == store.submissions.get(sa).champion_sha256
     assert client.get(f"{api()}/leaderboard").json()["leader"] == sb
+    assert store.pauses.all() == {}
 
 
 def test_an_entry_queued_before_a_promotion_is_timed_against_the_new_champion(
@@ -488,9 +492,27 @@ def test_champions_lists_every_champion_newest_first(client, store, drain, tmp_p
     }
     # Superseded, Alice was never demoted; demoting Bob hands the board back to her.
     assert history[1]["demoted_at"] is None
+    # A reference outage preserves the champion's identity in the new public reads.
+    post_submission(client, ALICE, kernel_file(tmp_path, "waiting", "RATIO=0.99"))
+    waiting = store.submissions.claim_next("test-worker")
+    assert waiting is not None
+    store.pauses.fail(
+        waiting,
+        reference_id=b["submission"],
+        reference_sha256=store.submissions.get(b["submission"]).digest,
+        phase="reference-build",
+        reason="compiler unavailable",
+        retry_seconds=300,
+    )
+    assert client.get(f"{api()}/champions").json() == history
+    board = client.get(f"{api()}/leaderboard").json()
+    assert board["leader"] == b["submission"]
+    assert board["ranking"][0]["promoted_at"] == history[0]["promoted_at"]
     clock["tick"](60)
     bob = store.submissions.get(b["submission"])
-    assert store.submissions.champion_failed("add", bob.digest, max_failures=1) == "demoted"
+    with worker.gate_slot() as free:
+        assert free
+        store.pauses.demote("add", bob.id, "operator reviewed the champion")
     history = client.get(f"{api()}/champions").json()
     assert [(c["submission"], c["current"]) for c in history] == [
         (b["submission"], False),
