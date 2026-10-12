@@ -81,8 +81,9 @@ worker inserts it in the same transaction as the verdict, when an accepted entry
 has a ratio at or below `promotion_bar` and a positive 5th-percentile bootstrapped gain. A slot's champion is its
 latest promotion not demoted; with none, the shipped champion holds. `failures` is a historical count from
 the previous automatic-demotion policy. Failures now pause the slot without demoting its champion;
-`demoted_at` changes only through an explicit operator demotion. `platform_api` has no grant on it:
-the published snapshot names the champion as `leader`.
+`demoted_at` changes only through an explicit operator demotion. `platform_api` may read it (`SELECT`): the
+platform serves every board's champion, its promotion date and the history of champions, while the published
+snapshot names only the paid board's `leader`.
 
 ### `slot_pauses`
 
