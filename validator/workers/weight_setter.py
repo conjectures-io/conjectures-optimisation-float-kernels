@@ -191,9 +191,8 @@ def plan_for(
         plan = burn(meta, treasury_uid=treasury, burn_uid=config.burn_uid, competition_share=share)
         return plan, None, None
     try:
-        boards = [
-            store.scoring.board(slot, scoring_config.max_ratio) for slot in reward.PAYING_SLOTS
-        ]
+        captured = store.scoring.read_boards(reward.PAYING_SLOTS, scoring_config.max_ratio)
+        boards = captured.boards
         result = reward.score(boards, scoring_config)
         snapshot = reward.publication(
             result,
@@ -202,7 +201,7 @@ def plan_for(
             competition_share=share,
             computed_at=clock.now(),
         )
-        snapshot["submission_state_sha256"] = store.scoring.submission_state_key()
+        snapshot["submission_state_sha256"] = captured.submission_state_sha256
     except Exception as exc:  # noqa: BLE001 - any scoring failure pays the treasury
         logger.exception(f"[weights] scoring failed; paying the treasury this epoch: {exc}")
         plan = split(None, meta, treasury_uid=treasury, reason=f"scoring failed: {exc}")

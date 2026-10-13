@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from . import clock, models
 from .engine import session_scope
-from .registrations import NoSlot, RegistrationsDb, _available_slots
 from .status import PENDING, SubmissionState
 
 # The columns the gate fills in; finish() refuses any other field instead of dropping it.
@@ -65,19 +64,11 @@ def _current_champion(session: Session, slot: str) -> str | None:
     ).scalar_one_or_none()
 
 
-class QueueFull(Exception):
-    # A hotkey already has as much work queued as its unclaimed registrations can pay for.
-    def __init__(self, slots: int, pending: int) -> None:
-        super().__init__(f"{slots} unclaimed registration(s) and {pending} already in the queue")
-        self.slots, self.pending = slots, pending
-
-
 class SubmissionsDb:
     # The submission queue, its verdicts and the leaderboard.
     def __init__(self, sessions: sessionmaker[Session]) -> None:
-        # Holds the session factory and the registrations an acceptance spends.
+        # Holds the session factory for queue claims and verdict publication.
         self._sessions = sessions
-        self._registrations = RegistrationsDb(sessions)
 
     # --- writing --------------------------------------------------------------
     def add(
@@ -113,56 +104,6 @@ class SubmissionsDb:
                 )
             ).scalar_one()
             return int(existing), False
-
-    def enqueue(self, hotkey: str, digest: str, slot: str, kernel: bytes) -> tuple[int, bool, int]:
-        # Queue a submission if the hotkey can pay for it, atomically under a per-hotkey lock, so
-        # two API processes cannot both spend one free registration; returns (id, fresh, slots).
-        with session_scope(self._sessions) as session:
-            session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(hotkey, 0))))
-            slots = _available_slots(session, hotkey)
-            existing = session.execute(
-                select(models.Submission)
-                .where(
-                    models.Submission.hotkey == hotkey,
-                    models.Submission.slot == slot,
-                    models.Submission.digest == digest,
-                )
-                .with_for_update()
-            ).scalar_one_or_none()
-            pending = int(
-                session.execute(
-                    select(func.count())
-                    .select_from(models.Submission)
-                    .where(
-                        models.Submission.hotkey == hotkey,
-                        models.Submission.state.in_([s.value for s in PENDING]),
-                    )
-                ).scalar_one()
-            )
-            if existing is not None:
-                # A retry of the same file is the same submission, even with no registration left;
-                # one the gate gave up on goes back in the queue when the hotkey can pay for it.
-                if existing.state == SubmissionState.ERROR.value and pending < slots:
-                    existing.state = SubmissionState.QUEUED.value
-                    existing.gate_errors = 0
-                    existing.submitted_at = clock.now()
-                    existing.exit_code = existing.stage = existing.reason = None
-                    existing.finished_at = None
-                    logger.info(f"[submissions] submission {existing.id} resent after an error")
-                return int(existing.id), False, slots
-            if pending >= slots:
-                raise QueueFull(slots, pending)
-            row = models.Submission(
-                hotkey=hotkey,
-                slot=slot,
-                digest=digest,
-                submitted_at=clock.now(),
-                state=SubmissionState.QUEUED.value,
-            )
-            session.add(row)
-            session.flush()
-            session.add(models.SubmissionFile(submission_id=row.id, name=KERNEL, content=kernel))
-            return int(row.id), True, slots
 
     def claim_next(
         self, worker_id: str, *, prefer_healthy: bool = False, retry_seconds: float = 300
@@ -239,8 +180,8 @@ class SubmissionsDb:
         expected_attempt: str | None = None,
         **fields: object,
     ) -> str:
-        # Record the verdict and spend a registration in the same transaction, accepted or rejected,
-        # since one registration buys one entry; an accepted one with `promote` becomes champion.
+        # Intake consumed eligibility when it recorded this submission. Store the verdict and
+        # promotion atomically; do not recheck or charge registration allowance on completion.
         unknown = set(fields) - SCORE_FIELDS
         if unknown:
             raise ValueError(f"not submission columns: {sorted(unknown)}")
@@ -254,19 +195,6 @@ class SubmissionsDb:
                 setattr(row, key, value)
             row.finished_at = clock.now()
             if state is SubmissionState.ACCEPTED:
-                try:
-                    registration = self._registrations.claim_slot(session, row.hotkey, sub_id)
-                except NoSlot:
-                    row.state = SubmissionState.REJECTED.value
-                    row.reason = (
-                        "accepted by the gate, but this hotkey has no unclaimed registration "
-                        "left: one registration buys one entry"
-                    )
-                    logger.warning(
-                        f"[submissions] submission {sub_id} accepted with no slot left; rejected"
-                    )
-                    return SubmissionState.REJECTED.value
-                logger.info(f"[submissions] submission {sub_id} spent registration {registration}")
                 if promote:
                     # One promotion per slot at a time: two winners can't replace one champion.
                     session.execute(
@@ -290,18 +218,6 @@ class SubmissionsDb:
                         )
                     )
                     logger.info(f"[submissions] submission {sub_id} is the new {row.slot} champion")
-            else:
-                try:
-                    registration = self._registrations.claim_slot(session, row.hotkey, sub_id)
-                    logger.info(
-                        f"[submissions] submission {sub_id} rejected: spent registration "
-                        f"{registration}"
-                    )
-                except NoSlot:
-                    logger.warning(
-                        f"[submissions] submission {sub_id} rejected, but its hotkey has no "
-                        "registration left to charge"
-                    )
             row.state = state.value
             return state.value
 
@@ -391,8 +307,7 @@ class SubmissionsDb:
             return int(cast("CursorResult[Any]", result).rowcount or 0)
 
     def reverify(self, fingerprint: str) -> list[int]:
-        # Send every accepted verdict from another verifier back through the gate; it keeps the
-        # registration it spent (claim_slot is idempotent), so a re-acceptance costs nothing.
+        # Explicitly retry accepted entries using their existing submission IDs and reception times.
         return self._requeue(self._from_other_verifier(fingerprint))
 
     def stale(self, fingerprint: str) -> list[models.Submission]:
@@ -407,7 +322,7 @@ class SubmissionsDb:
         ]
 
     def _requeue(self, where: list[Any]) -> list[int]:
-        # Queue the matching submissions again, keeping each one's spent registration.
+        # Queue the matching submissions again without changing their original reception times.
         with session_scope(self._sessions) as session:
             ids = session.execute(
                 update(models.Submission)

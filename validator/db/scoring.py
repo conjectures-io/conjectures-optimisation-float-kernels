@@ -6,6 +6,7 @@ import dataclasses as dc
 import datetime as dt
 import hashlib
 import json
+from collections.abc import Sequence
 from typing import cast
 
 from sqlalchemy import case, func, select, text
@@ -15,7 +16,7 @@ import admission
 
 from . import models
 from .engine import session_scope
-from .submissions import SubmissionsDb
+from .submissions import SubmissionsDb, _current_champion
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -41,6 +42,23 @@ class Board:
     def leader(self) -> ScoredSubmission | None:
         # The current champion, or None while the shipped one holds.
         return self.kings[0] if self.kings else None
+
+
+@dc.dataclass(frozen=True, slots=True)
+class ScoringRead:
+    boards: tuple[Board, ...]
+    submission_state_sha256: str
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _SlotInputs:
+    slot: str
+    best: list[ScoredSubmission]
+    kings: list[ScoredSubmission]
+    paused: bool
+    cache_key: object
+    cached: list[admission.Decision] | None
+    evidence: tuple[admission.Evidence, ...]
 
 
 def evidence_of(row: models.Submission) -> admission.Evidence:
@@ -119,6 +137,110 @@ class ScoringDb:
             paused,
         )
 
+    def read_boards(self, slots: Sequence[str], bar: float) -> ScoringRead:
+        """Capture one database state, then compute admission with no connection held."""
+        with session_scope(self._sessions) as session:
+            session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+            inputs = [self._read_slot_inputs(session, slot, bar) for slot in slots]
+            state_key = self._submission_state_key(session)
+        boards = []
+        for captured in inputs:
+            decisions = captured.cached
+            if decisions is None:
+                leader = captured.kings[0] if captured.kings else None
+                decisions = (
+                    [admission.Decision(leader.submission_id, "leader", None, None)]
+                    if leader
+                    else []
+                )
+                decisions += [admission.assess(evidence, bar) for evidence in captured.evidence]
+                self._decided[captured.slot] = (captured.cache_key, decisions)
+            boards.append(
+                Board(captured.slot, captured.best, decisions, captured.kings, captured.paused)
+            )
+        return ScoringRead(tuple(boards), state_key)
+
+    def _read_slot_inputs(self, session: Session, slot: str, bar: float) -> _SlotInputs:
+        # Reward all standing historical champions, newest first; only challengers against the
+        # current champion belong on its leaderboard. Use projections to avoid loading reports.
+        promotions = session.execute(
+            select(
+                models.Submission.id,
+                models.Submission.hotkey,
+                models.Submission.ratio,
+                models.Submission.submitted_at,
+                models.Promotion.champion_sha256,
+            )
+            .join(models.Promotion, models.Promotion.submission_id == models.Submission.id)
+            .where(models.Promotion.slot == slot, models.Promotion.demoted_at.is_(None))
+            .order_by(models.Promotion.id.desc())
+        ).all()
+        kings = [
+            ScoredSubmission(r.id, r.hotkey, float(r.ratio or 0.0), r.submitted_at)
+            for r in promotions
+        ]
+        leader = kings[0] if kings else None
+        champion_hash = (
+            promotions[0].champion_sha256 if promotions else _current_champion(session, slot)
+        )
+        where = [
+            models.Submission.slot == slot,
+            models.Submission.state == "accepted",
+            models.Submission.ratio.is_not(None),
+        ]
+        if champion_hash is not None:
+            where.append(models.Submission.champion_sha256 == champion_hash)
+        rows = session.execute(
+            select(
+                models.Submission.id,
+                models.Submission.hotkey,
+                models.Submission.ratio,
+                models.Submission.submitted_at,
+                models.Submission.finished_at,
+            )
+            .where(*where)
+            .order_by(models.Submission.id)
+        ).all()
+        best = []
+        seen = set()
+        if leader is not None:
+            best.append(leader)
+            seen.add(leader.hotkey)
+        for row in sorted(rows, key=lambda r: (r.ratio, r.submitted_at, r.id)):
+            if row.hotkey not in seen:
+                best.append(
+                    ScoredSubmission(row.id, row.hotkey, float(row.ratio), row.submitted_at)
+                )
+                seen.add(row.hotkey)
+        key = (
+            bar,
+            admission.POLICY_VERSION,
+            leader.submission_id if leader else None,
+            tuple((r.id, float(r.ratio), str(r.finished_at)) for r in rows),
+        )
+        cached = self._decided.get(slot)
+        decisions = cached[1] if cached is not None and cached[0] == key else None
+        evidence = ()
+        if decisions is None:
+            rounds = dict(
+                session.execute(
+                    select(models.Submission.id, models.Submission.rounds).where(*where)
+                ).all()
+            )
+            evidence = tuple(
+                admission.Evidence(
+                    r.id,
+                    r.hotkey,
+                    float(r.ratio),
+                    r.submitted_at,
+                    tuple((float(i), float(t)) for i, t in (rounds[r.id] or [])),
+                )
+                for r in sorted(rows, key=lambda r: (r.submitted_at, r.id))
+                if leader is None or r.id != leader.submission_id
+            )
+        paused = session.scalar(select(models.SlotPause.slot).where(models.SlotPause.slot == slot))
+        return _SlotInputs(slot, best, kings, paused is not None, key, decisions, evidence)
+
     def _leader(self, row: models.Submission | None) -> ScoredSubmission | None:
         # The champion's row as scoring reads it, or None while the shipped champion holds.
         if row is None:
@@ -141,23 +263,26 @@ class ScoringDb:
         return policy if isinstance(policy, dict) else None
 
     def submission_state_key(self) -> str:
+        with session_scope(self._sessions) as session:
+            return self._submission_state_key(session)
+
+    def _submission_state_key(self, session: Session) -> str:
         """Detect queue and verdict changes without duplicating submissions in the payload."""
         # A paused slot remains publicly waiting while its protected challenger retries. Do not
         # publish a new scoring snapshot merely because that retry obtained a fresh attempt ID.
         retrying = (models.SlotPause.challenger_id == models.Submission.id) & (
             models.Submission.state == "verifying"
         )
-        with session_scope(self._sessions) as session:
-            rows = session.execute(
-                select(
-                    models.Submission.id,
-                    case((retrying, "queued"), else_=models.Submission.state),
-                    case((retrying, None), else_=models.Submission.verification_attempt),
-                    models.Submission.finished_at,
-                )
-                .outerjoin(models.SlotPause, models.SlotPause.challenger_id == models.Submission.id)
-                .order_by(models.Submission.id)
-            ).all()
+        rows = session.execute(
+            select(
+                models.Submission.id,
+                case((retrying, "queued"), else_=models.Submission.state),
+                case((retrying, None), else_=models.Submission.verification_attempt),
+                models.Submission.finished_at,
+            )
+            .outerjoin(models.SlotPause, models.SlotPause.challenger_id == models.Submission.id)
+            .order_by(models.Submission.id)
+        ).all()
         return hashlib.sha256(
             json.dumps([list(row) for row in rows], default=str).encode()
         ).hexdigest()

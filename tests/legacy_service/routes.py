@@ -15,11 +15,12 @@ import admission
 import db
 import reward
 from db import SLOTS, SubmissionState, iso, models
-from db.submissions import QueueFull
 from db.verifier import required_fingerprint
+from service import sig
+from service.settings import MAX_FILE_BYTES, PROMOTION_BAR, Settings
 
-from . import schemas, security, sig
-from .settings import MAX_FILE_BYTES, PROMOTION_BAR, Settings
+from . import schemas, security
+from .intake import QueueFull, enqueue
 
 router = APIRouter()
 # Every competition endpoint, as the conjectures platform lays them out: one slug per slot.
@@ -206,7 +207,7 @@ async def submit(
     if not store.registrations.is_registered(hotkey):
         raise refuse(402, "this hotkey is not registered on the subnet")
     try:
-        sub_id, fresh, slots = store.submissions.enqueue(hotkey, digest, slot, lean)
+        sub_id, fresh, slots = enqueue(store.submissions, hotkey, digest, slot, lean)
     except QueueFull as full:
         raise refuse(
             402,

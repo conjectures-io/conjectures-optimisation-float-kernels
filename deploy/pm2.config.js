@@ -1,15 +1,14 @@
-// The validator under PM2: four processes, each doing one thing, named floatlib-* so they sit
+// The validator under PM2: three processes, each doing one thing, named floatlib-* so they sit
 // beside another competition's on one host.
 //
-//   floatlib-submission-api   serves /v1/competitions/floatlib/... (the full entry) and floatlib-<slot>
 //   floatlib-gate-worker      drains the queue through gate.py
 //   floatlib-chain-watcher    streams subnet registrations into the store
 //   floatlib-weight-setter    scores the round and sets weights, once an epoch (dry run by default)
 //
-//   pm2 start deploy/pm2.config.js                               all four
+//   pm2 start deploy/pm2.config.js                               all three
 //   pm2 start deploy/pm2.config.js --only floatlib-gate-worker    one machine's gate only
 //
-// They are separate processes on purpose: a gate crash must not take the API down. The
+// Intake and reads run in the central API. This config runs only competition workers. The
 // two chain workers need the bittensor SDK (./setup.sh --chain) and nothing else does.
 //
 // Postgres is not here: it comes up with `docker compose up -d db` (or a managed
@@ -36,17 +35,6 @@ const cwd = path.join(root, "validator");
 
 module.exports = {
   apps: [
-    {
-      name: "floatlib-submission-api",
-      cwd,
-      script: python,
-      // The venv's python is the program itself, not a script for pm2's own interpreter.
-      interpreter: "none",
-      args: "-m service.api",
-      env,
-      autorestart: true,
-      max_restarts: 10,
-    },
     {
       name: "floatlib-gate-worker",
       cwd,

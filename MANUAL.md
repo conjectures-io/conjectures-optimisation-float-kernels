@@ -347,24 +347,16 @@ cp -r kernels/add/textbook-unproved my-kernel
 
 ## 12. Submitting, and the round rules
 
-**Submitting is live.** A validator runs the service in `validator/`, and `miner/submit.py` talks
-to it. You need a hotkey registered on the subnet, and the service's URL from the round
-announcement. The API is laid out like the conjectures platform's, and the client signs the
-platform's message, so the same client works against the conjectures platform's API.
+Submissions go through the central Conjectures API. Only full entries can be uploaded;
+individual kernel boards are read-only practice history. The miner CLI defaults to
+`https://conjectures.io`; pass `--url` to use a development API.
 
 ```bash
-.venv/bin/pip install -r requirements/miner.txt         # once: the client's signing and HTTP libraries
-python miner/submit.py submit my-kernel --hotkey ~/.bittensor/wallets/<w>/hotkeys/<h> --url http://<validator>:9300
-#   (the default slot is full, the paid entry; --slot add|mul|... for a practice board)
-#   submission 12 (full) queued  digest f5e2f885...
-python miner/submit.py status 12 --url http://<validator>:9300
-#   submission 12 (full)  state accepted
-#   stage score
-#   time vs incumbent 0.5547x (lower is faster)
-python miner/submit.py report 12 --url http://<validator>:9300    # the gate's full verdict
-python miner/submit.py leaderboard --url http://<validator>:9300    # --slot add|mul|... for a practice board
-#   rank    ratio qualifies       admission  hotkey
-#      1   0.5547       yes          leader  5Grw...  <- leader, paid
+.venv/bin/pip install -r requirements/miner.txt
+python miner/submit.py submit my-entry --hotkey ~/.bittensor/wallets/<w>/hotkeys/<h>
+python miner/submit.py status 12
+python miner/submit.py report 12
+python miner/submit.py leaderboard
 ```
 
 Each slot is its own competition slug: `floatlib` is the full entry, `floatlib-add`,
@@ -372,8 +364,8 @@ Each slot is its own competition slug: `floatlib` is the full entry, `floatlib-a
 
 | endpoint | what it does |
 |---|---|
-| `POST …/submissions` | one multipart part, `Kernel.lean`, and three headers: `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp` (unix seconds) and `X-Conjectures-Signature`, an sr25519 signature over the five lines `conjectures-competition-submit-v1` / `competition: <slug>` / `digest: <sha256(Kernel.lean)>` / `hotkey: <ss58>` / `timestamp: <seconds>` (`miner/sig.py`) |
-| `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed or gave no verdict on it three times: uncharged and worth reporting; send the same file again to retry), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed; the verdict still counts) |
+| `POST /v1/competitions/floatlib/submissions` | full entries only; one multipart part, `Kernel.lean`, and three headers: `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp` (unix seconds) and `X-Conjectures-Signature`, an sr25519 signature over the five lines `conjectures-competition-submit-v1` / `competition: <slug>` / `digest: <sha256(Kernel.lean)>` / `hotkey: <ss58>` / `timestamp: <seconds>` (`miner/sig.py`) |
+| `GET …/submissions/{id}` | its slot, state (`queued`, `verifying`, `accepted`, `rejected`, or `error` when the gate crashed or gave no verdict on it three times: uncharged and worth reporting; ask an operator to recover the existing entry), the stage reached, the gate's reason, the ratio and per-class timings, and the verifier fingerprint it was judged by (`verification_current` is false once the validator's gate has changed; the verdict still counts) |
 | `GET …/submissions/{id}/report` | the gate's full verdict JSON: every stage it reached and why it stopped |
 | `GET …/leaderboard` | the slot's board: the champion first (its ratio is against the champion it took over from), then every other hotkey's best accepted ratio against the current champion (`champion_sha256`), fastest first; `qualifies` marks ratios at or below the promotion bar, `admission` each row's outcome (`leader` for the champion, `qualifies`, `not-significant`, `above-bar`, `no-evidence`), `leader` the champion's submission id (null while the shipped champion holds), and `pays` whether this board pays its champions (only the full entry's does; who is paid is on `…/champions`); each row's `kernels` are its nanoseconds per operation per kernel (`add`, `mul`, `sum`, `bmm` on the full entry, the board's own kernel on a practice board), and the champion's row carries `promoted_at`, when it took over |
 | `GET …/champions` | every submission the board has promoted, newest first: `submission`, `hotkey`, `ratio` (against the champion it took over from), `promoted_at`, `demoted_at` (set by an explicit operator demotion), `current`, true for the one champion now, and on the paid board `rank` (1 to 3) and `rank_share` (0.6, 0.3, 0.1) for the three champions paid, null for the rest; a newer promotion supersedes a champion without demoting it, and a demotion hands the board back to the newest one before it not demoted |
@@ -425,15 +417,19 @@ file over 256,000 bytes; 429 past the rate limit.
 
 **What the service enforces:**
 - The signature must match the hotkey and this exact file, and its timestamp must be within 5 minutes of the validator's clock, so a captured upload cannot be replayed.
-- **One registration buys one entry.** Every verdict spends one registration, accepted or rejected; to submit again, register again. So run `gate.py` on your entry first: it is the same gate. Only a validator error (`error`) and a refusal at the door (4xx) spend nothing.
-- **A time budget per entry.** Each entry has a time budget for its own builds, kernel replays and timing runs, 600 seconds in all (a full entry uses about two minutes): one that runs out, or goes over a memory cap (4096 MB to build, 512 MB to time), is rejected. Check yours with `gate.py` first.
-- At most 10 signed writes a minute per hotkey, and at most as many queued submissions as you have unspent registrations.
-- The same file from the same hotkey in the same slot is the same submission: resubmitting it returns the same id.
-- A signature is bound to its slot's slug: one made for `floatlib` (the full entry) does not verify for `floatlib-add`, and the other way round, nor for any other competition on the platform.
-- Registrations are shared across slots: one registration buys one entry in any slot. (Two meanings of "slot" meet here: a *registration slot* is what you spend, a *competition slot* is `full` or one of the practice boards.)
+- **One submission since your latest registration.** By default that registration must be after
+  the operator's cutoff. An optional DEFLATE history check replaces the cutoff, with fallback
+  to the cutoff if its database connection fails. Every stored submission status blocks another
+  entry, including errors. Interrupted verification retries the same entry.
+- The same file from the same hotkey returns HTTP 409 `DUPLICATE_SUBMISSION`, including after
+  re-registration. The error includes its existing submission ID.
+- Refusals before insertion do not create a submission. Invalid signatures and oversized uploads
+  are refused; proof and benchmark failures happen after the entry has consumed eligibility.
+- Signed writes are rate limited. Signatures bind the file, competition, hotkey and request time.
+- Practice boards accept no uploads; only `floatlib` accepts the full four-kernel entry.
 - **One board pays: the full entry.** Its last three champions (demoted ones skipped) split the competition's share 60/30/10: the current champion's author 60%, the author of the one it beat 30%, and of the one before that 10%. A hotkey holding two or three of those ranks is paid for each. A rank no one holds yet, as while the shipped champion holds or before the third promotion, goes to the treasury. The practice boards are ranked and shown, but unpaid.
 - Each submission runs this exact gate on the validator's pinned machine and CPU, on a fresh seed.
-- **A verdict keeps counting after a gate update.** Every verdict records the verifier fingerprint and incumbent it was judged by, as provenance; when the validator updates its gate, contract or bench, the change is logged and older accepted submissions stay on the board. The operator may choose to re-verify them, at no cost to you: a re-acceptance reuses the registration already spent.
+- **A verdict keeps counting after a gate update.** Every verdict records the verifier fingerprint and incumbent it was judged by, as provenance; when the validator updates its gate, contract or bench, the change is logged and older accepted submissions stay on the board. The operator may choose to re-verify them, at no cost to you: re-verification uses the existing entry and grants no new upload allowance.
 - **A promotion starts a fresh board.** Every verdict also records the champion it was measured against (`champion_sha256`, the hash of the champion's `Kernel.lean`). After a promotion, the board counts only ratios against the new champion, since older ones were measured against a slower one, and every later entry is timed against the new champion.
 
 **Round rules:**
@@ -517,7 +513,7 @@ import, and the rule you must meet.
 ```bash
 .venv/bin/python gate.py --slot bmm --bench my-bmm     # time an unproved matmul
 .venv/bin/python gate.py --slot bmm kernels/bmm/fast   # the full gate on the bmm slot
-python miner/submit.py submit my-bmm --hotkey <file> --url <validator> --slot bmm
+# Practice bmm uploads are disabled; include bmm in a full entry.
 ```
 
 **The rules are TorchLean's.** A `sum` or `bmm` submission imports `ContractTensor` and nothing
@@ -578,7 +574,7 @@ BmmObligation Submission.bmm`, so one wrong kernel refuses the whole entry
 cp -r kernels/full/incumbent my-entry                  # the champion: start here, beat it
 .venv/bin/python gate.py --bench my-entry              # time it (full is the default slot)
 .venv/bin/python gate.py my-entry                      # the real gate, about 3 minutes
-python miner/submit.py submit my-entry --hotkey <file> --url <validator>
+python miner/submit.py submit my-entry --hotkey <file>
 ```
 
 **The champion.** `kernels/full/incumbent` is the best proven work so far, not FloatLib's own

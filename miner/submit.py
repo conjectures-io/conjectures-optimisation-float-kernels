@@ -1,7 +1,7 @@
 """Miner client: submit a Kernel.lean, read its verdict and report, read the leaderboard.
 
 Talks to any API laid out like the conjectures platform's competition surface,
-`/v1/competitions/<slug>/...`: a FloatLib validator, or conjectures.io once it serves FloatLib.
+`/v1/competitions/<slug>/...` on the central API (https://conjectures.io by default).
 `floatlib` is the full entry (add, mul, sum, bmm in one file; the paid board and the default
 slot), `floatlib-<slot>` each single-kernel practice board. Needs only requirements/miner.txt.
 Usage in MANUAL.md, sections 12 and 15:
@@ -26,6 +26,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sig  # noqa: E402 - the miner's copy of the signing contract, pinned by test_miner_sig.py
 
+DEFAULT_URL = "https://conjectures.io"
 TIMEOUT = 60
 SLOTS = ("full", "add", "mul", "fma", "div", "sqrt", "sum", "bmm")
 
@@ -37,7 +38,7 @@ class SubmitResult(TypedDict):
     slot: str
     state: str
     digest: str
-    # False when this exact file was already queued: the retry got the same submission.
+    # Successful uploads are new; duplicate files return HTTP 409.
     created: bool
     # Unclaimed registrations left; every verdict, accepted or rejected, spends one.
     slots_remaining: int
@@ -90,6 +91,11 @@ def refused(what: str, r: requests.Response) -> str:
         code, detail = body.get("reason_code"), body.get("detail")
         if isinstance(detail, dict):
             detail = cast("dict[str, object]", detail).get("reason", detail)
+        if code == "DUPLICATE_SUBMISSION" and body.get("submission") is not None:
+            detail = (
+                f"{detail} Existing submission {body['submission']} "
+                f"({body.get('state', 'unknown')})."
+            )
         if code or detail:
             return f"{what} refused ({r.status_code}{f' {code}' if code else ''}): {detail}"
     return f"{what} refused ({r.status_code}): {r.text[:300]}"
@@ -120,6 +126,8 @@ def cmd_submit(args: argparse.Namespace) -> None:
     # Hash the file, sign (slug, hash, hotkey, now), upload; print the submission id.
     d, hotkey, url = cast(str, args.dir), cast(str, args.hotkey), cast(str, args.url)
     slot = cast(str, args.slot)
+    if slot != "full":
+        sys.exit("Only full entries can be submitted; practice boards are read-only.")
     lean = kernel_of(Path(d))
     kp = sig.load_keypair(hotkey)
     digest = sig.digest_of(lean)
@@ -140,7 +148,7 @@ def cmd_submit(args: argparse.Namespace) -> None:
     print(f"submission {s['submission']} ({slot}) {s['state']}{again}  digest {digest}")
     print(
         f"{s['slots_remaining']} registration slot(s) left; "
-        "one registration buys one entry, accepted or rejected"
+        "one registration permits one recorded entry"
     )
     print(f"check with: submit.py status {s['submission']} --slot {slot} --url {url}")
 
@@ -220,7 +228,7 @@ def main() -> None:
 
     def common(p: argparse.ArgumentParser) -> None:
         # The options every subcommand takes: where the API is, and which slot.
-        p.add_argument("--url", required=True, help="API origin, e.g. http://host:9300")
+        p.add_argument("--url", default=DEFAULT_URL, help=f"API origin (default {DEFAULT_URL})")
         p.add_argument("--slot", default="full", choices=SLOTS, help="default full, the paid entry")
 
     p = sub.add_parser("submit")

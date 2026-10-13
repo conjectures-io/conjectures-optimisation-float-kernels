@@ -33,9 +33,9 @@ class Neuron(Protocol):
 
 
 def changed_rows(
-    latest: dict[int, tuple[str, str]], neurons: Iterable[Neuron]
+    latest: dict[int, tuple[str, str, int]], neurons: Iterable[Neuron]
 ) -> list[dict[str, object]]:
-    # The rows to insert: only uids whose (hot, cold) pair moved, stamped with their own block.
+    # Record changed keys or registration blocks, stamped with the actual registration block.
     return [
         {
             "uid": n.uid,
@@ -44,7 +44,7 @@ def changed_rows(
             "block": n.block_at_registration,
         }
         for n in neurons
-        if latest.get(n.uid) != (n.hotkey, n.coldkey)
+        if latest.get(n.uid) != (n.hotkey, n.coldkey, n.block_at_registration)
     ]
 
 
@@ -113,18 +113,19 @@ class RegistrationsDb:
         return len(rows)
 
     @staticmethod
-    def _latest_keys(session: Session) -> dict[int, tuple[str, str]]:
+    def _latest_keys(session: Session) -> dict[int, tuple[str, str, int]]:
         # Each uid's newest recorded (hot, cold) pair, which a snapshot is diffed against.
         stmt = (
             select(
                 models.Registration.uid,
                 models.Registration.ss58_hot,
                 models.Registration.ss58_cold,
+                models.Registration.block,
             )
             .distinct(models.Registration.uid)
             .order_by(models.Registration.uid, models.Registration.block.desc())
         )
-        return {row.uid: (row.ss58_hot, row.ss58_cold) for row in session.execute(stmt)}
+        return {row.uid: (row.ss58_hot, row.ss58_cold, row.block) for row in session.execute(stmt)}
 
     # --- entitlements ---------------------------------------------------------
     def is_registered(self, hotkey: str) -> bool:

@@ -200,8 +200,7 @@ def stub_gate(tmp_path, monkeypatch):
 def client(store, settings, stub_gate):
     # The API against the test store, with the stub gate behind its worker.
     from fastapi.testclient import TestClient
-
-    from service.api import create_app
+    from legacy_service.api import create_app
 
     with TestClient(app=create_app(settings, store)) as c:
         yield c

@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # Age at which a claim counts as abandoned; must exceed the gate's timeout.
     stale_claim_seconds: float = Field(default=7200.0, gt=0)
 
-    # Gate crashes on one submission before it ends in `error`, uncharged, off the queue.
+    # Gate crashes before terminal `error`; the recorded entry still consumes upload eligibility.
     max_gate_errors: int = Field(default=3, ge=1)
 
     champion_retry_seconds: float = Field(

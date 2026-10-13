@@ -80,9 +80,9 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
 
         def json(self):
             return {
-                "competition": "floatlib-fma",
+                "competition": "floatlib",
                 "submission": 1,
-                "slot": "fma",
+                "slot": "full",
                 "state": "queued",
                 "digest": "0" * 64,
                 "created": True,
@@ -94,13 +94,15 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
         return Reply()
 
     monkeypatch.setattr(submit.requests, "post", post)
-    args = submit.argparse.Namespace(dir=str(d), hotkey="//Alice", url="http://v:9300/", slot="fma")
+    args = submit.argparse.Namespace(
+        dir=str(d), hotkey="//Alice", url="http://v:9300/", slot="full"
+    )
     submit.cmd_submit(args)
-    assert sent["url"] == "http://v:9300/v1/competitions/floatlib-fma/submissions"
+    assert sent["url"] == "http://v:9300/v1/competitions/floatlib/submissions"
     assert set(sent["files"]) == {"Kernel.lean"}
     h = sent["headers"]
     message = service_sig.submit_message(
-        competition="floatlib-fma",
+        competition="floatlib",
         digest=service_sig.digest_of(b"import Contract\n"),
         hotkey=h["X-Conjectures-Hotkey"],
         timestamp=int(h["X-Conjectures-Timestamp"]),
@@ -114,3 +116,14 @@ def test_the_full_entry_is_the_competition_itself():
     assert miner_sig.slug_of("full") == "floatlib" and miner_sig.slug_of("add") == "floatlib-add"
     assert service_sig.slot_of("floatlib") == "full"
     assert service_sig.slot_of("floatlib-full") is None
+
+
+def test_client_url_defaults_to_central_api_and_can_be_overridden(monkeypatch):
+    submit = load("miner_submit_defaults", REPO / "miner" / "submit.py")
+    seen = []
+    monkeypatch.setitem(submit.CMDS, "status", lambda args: seen.append(args.url))
+    monkeypatch.setattr(sys, "argv", ["submit.py", "status", "49"])
+    submit.main()
+    monkeypatch.setattr(sys, "argv", ["submit.py", "status", "49", "--url", "http://dev:8000"])
+    submit.main()
+    assert seen == ["https://conjectures.io", "http://dev:8000"]

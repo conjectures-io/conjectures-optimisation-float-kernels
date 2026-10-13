@@ -1,4 +1,4 @@
-"""The submission service end to end - submit, verify, rank - on a stub gate and real Postgres."""
+"""Worker regression tests using a historical HTTP fixture and a stub gate on real Postgres."""
 
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ def test_explicit_reverify_without_charging_again(client, store, drain, tmp_path
     assert [x["submission"] for x in client.get(f"{api()}/leaderboard").json()["ranking"]] == [sid]
     with store_pkg.session_scope(store.sessions) as session:
         claims = session.execute(sa.select(models.EntitlementClaim)).scalars().all()
-        assert [c.submission_id for c in claims] == [sid]
+        assert claims == []
 
 
 def test_same_file_again_returns_the_same_submission(client, store, drain, tmp_path):
@@ -435,7 +435,7 @@ def test_health_states_the_share_the_latest_publication_applied(client, store):
 
 
 def test_kernel_times_sum_each_kernels_classes():
-    from service.routes import kernel_times
+    from legacy_service.routes import kernel_times
 
     classes = {
         "add:near-one": {"submission_ns": 2.0},

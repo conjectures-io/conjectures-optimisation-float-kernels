@@ -5,9 +5,10 @@ from __future__ import annotations
 import time
 
 import pytest
+from legacy_service import security
 
 from conftest import api, kernel_file, post_submission, register
-from service import security, sig
+from service import sig
 from service.settings import MAX_FILE_BYTES, MAX_REQUEST_BYTES
 
 ALICE = sig.load_keypair("//Alice")
@@ -199,8 +200,7 @@ def test_the_rate_limit_is_per_hotkey_and_counted_in_the_store(client, store, tm
 def test_the_rate_limit_survives_a_new_app_instance(client, store, settings, tmp_path):
     # Why the counter is in the database: a second or restarted API sees the same budget.
     from fastapi.testclient import TestClient
-
-    from service.api import create_app
+    from legacy_service.api import create_app
 
     register(store, ALICE.ss58_address)
     d = kernel_file(tmp_path, "a", "RATIO=0.92")
