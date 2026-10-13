@@ -379,7 +379,8 @@ def run(
         f"[weights] running netuid={config.netuid} treasury_uid={config.treasury_uid} "
         f"competition_share={config.competition_share:.3f} margin={config.set_margin} "
         f"burn_mode={config.burn_mode} burn_uid={config.burn_uid} dry_run={config.dry_run} "
-        f"scoring=king-of-the-hill per slot, slots={','.join(reward.PAYING_SLOTS)} "
+        f"scoring=last {len(reward.RANK_SHARES)} champions by rank {reward.RANK_SHARES}, "
+        f"slots={','.join(reward.PAYING_SLOTS)} "
         f"winner_share={scoring_config.winner_share:.2f}"
     )
     ticks = TickLog()

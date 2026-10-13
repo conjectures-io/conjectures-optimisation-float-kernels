@@ -125,10 +125,12 @@ def accept(
 
 # The paying slot's part of the competition's budget: all of it, the full entry alone.
 WHOLE = 1.0
+# The current champion's, the previous one's and the one before's parts of it.
+FIRST, SECOND, THIRD = (WHOLE * share for share in reward.RANK_SHARES)
 
 
 def pay(store) -> reward.Scoring:
-    # What the weight setter would pay: each paying slot's champion its slot's part.
+    # What the weight setter would pay: each paying slot's last champions their ranks' parts.
     config = reward.ScoringConfig()
     boards = [store.scoring.board(slot, config.max_ratio) for slot in reward.PAYING_SLOTS]
     return reward.score(boards, config)
@@ -137,12 +139,50 @@ def pay(store) -> reward.Scoring:
 # ── The scorer ────────────────────────────────────────────────────────────
 
 
-def test_the_fastest_hotkey_takes_its_slots_share(store, clock):
+def test_the_new_champion_takes_the_first_share_and_the_one_it_beat_the_second(store, clock):
     accept(store, "hk-slow", 0.80, uid=1)
     clock["tick"](10)
     accept(store, "hk-fast", 0.53, uid=2)
     result = pay(store)
-    assert result.weights == {"hk-fast": WHOLE}
+    assert result.weights == pytest.approx({"hk-fast": FIRST, "hk-slow": SECOND})
+
+
+def test_the_last_three_champions_are_paid_60_30_10(store, clock):
+    # Four promotions: the oldest champion has dropped out of the paid three.
+    for uid, (hotkey, ratio) in enumerate(
+        [("hk-1", 0.90), ("hk-2", 0.90), ("hk-3", 0.90), ("hk-4", 0.90)], start=1
+    ):
+        accept(store, hotkey, ratio, uid=uid)
+        clock["tick"](10)
+    result = pay(store)
+    assert result.weights == pytest.approx({"hk-4": 0.60, "hk-3": 0.30, "hk-2": 0.10})
+    assert sum(result.weights.values()) == pytest.approx(WHOLE)
+    paid = [(s.rank, s.hotkey) for s in result.scores if s.rank is not None]
+    assert paid == [(1, "hk-4"), (2, "hk-3"), (3, "hk-2")]
+    assert "full#1:hk-4" in result.summary()
+
+
+def test_one_hotkey_holding_two_ranks_is_paid_for_both(store, clock):
+    accept(store, "hk-a", 0.90, uid=1)
+    clock["tick"](10)
+    accept(store, "hk-b", 0.90, uid=2)
+    clock["tick"](10)
+    # A second registration of the same hotkey, at another block, buys its second verdict.
+    accept(store, "hk-b", 0.89, uid=3)
+    assert pay(store).weights == pytest.approx({"hk-b": FIRST + SECOND, "hk-a": THIRD})
+
+
+def test_a_demoted_champion_is_skipped_and_the_older_ones_move_up(store, clock):
+    from service import worker
+
+    for uid, hotkey in enumerate(["hk-1", "hk-2", "hk-3", "hk-4"], start=1):
+        accept(store, hotkey, 0.90, uid=uid)
+        clock["tick"](10)
+    current = store.submissions.champion("full")
+    with worker.gate_slot() as free:
+        assert free
+        store.pauses.demote("full", current.id, "operator reviewed the champion")
+    assert pay(store).weights == pytest.approx({"hk-3": FIRST, "hk-2": SECOND, "hk-1": THIRD})
 
 
 def test_a_copy_of_the_champion_pays_nothing(store, clock):
@@ -151,7 +191,7 @@ def test_a_copy_of_the_champion_pays_nothing(store, clock):
     clock["tick"](10)
     accept(store, "hk-second", 1.00, uid=2)
     result = pay(store)
-    assert result.weights == {"hk-first": WHOLE}
+    assert result.weights == {"hk-first": FIRST}
 
 
 def test_a_lucky_copy_of_the_champion_is_not_promoted(store, clock):
@@ -161,7 +201,7 @@ def test_a_lucky_copy_of_the_champion_is_not_promoted(store, clock):
     clock["tick"](10)
     accept(store, "hk-copy", 0.96, uid=2, true_ratio=1.00)
     assert [r.hotkey for r in store.scoring.best_per_hotkey("full")] == ["hk-first", "hk-copy"]
-    assert pay(store).weights == {"hk-first": WHOLE}
+    assert pay(store).weights == {"hk-first": FIRST}
 
 
 def test_no_faster_than_the_incumbent_pays_nothing(store):
@@ -181,7 +221,7 @@ def test_a_near_copy_of_the_incumbent_pays_nothing(store):
 def test_a_ratio_on_the_promotion_bar_pays(store):
     accept(store, "hk", reward.PROMOTION_BAR)
     result = pay(store)
-    assert result.weights == {"hk": WHOLE}
+    assert result.weights == {"hk": FIRST}
 
 
 def test_incumbent_drift_keeps_previous_winner(store, clock):
@@ -190,7 +230,7 @@ def test_incumbent_drift_keeps_previous_winner(store, clock):
     clock["tick"](10)
     accept(store, "hk-new", 1.01, incumbent="c" * 64, uid=2)
     result = pay(store)
-    assert result.weights == {"hk-old": WHOLE}
+    assert result.weights == {"hk-old": FIRST}
 
 
 def test_only_the_full_entry_pays(store):
@@ -198,7 +238,7 @@ def test_only_the_full_entry_pays(store):
     accept(store, "hk-full", 0.55, uid=1)
     accept(store, "hk-sum", 0.53, uid=2, slot="sum")
     accept(store, "hk-bmm", 0.57, uid=3, slot="bmm")
-    assert pay(store).weights == {"hk-full": WHOLE}
+    assert pay(store).weights == {"hk-full": FIRST}
 
 
 def test_practice_boards_are_ranked_but_unpaid(store):
@@ -293,20 +333,45 @@ def test_a_step_at_the_boundary_sets_the_split_and_records_why(store):
     chain = FakeChain(hotkeys={"hk-fast": 2}, block=at_epoch_boundary())
     result = step(chain, store, config(), reward.ScoringConfig())
     assert result.action == "set", result.reason
-    # The full entry's leader gets the competition's 0.2, the treasury the rest.
+    # The only champion so far gets the first rank's 60% of the competition's 0.2; the second and
+    # third ranks are unearned, so the treasury takes them with its own 0.8.
     ((uids, weights),) = chain.submitted
-    assert uids == [0, 1, 2] and weights == pytest.approx([0.8, 0.0, 0.2])
+    assert uids == [0, 1, 2] and weights == pytest.approx([0.88, 0.0, 0.12])
     (weight_set,), snapshots = weight_sets(store)
     assert weight_set.accepted is True and weight_set.error is None
     assert [(s.slot, s.hotkey, s.ratio) for s in snapshots] == [("full", "hk-fast", 0.53)]
-    assert snapshots[0].weight == pytest.approx(WHOLE)
+    assert snapshots[0].weight == pytest.approx(FIRST)
     published = weight_set.api_snapshot
     assert published["policy"]["competition_share"] == 0.2
     assert published["policy"]["slot_shares"] == {slot: WHOLE for slot in reward.PAYING_SLOTS}
+    assert published["policy"]["rank_shares"] == [0.6, 0.3, 0.1]
     assert published["slots"]["full"]["leader"] == sub
+    assert published["slots"]["full"]["kings"] == [sub]
     assert published["slots"]["full"]["items"][0]["admission"] == "leader"
+    assert published["slots"]["full"]["items"][0]["rank"] == 1
     assert list(published["slots"]) == ["full"]
     json.dumps(published)
+
+
+def test_a_step_pays_three_champions_their_ranks_of_the_competitions_share(store, clock):
+    # 0.2 split 60/30/10: 0.12, 0.06 and 0.02 of the validator's weight; the treasury keeps 0.8.
+    hotkeys = {"hk-1": 1, "hk-2": 2, "hk-3": 3, "hk-4": 4}
+    subs = []
+    for hotkey, uid in hotkeys.items():
+        subs.append(accept(store, hotkey, 0.90, uid=uid))
+        clock["tick"](10)
+    chain = FakeChain(uids=(0, 1, 2, 3, 4), hotkeys=hotkeys, block=at_epoch_boundary())
+    assert step(chain, store, config(), reward.ScoringConfig()).action == "set"
+    ((uids, weights),) = chain.submitted
+    assert uids == [0, 1, 2, 3, 4]
+    assert weights == pytest.approx([0.8, 0.0, 0.02, 0.06, 0.12])
+    (weight_set,), snapshots = weight_sets(store)
+    assert {(s.hotkey, round(s.weight, 9)) for s in snapshots} == {
+        ("hk-4", 0.6),
+        ("hk-3", 0.3),
+        ("hk-2", 0.1),
+    }
+    assert weight_set.api_snapshot["slots"]["full"]["kings"] == subs[:0:-1]
 
 
 def test_a_dry_run_records_but_does_not_submit(store):
@@ -350,7 +415,7 @@ def test_an_unregistered_validator_still_saves_the_scores(store):
 def test_verifier_drift_keeps_previous_winner(store, monkeypatch):
     accept(store, "hk-old", 0.40, uid=1)
     monkeypatch.setenv("GATE_REQUIRED_FINGERPRINT", "e" * 64)
-    assert pay(store).weights == {"hk-old": WHOLE}
+    assert pay(store).weights == {"hk-old": FIRST}
 
 
 def test_admission_is_reused_until_a_verdict_or_the_bar_changes(store, monkeypatch):

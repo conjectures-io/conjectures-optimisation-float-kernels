@@ -103,12 +103,14 @@ def test_failed_retry_cooldown_starts_at_completion(store, clock):
 
 
 def test_pause_reward_policy_keeps_champion_visible(clock):
-    leader = ScoredSubmission(1, "alice", 0.9, clock["t"])
-    board = Board("full", [leader], [], leader, paused=True)
+    leader = ScoredSubmission(2, "alice", 0.9, clock["t"])
+    before = ScoredSubmission(1, "bob", 0.9, clock["t"])
+    board = Board("full", [leader], [], [leader, before], paused=True)
     preserved = reward.score([board], reward.ScoringConfig())
     burned = reward.score([board], reward.ScoringConfig(paused_slot_policy="treasury"))
-    assert preserved.weights == {"alice": 1.0}
-    assert burned.weights == {}
+    assert preserved.weights == pytest.approx({"alice": 0.6, "bob": 0.3})
+    # Only the current champion's share is withheld: the earlier champions are not at fault.
+    assert burned.weights == pytest.approx({"bob": 0.3})
     snapshot = reward.publication(
         burned,
         [board],
@@ -116,7 +118,7 @@ def test_pause_reward_policy_keeps_champion_visible(clock):
         competition_share=0.2,
         computed_at=clock["t"],
     )
-    assert snapshot["slots"]["full"]["leader"] == 1
+    assert snapshot["slots"]["full"]["leader"] == 2
     assert snapshot["slots"]["full"]["paused"] is True
     assert snapshot["slots"]["full"]["items"][0]["weight"] == 0
     restored = reward.score([dataclasses.replace(board, paused=False)], reward.ScoringConfig())
@@ -323,8 +325,8 @@ def test_pause_treasury_vector_and_snapshot_dedup(store, clock):
     preserved = reward.ScoringConfig()
     redirected = reward.ScoringConfig(paused_slot_policy="treasury")
     assert vector(plan_for(store, chain.metagraph(2), cfg, preserved)[0]) == {
-        0: 0.8,
-        1: 0.2,
+        0: 0.88,
+        1: 0.12,
         2: 0.0,
     }
     challenger = add(store, "challenger", "full")
@@ -332,8 +334,8 @@ def test_pause_treasury_vector_and_snapshot_dedup(store, clock):
     assert sub.id == challenger
     pause(store, sub)
     assert vector(plan_for(store, chain.metagraph(2), cfg, preserved)[0]) == {
-        0: 0.8,
-        1: 0.2,
+        0: 0.88,
+        1: 0.12,
         2: 0.0,
     }
     assert vector(plan_for(store, chain.metagraph(2), cfg, redirected)[0]) == {
@@ -357,7 +359,7 @@ def test_pause_treasury_vector_and_snapshot_dedup(store, clock):
     retry = store.submissions.claim_next("w")
     store.pauses.recover(retry, store.pauses.all()["full"].revision)
     assert vector(plan_for(store, chain.metagraph(2), cfg, redirected)[0]) == {
-        0: 0.8,
-        1: 0.2,
+        0: 0.88,
+        1: 0.12,
         2: 0.0,
     }

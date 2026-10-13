@@ -30,12 +30,17 @@ class ScoredSubmission:
 @dc.dataclass(frozen=True, slots=True)
 class Board:
     # One slot as the weight setter scores it: each hotkey's best accepted submission, the
-    # statistical admission decisions, and the champion (the one submission paid).
+    # statistical admission decisions, and every champion not demoted, newest first (the ones paid).
     slot: str
     best: list[ScoredSubmission]
     decisions: list[admission.Decision]
-    leader: ScoredSubmission | None
+    kings: list[ScoredSubmission]
     paused: bool = False
+
+    @property
+    def leader(self) -> ScoredSubmission | None:
+        # The current champion, or None while the shipped one holds.
+        return self.kings[0] if self.kings else None
 
 
 def evidence_of(row: models.Submission) -> admission.Evidence:
@@ -90,8 +95,17 @@ class ScoringDb:
         return decisions
 
     def leader(self, slot: str, bar: float) -> ScoredSubmission | None:
-        # A slot's leader: the author of its champion, the one submission in it the setter pays.
+        # A slot's leader: the author of its champion, the newest submission in it the setter pays.
         return self._leader(self._submissions.champion(slot))
+
+    def kings(self, slot: str) -> list[ScoredSubmission]:
+        # Every champion the slot has had that was not demoted, newest first: the current champion,
+        # then the one it took over from, and so on; reward.py pays the first few.
+        return [
+            ScoredSubmission(row.id, row.hotkey, float(row.ratio or 0.0), row.submitted_at)
+            for row, promotion in self._submissions.champions(slot)
+            if promotion.demoted_at is None
+        ]
 
     def board(self, slot: str, bar: float) -> Board:
         # Everything the weight setter needs for one slot.
@@ -101,7 +115,7 @@ class ScoringDb:
             slot,
             self.best_per_hotkey(slot),
             self.admission(slot, bar),
-            self.leader(slot, bar),
+            self.kings(slot),
             paused,
         )
 
