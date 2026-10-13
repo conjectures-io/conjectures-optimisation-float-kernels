@@ -180,7 +180,9 @@ There is no automatic demotion for these failures. Successful champion benchmark
 pause. A challenger rejected before testing the champion is handled normally; the slot stays
 paused and advances to its next challenger. With no queued challengers, it waits for new work.
 Pauses survive restarts; warnings occur on entry or a changed failure, with a recovery message
-on resume. Repeated identical failures are debug-level.
+on resume. Repeated identical failures are debug-level in the log, but every failed attempt
+sends a `slot_paused` Axiom event at error severity and recovery sends `slot_recovered`
+(see Observability); alert on `slot_paused`.
 
 `WEIGHT_PAUSED_SLOT_POLICY=preserve` keeps normal rewards (default). Set it to `treasury` to
 redirect a paused paid slot's miner share to the treasury until recovery, without changing its
@@ -256,7 +258,9 @@ the emissions decision that comes with it. Until then miners submit to a FloatLi
 With `AXIOM_TOKEN` and `AXIOM_DATASET` set, the four processes send structured events to the
 platform's Axiom dataset in its envelope (`validator/axiom.py`, ported from DEFLATE), tagged
 `competition: "floatlib"`: `service_started`/`stopped`/`misconfigured`, `submission_claimed`,
-`gate_verdict`, `submission_requeued`, `gate_validator_error`, `registrations_recorded`,
+`gate_verdict`, `submission_requeued`, `gate_validator_error`, `slot_paused` (error, once per
+failed reference attempt, so it repeats every `CHAMPION_RETRY_SECONDS` while a slot stays down;
+`first` marks the pause's start), `slot_recovered` (info), `registrations_recorded`,
 `chain_read_failed`, `weights_planned`/`set`/`skipped`/`failed`, and every ERROR log line as
 `log_error`. Without them events are off. Sending never blocks or raises.
 
