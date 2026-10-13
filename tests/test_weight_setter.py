@@ -392,10 +392,10 @@ def test_before_the_boundary_it_waits_with_the_scores_saved(store):
 
 
 def test_a_scoring_failure_pays_the_treasury_instead_of_skipping(store, monkeypatch):
-    def broken():
+    def broken(*args):
         raise RuntimeError("store hiccup")
 
-    monkeypatch.setattr(store.scoring, "best_per_hotkey", broken)
+    monkeypatch.setattr(store.scoring, "read_boards", broken)
     chain = FakeChain(block=at_epoch_boundary())
     result = step(chain, store, config(), reward.ScoringConfig())
     assert result.action == "set" and chain.submitted == [([0, 1, 2], [1.0, 0.0, 0.0])]

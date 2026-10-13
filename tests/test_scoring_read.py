@@ -28,15 +28,18 @@ def test_promotion_between_queries_keeps_old_vector_and_state_hash(store, monkey
     plan, result, publication = plan_for(
         store, chain.metagraph(2), config(), reward.ScoringConfig()
     )
-    assert vector(plan) == {0: 0.8, 1: 0.2, 2: 0.0}
-    assert result.weights == {"alice": 1.0}
+    assert vector(plan) == {0: 0.88, 1: 0.12, 2: 0.0}
+    assert result.weights == {"alice": 0.6}
     assert publication["slots"]["full"]["leader"] == first
     assert publication["submission_state_sha256"] == old_key
     monkeypatch.setattr(store.scoring, "_read_slot_inputs", original)
     following = store.scoring.read_boards(("full",), 0.97)
     assert following.boards[0].leader.hotkey == "bob"
     assert following.submission_state_sha256 != old_key
-    assert reward.score(following.boards, reward.ScoringConfig()).weights == {"bob": 1.0}
+    assert reward.score(following.boards, reward.ScoringConfig()).weights == {
+        "bob": 0.6,
+        "alice": 0.3,
+    }
 
 
 @pytest.mark.parametrize("recover", [False, True])
@@ -77,7 +80,7 @@ def test_pause_transition_between_queries(store, monkeypatch, recover, policy):
     assert captured.submission_state_sha256 == old_key
     cfg = reward.ScoringConfig(paused_slot_policy=policy)
     assert reward.score(captured.boards, cfg).weights == (
-        {} if recover and policy == "treasury" else {"alice": 1.0}
+        {} if recover and policy == "treasury" else {"alice": 0.6}
     )
     monkeypatch.setattr(store.scoring, "_read_slot_inputs", original)
     following = store.scoring.read_boards(("full",), 0.97)
