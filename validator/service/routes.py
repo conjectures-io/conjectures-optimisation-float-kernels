@@ -294,9 +294,14 @@ def leaderboard(request: Request, competition: str) -> schemas.Leaderboard:
 
 @router.get(f"{PREFIX}/champions", response_model=list[schemas.Champion])
 def champions(request: Request, competition: str) -> list[schemas.Champion]:
-    # Every champion the board has had, newest first, the current one marked.
-    history = _store(request).submissions.champions(_slot(competition))
+    # Every champion the board has had, newest first, the current one marked and, on a paying
+    # board, the ones paid ranked.
+    slot = _slot(competition)
+    history = _store(request).submissions.champions(slot)
     current = next((p.id for _, p in history if p.demoted_at is None), None)
+    shares = reward.RANK_SHARES if slot in reward.PAYING_SLOTS else ()
+    held = [p.id for _, p in history if p.demoted_at is None][: len(shares)]
+    rank = {pid: i for i, pid in enumerate(held, start=1)}
     return [
         schemas.Champion(
             submission=row.id,
@@ -305,6 +310,8 @@ def champions(request: Request, competition: str) -> list[schemas.Champion]:
             promoted_at=iso(p.promoted_at),
             demoted_at=iso(p.demoted_at) if p.demoted_at is not None else None,
             current=p.id == current,
+            rank=rank.get(p.id),
+            rank_share=shares[rank[p.id] - 1] if p.id in rank else None,
         )
         for row, p in history
     ]
