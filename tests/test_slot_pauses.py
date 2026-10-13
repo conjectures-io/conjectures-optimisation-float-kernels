@@ -9,6 +9,7 @@ import sys
 import pytest
 from sqlalchemy import select
 
+import axiom
 import db
 import gate
 import reward
@@ -200,6 +201,60 @@ def test_worker_recovery_and_other_slot_progress(store, settings, stub_gate, mon
     monkeypatch.setattr(worker, "run_gate", original)
     store.pauses.retry("add")
     assert worker.drain(store, settings) == 2
+    assert store.pauses.all() == {}
+
+
+class Recorder:
+    # An Axiom client that keeps every event it is given.
+    enabled = True
+
+    def __init__(self):
+        self.events = []
+
+    def ingest(self, *, severity, source, event_type, details):
+        self.events.append((severity, event_type, details))
+
+    def close(self):
+        pass
+
+
+def test_a_pause_alerts_on_every_failed_attempt_and_on_recovery(
+    store, settings, stub_gate, monkeypatch
+):
+    first = add(store, "first")
+    recorder = Recorder()
+    monkeypatch.setattr(worker, "get_events", lambda: axiom.Events(recorder, source="test"))
+    original = worker.run_gate
+
+    def broken(directory, verdict, slot, env):
+        verdict.write_text(
+            json.dumps(
+                {
+                    "incumbent_failed": True,
+                    "reference_failure_phase": "reference-benchmark",
+                    "champion_sha256": "c" * 64,
+                    "reason": "the incumbent's bench failed",
+                }
+            )
+        )
+        return subprocess.CompletedProcess([], 2, "", "")
+
+    monkeypatch.setattr(worker, "run_gate", broken)
+    worker.drain(store, settings)
+    store.pauses.retry("add")
+    worker.drain(store, settings)
+    paused = [(s, d) for s, t, d in recorder.events if t == "slot_paused"]
+    assert [s for s, _ in paused] == ["error", "error"]
+    assert [d["first"] for _, d in paused] == [True, False]
+    assert all(d["slot"] == "add" and d["submission_id"] == first for _, d in paused)
+    assert paused[0][1]["phase"] == "reference-benchmark"
+    assert paused[1][1]["paused_since"] is not None
+    monkeypatch.setattr(worker, "run_gate", original)
+    store.pauses.retry("add")
+    worker.drain(store, settings)
+    recovered = [(s, d) for s, t, d in recorder.events if t == "slot_recovered"]
+    assert [s for s, _ in recovered] == ["info"]
+    assert recovered[0][1]["submission_id"] == first
     assert store.pauses.all() == {}
 
 
