@@ -196,17 +196,37 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
     failure_phase = fields.pop("reference_failure_phase", None)
     reference_complete = fields.pop("reference_complete", False)
     if incumbent_failed:
-        store.pauses.fail(
+        phase = failure_phase or "reference-benchmark"
+        reason = str(fields.get("reason") or "reference failed")
+        if store.pauses.fail(
             sub,
             reference_id=reference.id if reference else None,
             reference_sha256=fields.get("champion_sha256"),
-            phase=failure_phase or "reference-benchmark",
-            reason=str(fields.get("reason") or "reference failed"),
+            phase=phase,
+            reason=reason,
             retry_seconds=settings.champion_retry_seconds,
-        )
+        ):
+            # One error event per failed attempt, so an alert fires on entry and repeats while down.
+            events.error(
+                "slot_paused",
+                **who,
+                phase=phase,
+                reason=reason[:2000],
+                reference_id=reference.id if reference else None,
+                champion_sha256=fields.get("champion_sha256"),
+                first=pause is None,
+                paused_since=pause.paused_at.isoformat() if pause else None,
+                retry_seconds=settings.champion_retry_seconds,
+            )
         return "paused"
     if reference_complete:
-        store.pauses.recover(sub, pause.revision if pause else None)
+        if store.pauses.recover(sub, pause.revision if pause else None) and pause is not None:
+            events.info(
+                "slot_recovered",
+                **who,
+                phase=pause.phase,
+                paused_since=pause.paused_at.isoformat(),
+            )
     else:
         store.pauses.defer(sub, pause.revision if pause else None, settings.champion_retry_seconds)
     state = STATE_OF_EXIT.get(result.returncode)

@@ -58,10 +58,10 @@ class PausesDb:
         )
         return True
 
-    def recover(self, sub: models.Submission, revision: str | None) -> None:
+    def recover(self, sub: models.Submission, revision: str | None) -> bool:
         """Only the still-owning attempt may clear the pause it observed before running."""
         if revision is None:
-            return
+            return False
         with session_scope(self._sessions) as session:
             row = session.get(models.Submission, sub.id, with_for_update=True)
             pause = session.get(models.SlotPause, sub.slot, with_for_update=True)
@@ -71,9 +71,10 @@ class PausesDb:
                 or pause is None
                 or pause.revision != revision
             ):
-                return
+                return False
             session.delete(pause)
         logger.info("[slots] {} recovered; verification resumed", sub.slot)
+        return True
 
     def defer(self, sub: models.Submission, revision: str | None, retry_seconds: float) -> None:
         # An early challenger failure has not tested the reference. Keep the cooldown measured

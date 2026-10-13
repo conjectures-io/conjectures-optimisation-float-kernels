@@ -83,6 +83,8 @@ EventType: TypeAlias = Literal[
     "gate_verdict",
     "submission_requeued",
     "gate_validator_error",
+    "slot_paused",
+    "slot_recovered",
     "registrations_recorded",
     "chain_read_failed",
     "weights_planned",
