@@ -83,7 +83,7 @@ latest promotion not demoted; with none, the shipped champion holds. `failures` 
 the previous automatic-demotion policy. Failures now pause the slot without demoting its champion;
 `demoted_at` changes only through an explicit operator demotion. `platform_api` may read it (`SELECT`): the
 platform serves every board's champion, its promotion date and the history of champions, while the published
-snapshot names only the paid board's `leader`.
+snapshot names the paid board's `leader` and its paid champions (`kings`).
 
 ### `slot_pauses`
 
@@ -97,8 +97,8 @@ redirected with `WEIGHT_PAUSED_SLOT_POLICY=treasury`. Published slots carry `pau
 
 - **No aggregation or admission tables.** FloatLib has neither `benchmark_aggregations` nor
   `submission_admission_checks`; the admission outcome of every scored submission is in the published snapshot.
-- **`score_snapshots`:** `(id, weight_set_id, slot, hotkey, submission_id, ratio, weight)`, one row per hotkey per
-  paying slot. `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`.
+- **`score_snapshots`:** `(id, weight_set_id, slot, hotkey, submission_id, ratio, weight)`, one row per paid
+  champion and one per other hotkey per paying slot (a hotkey holding two paid ranks has two rows). `weight` is that line's fraction of the competition's budget, like DEFLATE's `payable_weight`.
 - **`weight_sets`:** published rows are those with `jsonb_typeof(api_snapshot) = 'object'`, as for DEFLATE. The
   weight setter reuses unchanged publications; changes and actual chain attempts create new rows, and idle polls
   never overwrite an earlier chain outcome. `computed_at` is the publication time. Migration 0013 adds the content
@@ -115,10 +115,11 @@ redirected with `WEIGHT_PAUSED_SLOT_POLICY=treasury`. Published slots carry `pau
   "competition": "floatlib",
   "computed_at": "2026-10-07T12:00:00+00:00",
   "policy": {
-    "version": "auto-promotion-full-entry-v1",
+    "version": "top3-kings-60-30-10-v1",
     "competition_share": 0.2,
     "slot_shares": {"full": 1.0},
     "winner_share": 1.0,
+    "rank_shares": [0.6, 0.3, 0.1],
     "promotion_bar": 0.97,
     "admission": {"version": "paired-median-bootstrap-v1", "draws": 2000, "quantile": 0.05}
   },
@@ -126,18 +127,24 @@ redirected with `WEIGHT_PAUSED_SLOT_POLICY=treasury`. Published slots carry `pau
     "full": {
       "share": 1.0,
       "leader": 42,
+      "kings": [42, 31, 17],
       "items": [
-        {"hotkey": "5F…", "submission_id": 42, "ratio": 0.56, "weight": 1.0, "admission": "leader"},
-        {"hotkey": "5G…", "submission_id": 47, "ratio": 0.99, "weight": 0.0, "admission": "above-bar"}
+        {"hotkey": "5F…", "submission_id": 42, "ratio": 0.56, "weight": 0.6, "rank": 1, "admission": "leader"},
+        {"hotkey": "5E…", "submission_id": 31, "ratio": 0.95, "weight": 0.3, "rank": 2, "admission": null},
+        {"hotkey": "5D…", "submission_id": 17, "ratio": 0.91, "weight": 0.1, "rank": 3, "admission": null},
+        {"hotkey": "5G…", "submission_id": 47, "ratio": 0.99, "weight": 0.0, "rank": null, "admission": "above-bar"}
       ]
     }
   }
 }
 ```
 
-- **One paying slot:** `leader` is the full entry's champion, and its author takes the competition's budget
-  (`slot_shares`), in `slots.full`; while the shipped champion holds, `leader` is null and the budget goes to the
-  treasury. A full entry's `ratio` is its total time over its champion's across all twelve timed input types
+- **One paying slot, three paid champions:** `leader` is the full entry's champion; `kings` lists the paid
+  champions newest first (the latest three promotions not demoted), and each one's item carries its `rank` and its
+  `weight`, `winner_share × rank_shares[rank − 1]` of the competition's budget (`slot_shares`), in `slots.full`.
+  A rank no one holds yet goes to the treasury; while the shipped champion holds, `leader` is null, `kings` empty
+  and the budget goes to the treasury. With `paused_reward_policy` `treasury`, a paused slot's rank-1 item has
+  weight 0 and the other ranks are still paid. A full entry's `ratio` is its total time over its champion's across all twelve timed input types
   (`add`, `mul`, `sum`, `bmm`, three each); the champion's own ratio is against the champion it took over from.
 - **Lower ratio is faster:** `ratio` is submission time over champion time.
 - **Admission outcomes:** `leader` (the champion), `qualifies`, `not-significant`, `above-bar`, `no-evidence`, or
