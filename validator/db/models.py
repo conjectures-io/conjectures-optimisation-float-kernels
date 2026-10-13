@@ -222,7 +222,7 @@ class ScoreSnapshot(Base):
     weight_set_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("weight_sets.id", ondelete="CASCADE"), nullable=False
     )
-    # The slot this line scores; each slot's leader is paid an equal part of the budget.
+    # The slot this line scores; each paying slot's last champions are paid by rank (reward.py).
     slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="add")
     hotkey: Mapped[str] = mapped_column(Text, nullable=False)
     submission_id: Mapped[int | None] = mapped_column(

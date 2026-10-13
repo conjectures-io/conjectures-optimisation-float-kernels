@@ -489,6 +489,9 @@ def test_champions_lists_every_champion_newest_first(client, store, drain, tmp_p
         "promoted_at": "2026-10-01T12:01:00Z",
         "demoted_at": None,
         "current": True,
+        # A practice board pays no one.
+        "rank": None,
+        "rank_share": None,
     }
     # Superseded, Alice was never demoted; demoting Bob hands the board back to her.
     assert history[1]["demoted_at"] is None
@@ -522,6 +525,22 @@ def test_champions_lists_every_champion_newest_first(client, store, drain, tmp_p
     # The full entry has had no champion, and an unknown slug is a 404.
     assert client.get("/v1/competitions/floatlib/champions").json() == []
     assert client.get("/v1/competitions/nope/champions").status_code == 404
+
+
+def test_champions_on_the_paid_board_carry_their_rank_and_share(client, store, clock):
+    from test_weight_setter import accept
+
+    subs = []
+    for uid, hotkey in enumerate(["hk-1", "hk-2", "hk-3", "hk-4"], start=1):
+        subs.append(accept(store, hotkey, 0.90, uid=uid))
+        clock["tick"](10)
+    history = client.get("/v1/competitions/floatlib/champions").json()
+    assert [(c["submission"], c["rank"], c["rank_share"]) for c in history] == [
+        (subs[3], 1, 0.6),
+        (subs[2], 2, 0.3),
+        (subs[1], 3, 0.1),
+        (subs[0], None, None),
+    ]
 
 
 # ── The real gate ─────────────────────────────────────────────────────────

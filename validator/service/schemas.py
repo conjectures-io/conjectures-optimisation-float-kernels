@@ -102,6 +102,10 @@ class Champion(BaseModel):
     # When an operator demoted it; null if it never was.
     demoted_at: str | None = None
     current: bool
+    # On a paying board, its place among the paid champions (1 is the current one) and its part of
+    # the board's winner share; null when it is not paid.
+    rank: int | None = None
+    rank_share: float | None = None
 
 
 class Leaderboard(BaseModel):
@@ -114,6 +118,7 @@ class Leaderboard(BaseModel):
     promotion_bar: float
     # The champion's submission id; null while the shipped champion holds.
     leader: int | None = None
-    # Whether this board pays its leader: the full entry does, the practice boards do not.
+    # Whether this board pays its last champions (see /champions): the full entry does, the practice
+    # boards do not.
     pays: bool = False
     ranking: list[Ranking]
