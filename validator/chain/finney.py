@@ -31,17 +31,21 @@ from .types import (
 
 
 def to_snapshot(netuid: int, meta, timestamp: dt.datetime) -> MetagraphSnapshot:
-    # SDK metagraph -> plain snapshot; a missing registration block falls back to the snapshot's.
+    # Registration time controls eligibility; missing data must not invent a new registration.
     count = meta.n.item()
     snapshot_block = meta.block.item()
-    reg_blocks = getattr(meta, "block_at_registration", None) or []
+    reg_blocks = getattr(meta, "block_at_registration", None)
+    if count and (reg_blocks is None or len(reg_blocks) != count):
+        raise RuntimeError("metagraph registration blocks are unavailable; retrying chain snapshot")
+    if reg_blocks is None:
+        reg_blocks = []
     neurons = tuple(
         NeuronInfo(
             uid=int(meta.uids[i]),
             hotkey=str(meta.hotkeys[i]),
             coldkey=str(meta.coldkeys[i]),
             stake=float(meta.stake[i]),
-            block_at_registration=int(reg_blocks[i]) if i < len(reg_blocks) else snapshot_block,
+            block_at_registration=int(reg_blocks[i]),
         )
         for i in range(count)
     )

@@ -201,3 +201,34 @@ def test_a_backfill_records_the_whole_subnet_once(store, uid_count):
     chain.block += 1
     watcher.step(chain, sink, NETUID, 5_000)
     assert len(registrations(store)) == uid_count
+
+
+def test_same_keys_and_uid_with_new_registration_block_are_recorded(store):
+    chain = FakeChain(block=100, neurons=[neuron(0, "alice", block=10)])
+    sink = sink_for(store)
+    watcher.step(chain, sink, NETUID, None)
+    chain.block, chain.neurons = 200, (neuron(0, "alice", block=150),)
+    watcher.step(chain, sink, NETUID, 100)
+    assert registrations(store) == [(0, "alice", 10), (0, "alice", 150)]
+
+
+def test_missing_sdk_registration_blocks_cannot_create_fresh_eligibility(monkeypatch):
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    # Exercise the real adapter without requiring chain credentials or the SDK in a test venv.
+    monkeypatch.setitem(sys.modules, "bittensor", SimpleNamespace())
+    source = Path(__file__).resolve().parents[1] / "validator/chain/finney.py"
+    spec = importlib.util.spec_from_file_location("chain._snapshot_test", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    meta = SimpleNamespace(
+        n=SimpleNamespace(item=lambda: 1), block=SimpleNamespace(item=lambda: 100)
+    )
+    with pytest.raises(RuntimeError, match="registration blocks"):
+        module.to_snapshot(NETUID, meta, T0)
+    meta.block_at_registration = [10]
+    meta.uids, meta.hotkeys, meta.coldkeys, meta.stake = [0], ["alice"], ["cold"], [1.0]
+    assert module.to_snapshot(NETUID, meta, T0).neurons[0].block_at_registration == 10

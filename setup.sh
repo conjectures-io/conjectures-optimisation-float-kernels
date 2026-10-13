@@ -2,7 +2,7 @@
 # One-command setup for the FloatLib kernel competition: Lean toolchain, FloatLib + Mathlib, build, gate venv.
 #   ./setup.sh             install what is missing, then build (about 15 minutes the first time)
 #   ./setup.sh --check     report what is installed, change nothing
-#   ./setup.sh --service   also the validator service: API, gate worker, store client, .env
+#   ./setup.sh --service   also the gate worker, store client and .env
 #   ./setup.sh --chain     also the bittensor SDK the chain watcher and weight setter need
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -56,7 +56,7 @@ cd "$here"
 [ -x .venv/bin/python ] || python3 -m venv .venv
 .venv/bin/pip install -q -r requirements/gate.txt
 if [ "$service" = 1 ]; then
-  log "installing the validator service"
+  log "installing the validator worker dependencies"
   .venv/bin/pip install -q -r requirements/service.txt
   [ -f .env ] || { cp .env.example .env; log "wrote .env from .env.example - set POSTGRES_PASSWORD"; }
 fi

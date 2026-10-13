@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
@@ -16,12 +15,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import db
-import log
-from axiom import config_error, init
+from service.settings import MAX_REQUEST_BYTES, Settings, load
 
 from . import routes
 from .middleware import BodyLimit, RequestContext
-from .settings import MAX_REQUEST_BYTES, Settings, load
 
 
 def create_app(settings: Settings | None = None, store: db.Store | None = None) -> FastAPI:
@@ -83,31 +80,3 @@ def create_app(settings: Settings | None = None, store: db.Store | None = None) 
         )
 
     return app
-
-
-# No module-level app, so env is read only via the factory (`uvicorn --factory`) or main().
-
-
-def main() -> None:
-    # Serve the API with uvicorn on the configured host and port.
-    import uvicorn
-
-    log.setup()
-    events = init("competition-submission-api")
-    try:
-        settings = load()
-    except Exception as exc:
-        events.error("service_misconfigured", error=config_error(exc))
-        raise
-    uvicorn.run(
-        create_app(settings),
-        host=settings.host,
-        port=settings.port,
-        # Honour X-Forwarded-* behind a reverse proxy; harmless when served directly.
-        proxy_headers=True,
-        forwarded_allow_ips=os.environ.get("SERVICE_FORWARDED_ALLOW_IPS", "127.0.0.1"),
-    )
-
-
-if __name__ == "__main__":
-    main()

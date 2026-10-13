@@ -23,7 +23,7 @@ END
 $$;
 GRANT USAGE ON SCHEMA public TO platform_api;
 
--- Intake: a submission row and its Kernel.lean, idempotent per (hotkey, slot, digest). The
+-- Intake: a submission row and its Kernel.lean; duplicate files are refused. The
 -- INSERT ... RETURNING id needs SELECT, and the id comes from the sequence.
 GRANT SELECT, INSERT ON submissions, submission_files TO platform_api;
 GRANT USAGE ON SEQUENCE submissions_id_seq TO platform_api;
@@ -31,7 +31,7 @@ GRANT USAGE ON SEQUENCE submissions_id_seq TO platform_api;
 -- The per-hotkey submit limit: an upsert on a counter row.
 GRANT SELECT, INSERT, UPDATE ON rate_limit_windows TO platform_api;
 
--- Entitlement: a registration that no claim has spent yet.
+-- Eligibility: latest registration time and submission history. Claims are historical audit data.
 GRANT SELECT ON registrations, entitlement_claims TO platform_api;
 
 -- Reads: the scoring the weight setter published (weight_sets.api_snapshot carries the

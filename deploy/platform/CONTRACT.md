@@ -2,7 +2,8 @@
 
 What this repository exposes to `conjectures-validator` (the platform) so it can serve the FloatLib competition the
 way it serves DEFLATE: the database it connects to, the intake it writes, the rows it reads and the snapshot it
-serves. The platform side was read at `conjectures-validator` commit `d24e86c` (2026-09-30).
+serves. The central API adapter is `submission_api/floatlib_store.py`; signed intake is in
+`submission_api/routers/floatlib_intake.py`.
 
 ## Summary
 
@@ -13,25 +14,24 @@ serves. The platform side was read at `conjectures-validator` commit `d24e86c` (
 - **One entry, one board.** The slug `floatlib` is the full entry (slot `full`): one `Kernel.lean` with FloatLib's
   `add` and `mul` and TorchLean's `sum` and `bmm`, proved and timed together, and the only board that pays. The
   single-kernel practice boards (`floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm`) are unpaid and
-  served by this repository's own API.
+  served read-only by the central API.
 - **The signing contract is shared.** A miner signs the same five lines for the platform and for this repository's
-  own API, so one client works against either.
+  miner client; no standalone API is deployed.
 
 ## Connection
 
 | Setting (platform `.env`) | Value |
 |---|---|
 | `COMPETITIONS_ENABLED` | `1` |
-| `COMPETITION_SLUG` | `floatlib` |
-| `COMPETITION_NAME` | `FloatLib` |
-| `COMPETITION_DATABASE_URL` | `postgresql+psycopg://platform_api:<password>@conjectures_floatlib_db:5432/<POSTGRES_DB>` |
+| `COMPETITIONS` | `deflate,floatlib` |
+| `COMPETITION_FLOATLIB_DATABASE_URL` | `postgresql+psycopg://platform_api:<password>@conjectures_floatlib_db:5432/<POSTGRES_DB>` |
 
 On the FloatLib host:
 
 ```bash
 set -a; . ./.env; set +a                 # PLATFORM_API_PASSWORD, and COMPOSE_FILE with the overlay
 docker compose up -d db                  # joins ${PLATFORM_NETWORK:-conjectures-api_default}
-docker compose up migrate                # head: 0017
+docker compose run --build --rm migrate   # all pending schema migrations
 deploy/platform/grant.sh                 # creates/rotates platform_api, resets its grants
 ```
 
@@ -39,7 +39,8 @@ Re-run `grant.sh` after every migration.
 
 ## Schema check
 
-The platform's `compression_store.py` requires four columns: `submission_files.content`,
+The FloatLib adapter requires the promotion history and submission fields; intake also uses
+registration timestamps and stored file bytes. Historical platform columns include: `submission_files.content`,
 `submissions.verification_attempt`, `submissions.account_id` and `weight_sets.api_snapshot`. All four exist from
 migration `0006` on.
 
@@ -53,7 +54,7 @@ migration `0006` on.
 | Headers | `X-Conjectures-Hotkey`, `X-Conjectures-Timestamp`, `X-Conjectures-Signature` |
 | Insert | `submissions(hotkey, digest, account_id)`; `slot` defaults to `'full'` (migration 0011), so a slotless insert lands on the full entry. The unique key is `(hotkey, slot, digest)` (`uq_submissions_hotkey_slot_digest`) |
 | Files | one `submission_files` row, `name = 'Kernel.lean'` (enforced by `ck_submission_files_name`) |
-| Entitlement | queued + verifying submissions stay below the hotkey's unclaimed registrations; this repository's own API checks it and inserts in one transaction under a per-hotkey advisory lock (`enqueue()` in `validator/db/submissions.py`) |
+| Eligibility | Central intake serializes by hotkey and allows one submission since the latest registration, regardless of status; default cutoff or optional DEFLATE check. Verdict publication does not spend another registration. |
 
 `miner/sig.py` and `validator/service/sig.py` build the signed message byte for byte, and
 `tests/test_miner_sig.py` holds them to it.
@@ -161,8 +162,7 @@ redirected with `WEIGHT_PAUSED_SLOT_POLICY=treasury`. Published slots carry `pau
 | pipeline stages static, lean, benchmark, aggregation | the gate's stages: intake, policy, statement, kernel, axioms, score |
 | files `parse.rs` and `Parse.lean` | one file, `Kernel.lean` |
 
-This repository's own API serves FloatLib-shaped reads under the same paths, from `validator/service/schemas.py`
-and `routes.py`:
+The central API serves FloatLib-shaped reads, using `submission_api/schemas_floatlib.py`:
 - `GET /v1/competitions/{slug}/submissions/{id}`
 - `GET .../submissions/{id}/report`
 - `GET .../leaderboard`
@@ -177,7 +177,7 @@ and `routes.py`:
 
 ## Observability
 
-- **Event format:** FloatLib's four processes send Axiom events in the platform's envelope (`validator/axiom.py`),
+- **Event format:** FloatLib's three workers send Axiom events in the platform's envelope (`validator/axiom.py`),
   with the same `source` names and `event_type` vocabulary as DEFLATE, and `competition: "floatlib"`.
 - **Settings:** the same as DEFLATE's: `AXIOM_TOKEN`, `AXIOM_DATASET`, `AXIOM_ENVIRON`, `AXIOM_URL`.
 
@@ -191,3 +191,23 @@ and `routes.py`:
 - The published snapshot on every changed weight set.
 - The treasury split and the dry-run default in the weight setter.
 - Axiom events.
+
+## Central intake policy
+
+`conjectures-validator` accepts `POST /v1/competitions/floatlib/submissions` only. It checks the
+FloatLib signature contract, one UTF-8 `Kernel.lean` of at most 256000 bytes, and the latest
+registration's eligibility. One stored submission since that registration blocks a new entry
+in every state. Duplicate files return 409 with the old submission ID; no automatic resubmit.
+The API inserts the row and file under `pg_advisory_xact_lock(hashtextextended(hotkey, 0))` in
+one transaction. It records reception time, not the signed request timestamp.
+
+`FLOATLIB_SUBMISSIONS_ENABLED` defaults off. Enabling requires
+`FLOATLIB_REGISTRATION_CUTOFF` with timezone. Registrations exactly at the cutoff are excluded.
+`FLOATLIB_CHECK_DEFLATE_USAGE` replaces the cutoff with a check of DEFLATE miner submissions
+since that registration in all states. DEFLATE uploads must be disabled with
+`DEFLATE_SUBMISSIONS_ENABLED=false`. Connection failures fall back to the cutoff with a log
+warning; query/schema defects remain operational errors. Existing `entitlement_claims` rows
+are historical; new verdicts do not create them or reject a result for a missing allowance.
+
+The standalone API has been removed; retire its PM2 process and reverse-proxy route on upgrade.
+Practice boards remain readable, and workers can finish their previously queued entries.

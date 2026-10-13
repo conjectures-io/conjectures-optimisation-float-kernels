@@ -120,27 +120,51 @@ must be re-run there, and on the validator's own machine, before the bar is fina
 
 ## Running a validator
 
-The gate runs on the host (it needs bubblewrap and the Lean toolchain); Postgres runs in
-Docker; the API, the gate worker and the two chain workers run under pm2.
+The gate, chain watcher and weight setter run on the host under PM2. PostgreSQL runs in
+Docker. The central `conjectures-validator` API receives signed full entries and serves the
+read endpoints; this repository no longer runs a standalone API.
 
 ```bash
-./setup.sh --chain                          # everything above, plus the service and the bittensor SDK
-$EDITOR .env                                # POSTGRES_PASSWORD, the validator wallet, NETUID, BENCH_CPU
-docker compose up -d db                     # Postgres 17 on 127.0.0.1:POSTGRES_PORT (default 5433)
-docker compose up migrate                   # alembic upgrade head
-pm2 start deploy/pm2.config.js              # the four floatlib-* processes below
-curl http://127.0.0.1:9300/health           # {"ok":true,"queued":0,"promotion_bar":0.97,...}
+./setup.sh --chain
+$EDITOR .env  # database port/password, network, wallet and benchmark CPU
+# With DEFLATE on this host, choose a distinct PostgreSQL port.
+docker compose up -d db
+docker compose run --build --rm migrate
+set -a; . ./.env; set +a
+deploy/platform/grant.sh  # PLATFORM_API_PASSWORD provisions the central API's role
+pm2 start deploy/pm2.config.js
 ```
 
-Each process runs from `validator/` (`cd validator && python -m service.api`); pm2 sets that
-directory itself and names them `floatlib-*`, so they sit beside another competition's on one host.
+Run setup and PM2 as the same worker user. Resource caps require that user's systemd session:
+`loginctl enable-linger <user>`, and `XDG_RUNTIME_DIR=/run/user/<uid>` plus
+`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus` in its environment.
 
-| process | what it does |
-|---|---|
-| `floatlib-submission-api` (`python -m service.api`) | the platform's layout on `SERVICE_PORT` (9300), one competition slug per slot (`floatlib` is the full entry; `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum`, `-bmm` the practice boards): `POST /v1/competitions/{slug}/submissions` (signed `X-Conjectures-*` headers, one `Kernel.lean` part), `GET …/submissions/{id}`, `GET …/submissions/{id}/report`, `GET …/leaderboard`, `GET …/champions`; plus `GET /health`, `GET /ready` (example responses in MANUAL section 12) |
-| `floatlib-gate-worker` (`python -m service.worker`) | takes the gate's lock first (while an operator run or another worker holds it, it claims nothing and waits), then claims queued submissions oldest first, writes their `Kernel.lean` from the store, points the gate at the slot's current champion, runs `gate.py <dir> --verdict` and stores the verdict and its full JSON as the report, promoting an entry that beats the champion; exit 2 or no verdict is a validator error, requeued uncharged and behind fresh work; a submission that hits one `SERVICE_MAX_GATE_ERRORS` times (3) ends in `error`, uncharged, so nothing is retried forever, and sending the same file again requeues it; when the reference cannot build or benchmark, only its slot pauses and the same challenger retries without penalty (see below); at startup it requeues the claims its previous run left; it backs off up to 5 minutes while errors repeat |
-| `floatlib-chain-watcher` (`python -m workers.chain_watcher`) | streams subnet registrations into the store; without it nobody can submit |
-| `floatlib-weight-setter` (`python -m workers.weight_setter`) | every tick, scores the paying board (the full entry, whose last three champions' authors split the competition's budget 60/30/10: `validator/admission.py` and the rule in `validator/reward.py`) and publishes changed results, reusing unchanged snapshots; once an epoch, inside the margin before the boundary, it submits the vector unless in dry run |
+In the central API's `.env`, configure the FloatLib database, then set:
+
+```dotenv
+DEFLATE_SUBMISSIONS_ENABLED=false
+FLOATLIB_SUBMISSIONS_ENABLED=true
+FLOATLIB_REGISTRATION_CUTOFF=<intentional ISO-8601 UTC timestamp>
+FLOATLIB_CHECK_DEFLATE_USAGE=false
+```
+
+The optional DEFLATE check replaces the cutoff with a check of submissions since the latest
+registration; a connection outage warns and falls back to the cutoff. The API accepts one
+entry since the latest registration, regardless of that entry's eventual status. Duplicate
+files from the same hotkey return HTTP 409. No registration is charged again when the gate
+publishes its verdict. Interrupted work retries the same entry; terminal errors require an
+operator to recover that entry. Practice boards remain readable but do not accept uploads.
+
+| process | responsibility |
+| --- | --- |
+| `floatlib-gate-worker` | Verify queued entries, store verdicts and promote winners; retry interruptions and pause slots on reference failures. |
+| `floatlib-chain-watcher` | Record on-chain registrations and their timestamps. |
+| `floatlib-weight-setter` | Publish scoring and submit chain weights; dry run by default. |
+
+If upgrading an existing deployment, explicitly stop/delete the old `floatlib-submission-api`
+PM2 process and remove its proxy route. Removing it from the config does not stop a live process.
+Only one weight setter may submit weights per validator hotkey.
+
 
 **Weights.** The vector is the whole validator's, as in the DEFLATE competition
 (`validator/treasury.py`): the treasury, uid 121 on netuid 66, takes 80%; the competition's 20% goes
@@ -236,26 +260,19 @@ board; the fingerprint and the incumbent binary's hash are provenance only.
 
 ### Serving through the conjectures platform
 
-The add board is meant to be served by conjectures.io (`conjectures-validator`), the way DEFLATE
-is: the platform queues submissions into this database and reads what the weight setter publishes,
-while the gate, the chain watcher and the weight setter stay here. This repository's side is ready:
+The central API receives full-entry submissions and reads this database through its
+`platform_api` role. `deploy/platform/grant.sh` provisions that role; re-run it after schema
+changes. For a shared Docker host, enable
+`COMPOSE_FILE=compose.yaml:deploy/platform/compose.yaml`; the database joins
+`PLATFORM_NETWORK` (default `conjectures-api_default`). Configure the central API's
+`COMPETITION_FLOATLIB_DATABASE_URL` to reach `conjectures_floatlib_db:5432`.
 
-- the store keeps each `Kernel.lean` (`submission_files`), the gate's report, the platform account
-  and the published snapshot (`weight_sets.api_snapshot`), from migration 0006;
-- `deploy/platform/platform_api.sql` is the platform role's exact grants, `deploy/platform/grant.sh`
-  creates the role (`PLATFORM_API_PASSWORD`) and resets them, and `deploy/platform/compose.yaml`
-  attaches the database to the platform stack's network
-  (`COMPOSE_FILE=compose.yaml:deploy/platform/compose.yaml`);
-- miners sign the platform's message, and this API takes the platform's request.
-
-The platform side is not: its competition adapter is written for DEFLATE's two files and
-compression metrics, and it serves one competition per process.
-[`deploy/platform/CONTRACT.md`](deploy/platform/CONTRACT.md) lists exactly what it must change, and
-the emissions decision that comes with it. Until then miners submit to a FloatLib validator's API.
+The [platform contract](deploy/platform/CONTRACT.md) describes the tables, grants and rewards.
+Miner commands default to `https://conjectures.io`; `--url` overrides it for development.
 
 ### Observability
 
-With `AXIOM_TOKEN` and `AXIOM_DATASET` set, the four processes send structured events to the
+With `AXIOM_TOKEN` and `AXIOM_DATASET` set, the three workers send structured events to the
 platform's Axiom dataset in its envelope (`validator/axiom.py`, ported from DEFLATE), tagged
 `competition: "floatlib"`: `service_started`/`stopped`/`misconfigured`, `submission_claimed`,
 `gate_verdict`, `submission_requeued`, `gate_validator_error`, `slot_paused` (error, once per
@@ -423,7 +440,7 @@ kernels/                 every kernel the gate is tested on, and expected.tsv (t
 
 miner/                   the miner client (submit.py: submit, status, report, leaderboard) and its signer (sig.py)
 validator/               the validator service, run from this directory by pm2
-  service/               the submission API (the platform's layout) and the gate worker
+  service/               the gate worker, settings and signing helpers
   db/                    the Postgres store: submissions and their files, registrations, entitlements,
                          rate limits, weight sets
   chain/, workers/       the chain watcher and the weight setter (bittensor SDK)
@@ -452,7 +469,7 @@ kernel under test), `pinned/` (each slot's incumbent binary), `logs/`, `results/
 ## Status
 
 - Working and tested live end to end: the gate (six stages, sandbox, time budget, memory and disk caps), the
-  timing, the 48-case self-test, the manual, and the validator service (API, gate worker, store, chain workers).
+  timing, the 48-case self-test, the manual, and the validator workers (gate, store and chain workers).
 - One entry, one board: the full entry (`add`, `mul`, `sum`, `bmm`) is the paid board, against the best proven
   entry as its shipped champion; every kernel also has an unpaid practice board (see
   [The TorchLean slots](#the-torchlean-slots-sum-and-bmm) and MANUAL section 15).
