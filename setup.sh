@@ -7,7 +7,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 lean="$here/lean"
-export PATH="$HOME/.elan/bin:$PATH"
+export PATH="$here/.venv/bin:$HOME/.elan/bin:$PATH"
 log() { echo "[setup] $(date -u +%H:%M:%S) $*"; }
 missing=0
 have() { if command -v "$1" >/dev/null 2>&1; then log "ok       $1"; else log "MISSING  $1 - $2"; missing=1; fi; }
@@ -25,7 +25,9 @@ done
 have python3 "apt install python3 python3-venv"
 have curl "apt install curl"
 have git "apt install git"
-have bwrap "apt install bubblewrap, or run the gate with GATE_SANDBOX=0 (never on a validator)"
+if [ "$check" = 1 ]; then
+  bash "$here/scripts/install-bubblewrap.sh" --check || missing=1
+fi
 have taskset "apt install util-linux, or run the gate with BENCH_CPU= (noisier timing)"
 have prlimit "apt install util-linux, or run the gate with GATE_FILE_MB=0 (no per-file disk cap)"
 have lake "installed below via elan"
@@ -35,6 +37,10 @@ if [ "$service" = 1 ]; then
   have pm2 "npm install -g pm2"
 fi
 [ "$check" = 1 ] && exit "$missing"
+
+# Check/install the sandbox before spending time fetching or compiling Lean dependencies.
+[ -x "$here/.venv/bin/python" ] || python3 -m venv "$here/.venv"
+bash "$here/scripts/install-bubblewrap.sh"
 
 # Lean: elan installs the toolchain pinned in lean/lean-toolchain on first use.
 if ! command -v lake >/dev/null 2>&1; then

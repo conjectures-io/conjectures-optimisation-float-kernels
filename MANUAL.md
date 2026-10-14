@@ -28,7 +28,7 @@ cp -r kernels/add/textbook-unproved my-kernel               # the fast adder, on
 |---|---|
 | OS | Linux x86_64; tested on Ubuntu 26.04 (12 cores, 60 GB RAM) |
 | disk | about 14 GB: 11 GB under `lean/.lake` once built (Mathlib 8 GB, FloatLib build 2.6 GB), 2.9 GB for the Lean toolchain in `~/.elan` |
-| packages | `sudo apt install python3 python3-venv curl git bubblewrap util-linux` |
+| packages | `sudo apt install python3 python3-venv curl git util-linux`; setup installs pinned bubblewrap in `.venv/bin` |
 | network | only during setup: elan, the toolchain, FloatLib, Mathlib and TorchLean from GitHub, and the Mathlib cache; the gate itself runs offline |
 | time | about 15 minutes for a first setup (3 for the Mathlib cache, 12 for the build); seconds afterwards |
 
@@ -47,6 +47,15 @@ export PATH=$HOME/.elan/bin:$PATH
 ```
 
 `setup.sh` is idempotent: rerun it after an interruption and it continues where it stopped.
+
+Setup builds bubblewrap 0.11.2 from a pinned upstream commit with setuid support disabled,
+and installs it at `.venv/bin/bwrap`. The gate uses that path directly, even without activating
+the virtual environment; the system bubblewrap is unchanged. Ubuntu 24.04's bubblewrap 0.9.0
+does not support the overlay options the gate needs. Missing build dependencies are installed
+through apt when running as root or with non-interactive sudo available; otherwise setup prints
+the apt command to run before retrying. A compatible project binary is reused on later runs.
+`./setup.sh --check` reports a missing or incompatible project binary without installing anything.
+For only the sandbox dependency, run `bash scripts/install-bubblewrap.sh`.
 
 ### Test the environment
 

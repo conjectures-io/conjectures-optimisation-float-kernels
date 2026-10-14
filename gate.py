@@ -138,6 +138,10 @@ SLOTS = {
 }
 ELAN = Path.home() / ".elan"
 LAKE = str(ELAN / "bin" / "lake")
+# setup installs this without changing the OS package; activation is not required.
+BWRAP = str(HERE / ".venv" / "bin" / "bwrap")
+if not Path(BWRAP).is_file():
+    BWRAP = shutil.which("bwrap") or "bwrap"
 
 # The only environment a sandboxed build or bench inherits (the toolchain and the locale, plus the
 # bench's BENCH_* via `env_extra`), never the validator's secrets.
@@ -251,6 +255,15 @@ def limits(memory_mb: int) -> list[str]:
 def check_limits() -> None:
     # Refuses to gate when the caps are asked for but the host cannot apply them: without this, a
     # missing user systemd would surface as every submission's build failing.
+    if _SANDBOX:
+        try:
+            probe = subprocess.run([BWRAP, "--help"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError("bubblewrap is unavailable; run ./setup.sh") from exc
+        if probe.returncode or any(
+            flag not in probe.stdout for flag in ("--overlay-src", "--overlay", "--ro-overlay")
+        ):
+            raise RuntimeError("bubblewrap lacks overlay support; run ./setup.sh")
     for memory_mb in {_BUILD_MEMORY_MB, _BENCH_MEMORY_MB}:
         if not (wrap := limits(memory_mb)):
             continue
@@ -291,7 +304,7 @@ def run(
     # the repo root hidden behind tmpfs and only the toolchain, the Lean workspace and `pinned`
     # (absent before the first pin, hence -try) put back read-only, so no build can read a secret.
     home, pinned = Path.home(), HERE / "pinned"
-    box = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
+    box = [BWRAP, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     box += ["--tmpfs", str(home), "--ro-bind", str(ELAN), str(ELAN)]
     box += ["--tmpfs", str(HERE), "--ro-bind", str(LIB), str(LIB)]
     box += ["--ro-bind-try", str(pinned), str(pinned)]
