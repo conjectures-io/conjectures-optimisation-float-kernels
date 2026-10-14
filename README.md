@@ -18,13 +18,14 @@ and benchmarking tools, miner CLI, and competition workers.
 3. A verified submission becomes champion if its timing ratio is at most the
    promotion bar (default `0.97`) and the paired statistical test establishes a
    speed advantage.
-4. The latest three non-demoted champions share the competition budget `60/30/10`.
+4. The latest three champions share the competition budget `60/30/10`, excluding
+   any explicitly removed by an operator.
    Empty ranks go to treasury. On subnet 66, the competition budget is 20% of the
    validator's weight.
 
-Passing verification alone does not make an entry a champion. The proof covers
-all inputs required by the contract; measured performance describes the benchmark
-workloads on the validator's hardware.
+An entry can pass verification without becoming champion. Its proofs must cover
+all inputs required by the contract. Its timing results apply to the benchmark
+inputs and the validator's hardware.
 
 See the [live competition](https://conjectures.io/competitions/floatlib) for current
 champions and measurements. Repository examples illustrate implementation and
@@ -63,7 +64,7 @@ python miner/submit.py report <submission-id>
 ```
 
 The CLI defaults to `https://conjectures.io`; `--url` selects another API origin.
-Only full entries accept uploads. Single-kernel slots remain available for local
+Only entries containing all four kernels can be uploaded. Single-kernel slots remain available for local
 experiments and historical reads.
 
 ## Documentation

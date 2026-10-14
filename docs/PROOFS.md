@@ -33,7 +33,6 @@ pinned TorchLean definitions; its build is checked separately.
 
 ## Reusing existing proofs
 
-
 For addition, the obligation in [Contract.lean](../lean/contract/Contract.lean) is:
 
 ```lean
@@ -41,7 +40,8 @@ def Obligation (kernel : Binary32 → Binary32 → Binary32) : Prop :=
   ∀ x y : Binary32, kernel x y = ExecFloat.Spec.add x y
 ```
 
-The recommended route: prove your kernel equals the incumbent, then reuse the incumbent's theorem.
+A useful starting point is to prove your kernel equals FloatLib's implementation,
+then reuse its correctness theorem.
 The following is an unfinished proof sketch, not an uploadable submission.
 The fast-path goal must be proved and the placeholder removed:
 
@@ -57,7 +57,7 @@ theorem add_spec : ∀ x y : Binary32, add x y = ExecFloat.Spec.add x y := fun x
   rw [add_eq_incumbent, ExecFloat.Proof.add_eq_spec]
 ```
 
-What the fast-path lemma rests on. These are public, so you can use them (paths under
+These public theorems can help prove a fast path (paths under
 `lean/.lake/packages/floatlib/FloatLib/`):
 
 | theorem | file | says |
@@ -116,11 +116,12 @@ through `UInt32.ofNat`).
 `addFinite_eq`, and prove your bits equal `roundDyadic (addDyadic dx dy)` on the fast path. This is
 how FloatLib proves its own kernel and the kind of argument needed for a different rounding algorithm.
 
-Tactics that pass the axioms stage: `simp`, `omega`, `grind`, `decide`, `norm_num`,
+Common tactics for kernel-checked proofs include: `simp`, `omega`, `grind`, `decide`, `norm_num`,
 `interval_cases`, `rfl`, and everything else in Mathlib that ends in a kernel-checked term.
 Rejected: `sorry`, `admit`, `native_decide`, and **`bv_decide`** when it leaves
 native axioms. The axiom audit is authoritative: a
 tactic is usable only if its resulting proof depends on the allowed axioms.
+
 ## Tensor composition
 
 The full reference builds `sum` and `bmm` from its certified scalar functions.

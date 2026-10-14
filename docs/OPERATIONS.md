@@ -102,8 +102,9 @@ Use the role's `PLATFORM_API_PASSWORD`, not the database owner's
 Open uploads after connectivity and worker checks by setting
 `FLOATLIB_SUBMISSIONS_ENABLED=1`. If enabling `FLOATLIB_CHECK_DEFLATE_USAGE=1`,
 DEFLATE must also be configured and its uploads disabled with
-`DEFLATE_SUBMISSIONS_ENABLED=0`. The usage check replaces the timestamp cutoff
-check; database connection failures fall back to the cutoff.
+`DEFLATE_SUBMISSIONS_ENABLED=0`. The check refuses hotkeys with a DEFLATE submission since their latest
+registration, regardless of its status. It replaces the cutoff check; database
+connection failures fall back to the cutoff.
 
 Build/recreate the central API using that repository's deployment instructions.
 Run Compose from a fresh shell so exported FloatLib database variables do not
@@ -197,8 +198,8 @@ After an operator has identified affected results:
 .venv/bin/python validator/tools/reverify.py --apply
 ```
 
-The last command requeues accepted entries from another verifier; inspect its
-selection before applying it. Requeued entries retain their registration and
+The last command requeues accepted entries whose recorded verifier fingerprint
+differs from the current one. Inspect its selection before applying it. Requeued entries retain their registration and
 are temporarily off the accepted board while processing. This is an operator
 repair tool, not a prerequisite for deploying every code change.
 

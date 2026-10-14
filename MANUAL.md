@@ -29,7 +29,7 @@ dependency builds, and the gate's temporary overlays.
 python selftest.py
 ```
 
-The setup check checks required tools; the self-test exercises the real gate
+`--check` reports whether required tools are installed; the self-test exercises the real gate
 against the fixtures in `kernels/expected.tsv`. Close competing CPU-heavy work
 before assessing timing failures.
 
@@ -70,13 +70,13 @@ python gate.py --slot full --bench my-entry
 python gate.py --slot full my-entry
 ```
 
-`--bench` helps measure an unfinished proof. It does not verify correctness or
-qualify an entry for promotion. Output checksum checks still run. Complete the
+`--bench` times an implementation before its proofs are complete. It does not
+verify correctness or qualify an entry for promotion. Output checksum checks still run. Complete the
 proofs and use the full gate before uploading.
 
 A local run compares against the shipped reference by default. The server uses
-its current champion; a local improvement need not beat that champion. Local
-successful verification also does not guarantee server admission or rewards.
+its current champion; a local improvement need not beat that champion. Passing
+the local gate does not guarantee promotion or rewards on the server.
 
 For controlled comparisons between local revisions:
 
@@ -109,10 +109,12 @@ python miner/submit.py submit my-entry --hotkey <hotkey-file> \
 
 Eligibility rules:
 
-- One submission since your latest registration, regardless of that entry's status.
-- By default the registration must be after the operator-configured cutoff.
-- An optional DEFLATE usage check replaces that cutoff check; a connection failure
-  falls back to the cutoff.
+- You can upload once per registration. Any stored entry since your latest
+  registration uses that allowance, including queued, rejected, and error entries.
+- Normally your latest registration must be after the configured cutoff date.
+- If the operator enables the DEFLATE check, the API instead checks whether you
+  submitted to DEFLATE since that registration. If so, the upload is refused.
+  If the DEFLATE connection fails, the cutoff date applies.
 - Identical files from the same hotkey return `409 DUPLICATE_SUBMISSION`, including
   after re-registration. The error identifies the existing entry.
 - Refusals before insertion do not create an entry. Once stored, an interrupted
@@ -138,8 +140,8 @@ python miner/submit.py leaderboard
 | `rejected` | Failed verification or an enforced resource limit; inspect the reason |
 | `error` | Repeated validator failures; ask an operator to recover the existing entry |
 
-A champion build or benchmark failure pauses processing for that slot and keeps
-the challenger queued. The operator decides how to repair the reference.
+If the champion cannot build or finish its benchmark, the worker keeps your entry
+queued and retries periodically. An operator can investigate and repair the problem.
 
 The central API returns refusals as `application/problem+json`:
 
@@ -159,20 +161,22 @@ is the authoritative HTTP contract.
 
 ## 6. Promotion and rewards
 
-A submission is promoted only after all proofs pass, its headline ratio is at
-most the promotion bar (default `0.97`), and the paired bootstrap test establishes
-a positive speed advantage. The test reduces the chance that timing noise causes
-a promotion; it does not eliminate measurement uncertainty.
+A submission becomes champion only if all proofs pass, its timing ratio is at
+most the promotion bar (default `0.97`, meaning at least 3% faster), and a
+statistical test of the paired benchmark rounds confirms a speed advantage.
+The test reduces the chance that timing noise causes a promotion; it does not eliminate measurement uncertainty.
 
-The latest three non-demoted champions receive `60/30/10` of the competition
-budget. Empty ranks and unpaid shares go to treasury. One hotkey holding several
-ranks receives their combined shares. Superseding a champion moves it down the
-reward ranks; explicit demotion excludes it.
+The latest three champions receive 60%, 30%, and 10% of the competition
+budget, excluding any explicitly removed by an operator. Empty ranks and unpaid
+shares go to treasury. One hotkey holding several ranks receives their combined
+shares. Superseding a champion moves it down the
+reward ranks. An operator can explicitly demote a champion, removing it from
+those ranks.
 
 The default leaderboard shows challengers against the current champion. The API
 also supports `/v1/competitions/floatlib/leaderboard?champion_id=<id>` for a past
-promoted champion, and `/champions` lists champion IDs and reward ranks. The
-shipped baseline currently has no selectable submission ID.
+champion. `/v1/competitions/floatlib/champions` lists champion IDs and reward
+ranks. The shipped baseline currently has no selectable submission ID.
 
 See the [live competition](https://conjectures.io/competitions/floatlib) for current
 champions and measurements.
