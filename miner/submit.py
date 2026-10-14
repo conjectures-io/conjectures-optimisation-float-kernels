@@ -4,9 +4,9 @@ Talks to any API laid out like the conjectures platform's competition surface,
 `/v1/competitions/<slug>/...` on the central API (https://conjectures.io by default).
 `floatlib` is the full entry (add, mul, sum, bmm in one file; the paid board and the default
 slot), `floatlib-<slot>` each single-kernel practice board. Needs only requirements/miner.txt.
-Usage in MANUAL.md, sections 12 and 15:
+Usage in MANUAL.md, "Submit" and "Inspect your entry":
 
-python miner/submit.py submit my-entry --hotkey <file> --url <api> [--slot full|add|mul|...]
+python miner/submit.py submit my-entry --hotkey <file> [--url <api>]
 python miner/submit.py status <submission id> --url <api> [--slot ...]
 python miner/submit.py report <submission id> --url <api> [--slot ...]
 python miner/submit.py leaderboard --url <api> [--slot ...]

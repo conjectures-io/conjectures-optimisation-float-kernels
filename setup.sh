@@ -57,10 +57,10 @@ mkdir -p work
 cp "$here/kernels/add/incumbent/Kernel.lean" work/Submission.lean
 lake build Contract Verify bench 2>&1 | tail -3
 
-# The gate's Python environment, pinned in requirements/gate.txt.
+# Python dependencies for the local gate and miner submission CLI.
 cd "$here"
 [ -x .venv/bin/python ] || python3 -m venv .venv
-.venv/bin/pip install -q -r requirements/gate.txt
+.venv/bin/pip install -q -r requirements/gate.txt -r requirements/miner.txt
 if [ "$service" = 1 ]; then
   log "installing the validator worker dependencies"
   .venv/bin/pip install -q -r requirements/service.txt
