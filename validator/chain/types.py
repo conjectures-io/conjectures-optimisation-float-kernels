@@ -8,7 +8,7 @@ import datetime as dt
 # Subnet 66 on the Bittensor mainnet, polled from Finney by default.
 NETUID = 66
 FINNEY = "finney"
-# Registration blocks predate the lite node's ~300-block window, so their times need an archive.
+# Registration blocks older than the lite node's ~300-block window need an archive for their times.
 ARCHIVE = "archive"
 
 # Blocks are ~12s apart; polling at half that comfortably catches every head.
