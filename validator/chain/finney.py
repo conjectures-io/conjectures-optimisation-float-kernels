@@ -18,6 +18,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - depends on how the venv
         "`pip install -r requirements/chain.txt`)."
     ) from exc
 
+from .block_time import BlockTimeResolver
 from .types import (
     ARCHIVE,
     FINNEY,
@@ -55,7 +56,7 @@ def to_snapshot(netuid: int, meta, timestamp: dt.datetime) -> MetagraphSnapshot:
 
 
 class BittensorChainSource:
-    # Reads subnet state from a live node; old block times come from a lazy, memoised archive.
+    # Reads subnet state from a live node; old block times come from a lazy archive, if it is up.
 
     def __init__(
         self,
@@ -71,7 +72,10 @@ class BittensorChainSource:
         self._subtensor = subtensor or bt.Subtensor(network=network)
         logger.info(f"[chain] connected to {network}")
         self._archive = archive
-        self._block_time_cache: dict[int, dt.datetime] = {}
+        self._block_times = BlockTimeResolver(
+            lite=lambda block: self._query_block_time(self._subtensor, block),
+            archive=self._archive_block_time,
+        )
 
     def _archive_subtensor(self) -> bt.Subtensor:
         # Connected on first use, so a watcher that sees no registration never pays for it.
@@ -79,6 +83,14 @@ class BittensorChainSource:
             self._archive = bt.Subtensor(network=self._archive_network)
             logger.info(f"[chain] connected to archive {self._archive_network}")
         return self._archive
+
+    def _archive_block_time(self, block: int) -> dt.datetime:
+        # A failed read drops the connection, so the next attempt reconnects instead of reusing it.
+        try:
+            return self._query_block_time(self._archive_subtensor(), block)
+        except Exception:
+            self._archive = None
+            raise
 
     @staticmethod
     def _query_block_time(subtensor: bt.Subtensor, block: int) -> dt.datetime:
@@ -88,18 +100,16 @@ class BittensorChainSource:
         return dt.datetime.fromtimestamp(int(raw_ms) / 1000, tz=dt.timezone.utc)
 
     def registration_block_time(self, block: int) -> dt.datetime:
-        # A registration block's on-chain time from the archive, memoised as it never changes.
-        cached = self._block_time_cache.get(block)
-        if cached is None:
-            cached = self._query_block_time(self._archive_subtensor(), block)
-            self._block_time_cache[block] = cached
-        return cached
+        # A registration block's on-chain time; see BlockTimeResolver for where it comes from.
+        return self._block_times(block)
 
     def head(self) -> ChainHead:
         # The current tip and its on-chain time.
         block = self._subtensor.get_current_block()
         # The head is recent, so its time is on the lite node - no archive needed.
-        return ChainHead(block=block, timestamp=self._query_block_time(self._subtensor, block))
+        head = ChainHead(block=block, timestamp=self._query_block_time(self._subtensor, block))
+        self._block_times.observe(head)
+        return head
 
     def metagraph(self, netuid: int, block: int | None = None) -> MetagraphSnapshot:
         # The subnet's neurons at a block (the tip by default), stamped with its time.
