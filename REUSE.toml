@@ -1,0 +1,42 @@
+# Copyright and licence of every file, in the REUSE format (https://reuse.software), so that
+# `reuse lint` can check it. It is kept here rather than in a header in each file because the
+# verifier fingerprint (fingerprint.py) hashes gate.py, the Lake files and the contract, verify and
+# bench modules, and the shipped kernels are the champions boards are measured against: a header
+# would change those bytes. When several annotations match a file, the last one applies.
+# THIRD_PARTY_NOTICES.md says what each upstream notice covers.
+version = 1
+
+# Everything is this project's, under the MIT licence in LICENSE.
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Conjectures.io"
+SPDX-License-Identifier = "MIT"
+
+# The contract restates FloatLib's specification, and the kernels and stage 2 reproduce or adapt its
+# certified word kernels and their helpers ("step for step" in `kernels/add/mirror`, and every
+# kernel built from it). FloatLib is MIT-licensed.
+[[annotations]]
+path = ["kernels/**/*.lean", "lean/contract/*.lean", "lean/stage2/**/*.lean"]
+SPDX-FileCopyrightText = ["2026 Conjectures.io", "2026 FloatLib"]
+SPDX-License-Identifier = "MIT"
+
+# The tensor slots also restate TorchLean's `reduceSumLeftSpec` and `bmmSpec` and its obligations
+# (`lean/contract/ContractTensor.lean`, proved equal to TorchLean's in `lean/stage2/Stage2/Link.lean`).
+# TorchLean is MIT-licensed.
+[[annotations]]
+path = [
+    "kernels/sum/**/*.lean",
+    "kernels/bmm/**/*.lean",
+    "kernels/full/**/*.lean",
+    "lean/contract/ContractTensor.lean",
+    "lean/stage2/**/*.lean",
+]
+SPDX-FileCopyrightText = ["2026 Conjectures.io", "2026 FloatLib", "2026 TorchLean"]
+SPDX-License-Identifier = "MIT"
+
+# Alembic's migration template, and the environment script written from Alembic's own. Alembic is
+# MIT-licensed.
+[[annotations]]
+path = ["deploy/migrate/alembic/script.py.mako", "deploy/migrate/alembic/env.py"]
+SPDX-FileCopyrightText = ["2026 Conjectures.io", "2009-2026 Michael Bayer"]
+SPDX-License-Identifier = "MIT"
