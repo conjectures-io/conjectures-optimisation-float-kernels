@@ -76,6 +76,7 @@ experiments and historical reads.
 | [Benchmarking](docs/BENCHMARKING.md) | Workloads, timing aggregation and statistical promotion |
 | [Operations](docs/OPERATIONS.md) | Database, workers, API access, reward switching and recovery |
 | [Local experiments](docs/LOCAL-EXPERIMENTS.md) | Single-kernel slots and example implementations |
+| [Exact runtime slot](docs/EXACT-RUNTIME.md) | In development: thirteen neural-network kernels scored on a model suite; local gate only |
 | [Research background](docs/RESEARCH.md) | TorchLean link proofs and exploratory targets |
 | [Platform contract](deploy/platform/CONTRACT.md) | Database integration and access grants |
 | [Central API reference](https://github.com/conjectures-io/conjectures-validator/blob/main/docs/COMPETITION_API.md) | HTTP endpoints, schemas and refusal codes |

@@ -30,7 +30,7 @@ require TorchLean from git
 lean_lib Contract where
   srcDir := "contract"
   -- ContractTensor (the sum slot's rule) is its own module so the scalar slots compile as calibrated.
-  roots := #[`Contract, `ContractTensor]
+  globs := #[.one `Contract, .one `ContractTensor, .one `ContractExact, .submodules `ExactToolkit]
 
 lean_lib Submission where
   srcDir := "work"
@@ -44,7 +44,7 @@ lean_lib BenchCore where
   srcDir := "bench"
   -- BenchDivSqrt and BenchTensor are separate so the add, mul and fma binaries compile exactly as
   -- calibrated.
-  roots := #[`Bench, `BenchDivSqrt, `BenchTensor, `BenchBmm, `BenchFull]
+  roots := #[`Bench, `BenchDivSqrt, `BenchTensor, `BenchBmm, `BenchFull, `ExactSuite]
 
 lean_exe bench where
   srcDir := "bench"
@@ -131,3 +131,22 @@ lean_exe stage2bench where
 lean_exe fused where
   srcDir := "stage2/bench"
   root := `Fused
+
+-- The exact-runtime slot: its statement check, its model-suite bench, and a developer bench that
+-- compares an entry with FloatLib's kernels and native floats.
+lean_lib VerifyExact where
+  srcDir := "verify"
+  roots := #[`VerifyExact]
+
+lean_exe benchExact where
+  srcDir := "bench"
+  root := `MainExact
+
+lean_exe exactDev where
+  srcDir := "bench"
+  root := `ExactDev
+
+-- The exact runtime's showcase: trained digit models, four runtimes, speed, accuracy and ulps.
+lean_exe exactShowcase where
+  srcDir := "showcase"
+  root := `Showcase

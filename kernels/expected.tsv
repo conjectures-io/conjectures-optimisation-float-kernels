@@ -48,3 +48,11 @@ bmm/wrong	bmm	gate	false	statement	-	-
 full/incumbent	full	gate	true	score	0.97	1.03
 full/baseline	full	gate	true	score	1.50	2.20
 full/wrong	full	gate	false	statement	-	-
+exact/incumbent	exact	gate	true	score	0.97	1.03
+exact/slowdepthwise	exact	gate	false	score	-	-
+exact/wrong	exact	gate	false	statement	-	-
+exact/sorryax	exact	gate	false	axioms	-	-
+exact/forge	exact	gate	false	policy	-	-
+exact/tamper	exact	gate	false	policy	-	-
+exact/forge	exact	nopolicy	false	kernel	-	-
+exact/tamper	exact	nopolicy	false	statement	-	-
