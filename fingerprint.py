@@ -29,19 +29,13 @@ PINNED = sorted(
     + [
         str(p.relative_to(HERE))
         for d in ("contract", "verify", "bench")
-        for p in (LIB / d).rglob("*.lean")
-        # The cost breakdown and the exact slot's profiler, never run by the gate.
-        if p.name not in ("Micro.lean", "ExactDev.lean")
+        for p in (LIB / d).glob("*.lean")
+        # The cost breakdown, never run by the gate.
+        if p.name != "Micro.lean"
     ]
 )
 # Settings that change what a ratio means; the host-only ones (BENCH_CPU, caps) stay out.
-KNOBS = {
-    "BENCH_PAIRS": "500000",
-    "BENCH_ROUNDS": "25",
-    "BENCH_INNER": "3",
-    "GATE_CELL_MS": "100",
-    "GATE_GUARD": "1.10",
-}
+KNOBS = {"BENCH_PAIRS": "500000", "BENCH_ROUNDS": "25", "BENCH_INNER": "3"}
 
 
 def current() -> str:

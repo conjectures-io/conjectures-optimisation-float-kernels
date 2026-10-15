@@ -5,13 +5,11 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
-import math
 import os
 import re
 import secrets
 import shutil
 import signal
-import statistics
 import subprocess
 import sys
 import time
@@ -33,7 +31,7 @@ LAYER = HERE / ".sandbox" / "layer"
 PIN_LAYER = HERE / ".sandbox" / "pin"
 # Build outputs a submission may write, by file stem: its module, the gates, the bench binaries.
 OWN_STEMS = {"Submission", "Verify", "Main", "bench"}
-for _op in ("Mul", "Fma", "Div", "Sqrt", "Sum", "Bmm", "Full", "Exact"):
+for _op in ("Mul", "Fma", "Div", "Sqrt", "Sum", "Bmm", "Full"):
     OWN_STEMS |= {f"Verify{_op}", f"Main{_op}", f"bench{_op}"}
 WORK = LIB / "work" / "Submission.lean"
 # Shared inputs of every pinned binary; a change to any of them rebuilds it.
@@ -56,9 +54,6 @@ class Slot:
     extra: tuple[str, ...] = ()
     # The one module a submission to this slot may import.
     contract: str = "Contract"
-    # "total": the entry's total time over the champion's. "geomean": the exact-runtime model
-    # suite's weighted geometric mean of per-cell ratios, with a regression guard per model × data.
-    scoring: str = "total"
 
     @property
     def pinned(self) -> Path:
@@ -139,26 +134,6 @@ SLOTS = {
         incumbent("bmm"),
         ("bench/BenchTensor.lean", "bench/BenchBmm.lean", "contract/ContractTensor.lean"),
         contract="ContractTensor",
-    ),
-    # Exact runtime: kernels proved equal to correctly rounded FloatLib specs, scored
-    # on the model suite (5 models × batch × data type).
-    "exact": Slot(
-        "exact",
-        "VerifyExact",
-        "benchExact",
-        "MainExact.lean",
-        incumbent("exact"),
-        (
-            "contract/ContractExact.lean",
-            "contract/ExactToolkit/Round.lean",
-            "contract/ExactToolkit/Congr.lean",
-            "contract/ExactToolkit/Decode.lean",
-            "contract/ExactToolkit/Limbs.lean",
-            "contract/ExactToolkit/Values.lean",
-            "bench/ExactSuite.lean",
-        ),
-        contract="ContractExact",
-        scoring="geomean",
     ),
 }
 ELAN = Path.home() / ".elan"
@@ -598,14 +573,11 @@ def axioms(src: Path, v: Verdict) -> str | None:
     return f"extra axioms {sorted(found - AXIOMS)}" if found - AXIOMS else None
 
 
-def bench(
-    binary: Path, seed: int, build: str, extra: dict[str, str] | None = None
-) -> dict[str, tuple[int, int]] | str:
+def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | str:
     # One bench process: class -> (best ns, checksum), or the failure text; the submission's own
     # (built in its layer) count against its time budget, the pinned incumbent's do not.
     # A panic aborts the process, so a kernel cannot print into the output the gate parses.
     env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS), "LEAN_ABORT_ON_PANIC": "1"}
-    env_extra |= extra or {}
     pin_cpu = ["taskset", "-c", _BENCH_CPU] if _BENCH_CPU and shutil.which("taskset") else []
     code, out = (own if build else run)(
         pin_cpu + [str(binary)],
@@ -636,22 +608,13 @@ def score(src: Path, v: Verdict) -> str | None:
     v.seed = int(os.environ.get("BENCH_SEED", secrets.randbelow(2**32)))
     logger.info(f"[score] seed={v.seed} pairs={_PAIRS} rounds={_ROUNDS} cpu={_BENCH_CPU or 'any'}")
     slot = SLOTS[v.slot]
-    extra: dict[str, str] = {}
-    if slot.scoring == "geomean":
-        reps = calibrate(slot, v.seed)
-        if isinstance(reps, str):
-            v.incumbent_failed = True
-            v.reference_failure_phase = "reference-benchmark"
-            return f"gate error: the incumbent's calibration run failed: {reps}"
-        extra = {"BENCH_REPS": ",".join(f"{c}={n}" for c, n in reps.items())}
-        logger.info(f"[score] repetitions per cell: {extra['BENCH_REPS']}")
     runs: dict[str, list[dict[str, tuple[int, int]]]] = {"inc": [], "sub": []}
     for r in range(_ROUNDS):
         order = [("inc", slot.pinned, ""), ("sub", BUILD / "bin" / slot.bench, "read")]
         for who, binary, build in order if r % 2 == 0 else order[::-1]:
             progress("reference-benchmark" if who == "inc" else "challenger")
             try:
-                res = bench(binary, v.seed, build, extra) if extra else bench(binary, v.seed, build)
+                res = bench(binary, v.seed, build)
             except Exception as exc:
                 if who != "inc":
                     raise
@@ -680,8 +643,6 @@ def score(src: Path, v: Verdict) -> str | None:
     for name, (_, want) in inc[0].items():
         if any(s.get(name, (0, None))[1] != want for s in sub):
             return f"checksum mismatch on class {name}: the submission disagrees with the incumbent"
-    if slot.scoring == "geomean":
-        return score_geomean(inc, sub, v)
     total_inc = total_sub = 0
     for name in inc[0]:
         best_i, best_s = min(x[name][0] for x in inc), min(x[name][0] for x in sub)
@@ -708,65 +669,6 @@ def score(src: Path, v: Verdict) -> str | None:
         for i, s in zip(inc, sub)
     ]
     logger.info(f"[score] ratio {v.ratio:.3f} of the incumbent over all timed classes")
-    return None
-
-
-# Regression guard: no model × data type may be slower than this, whatever the overall score.
-_GUARD = float(os.environ.get("GATE_GUARD", "1.10"))
-# Calibration: each cell is repeated until the champion takes about this long on it.
-_CELL_NS = int(float(os.environ.get("GATE_CELL_MS", "100")) * 1_000_000)
-
-
-def calibrate(slot: Slot, seed: int) -> dict[str, int] | str:
-    # One run of the champion, each cell once, sets how often every cell repeats so it takes about
-    # _CELL_NS: small cells stop being dominated by noise, and both sides run the same work.
-    res = bench(slot.pinned, seed, "", {"BENCH_INNER": "1"})
-    if isinstance(res, str):
-        return res
-    if not res or not all(ns > 0 for ns, _ in res.values()):
-        return "the incumbent's calibration output is incomplete"
-    return {cell: max(1, math.ceil(_CELL_NS / ns)) for cell, (ns, _) in res.items()}
-
-
-def score_geomean(inc: list, sub: list, v: Verdict) -> str | None:
-    # Cells are `model:batch:data`. Each round's score is a weighted geometric mean of the per-cell
-    # ratios, the models weighted equally and each model's cells equally; the entry's score is the
-    # median of its round scores, the statistic admission bootstraps. An entry slower than _GUARD on
-    # any model × data group, by its best times, is rejected whatever its score.
-    cells = [name for name in inc[0] if inc[0][name][0] > 0]
-    models = sorted({c.split(":")[0] for c in cells})
-    count = {m: sum(1 for c in cells if c.split(":")[0] == m) for m in models}
-    weight = {c: 1 / len(models) / count[c.split(":")[0]] for c in cells}
-    round_scores = [
-        math.exp(sum(weight[c] * math.log(s[c][0] / i[c][0]) for c in cells))
-        for i, s in zip(inc, sub)
-    ]
-    v.ratio = statistics.median(round_scores)
-    # Admission bootstraps rounds as (incumbent, submission) pairs; a round's score is its ratio.
-    v.rounds = [[1_000_000_000, round(r * 1_000_000_000)] for r in round_scores]
-    for c in cells:
-        best_i, best_s = min(x[c][0] for x in inc), min(x[c][0] for x in sub)
-        v.classes[c] = {"incumbent_ns": best_i, "submission_ns": best_s, "ratio": best_s / best_i}
-        logger.info(
-            f"[score] {c:18} inc {best_i / 1e6:9.2f} ms  sub {best_s / 1e6:9.2f} ms  "
-            f"ratio {best_s / best_i:.3f}"
-        )
-    groups: dict[str, list[float]] = {}
-    for c in cells:
-        model, _, data = c.split(":")
-        groups.setdefault(f"{model}:{data}", []).append(math.log(v.classes[c]["ratio"]))
-    guard = {g: math.exp(sum(xs) / len(xs)) for g, xs in groups.items()}
-    worst = max(guard, key=guard.__getitem__)
-    v.classes["guard"] = {"limit": _GUARD, "groups": guard, "ok": guard[worst] <= _GUARD}
-    logger.info(
-        f"[score] median ratio {v.ratio:.4f}; guard worst {worst} {guard[worst]:.3f} "
-        f"({'ok' if guard[worst] <= _GUARD else 'FAILS'} at {_GUARD})"
-    )
-    if guard[worst] > _GUARD:
-        return (
-            f"regression guard: {worst} takes {guard[worst]:.3f}x the champion's time "
-            f"(limit {_GUARD})"
-        )
     return None
 
 

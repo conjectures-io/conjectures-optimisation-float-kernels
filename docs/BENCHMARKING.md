@@ -19,9 +19,6 @@ promotion decision.
 
 ## Current workloads
 
-The `exact` slot, in development, has its own workloads and scoring; see
-[Exact runtime slot](EXACT-RUNTIME.md).
-
 The full entry measures twelve classes, three per kernel:
 
 | Kernel | Classes | Default work per class |
