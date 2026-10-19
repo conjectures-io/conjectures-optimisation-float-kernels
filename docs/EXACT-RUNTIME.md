@@ -45,8 +45,10 @@ python gate.py --slot exact my-entry
 ```
 
 The [starting champion](../kernels/exact/incumbent/Kernel.lean) has an exact dot product
-(`dotFn`), proved equal to FloatLib's (`dotFn_eq`), used by every dot-based kernel. It also has a
-word-level max pooling (`maxW`), proved against FloatLib's `maximum`. The rest are the specs.
+(`dotFn`), proved equal to FloatLib's (`dotFn_eq`), used by every dot-based kernel. Its final
+rounding (`finishFast`) works on 32-bit digits and rounds from the top 62 bits and a sticky bit,
+which FloatLib's rounding cannot tell apart from the exact total (`roundDyadic_jam`). It also has
+a word-level max pooling (`maxW`), proved against FloatLib's `maximum`. The rest are the specs.
 The gate stages and source policy are those of the other slots ([Proofs and policy](PROOFS.md));
 the statement check is [VerifyExact.lean](../lean/verify/VerifyExact.lean).
 
