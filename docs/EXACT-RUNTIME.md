@@ -1,8 +1,11 @@
 # Exact runtime slot (in development)
 
-The `exact` slot has thirteen neural-network kernels whose results must equal FloatLib's
-correctly rounded specifications, scored by how fast they run a suite of models. It runs in the
+The `exact` slot has twelve neural-network kernels whose results must equal the pinned
+specifications, scored by how fast they run a suite of models. It runs in the
 local gate; the central API does not accept submissions for it.
+
+See [the contract and validation guide](EXACT-CONTRACT.md) for stable normalization, valid
+shapes, checked execution, numerical limits, and the remaining assurance work.
 
 ## What an entry provides
 
@@ -23,7 +26,7 @@ theorem correct : ExactRuntime.Obligation kernels := …
 | dense | `linear`, `gemm` | one exact dot product per output (bias as an extra term), rounded once; optional ReLU |
 | conv | `conv2d`, `depthwise` | one exact dot product per output over its window (any size, stride and padding), bias included |
 | element | `avgpool`, `maxpool`, `addRelu`, `scaleShift` | exact window sum then FloatLib's `div`; FloatLib's `maximum`, `add`, `fma` |
-| norm | `rmsnorm`, `layernorm` | exact sums, then a fixed order of FloatLib's correctly rounded steps |
+| norm | `rmsnorm`, `layernorm` | exact rational statistics; one rounded square root and one final rounding per output |
 
 Dot-based specs are written once over a dot product (`linearWith dot`, `conv2dWith dot`, …) and
 the spec passes FloatLib's `dotOf`. An entry can reuse those definitions with its own proved dot
@@ -72,7 +75,7 @@ cells. Every cell's output checksum must match the champion's.
 1. **Calibration.** The gate runs the champion once and repeats each cell so it takes about
    `GATE_CELL_MS` (default 100 ms). Both sides use the same repetitions.
 2. **Rounds.** Champion and entry alternate over `BENCH_ROUNDS` rounds (default 25). Each cell
-   reports the fastest of `BENCH_INNER` runs (default 2).
+   reports the fastest of `BENCH_INNER` runs (default 3). Input/model generation and output hashing are outside timing.
 3. **Round score.** The weighted geometric mean of the 30 cell ratios (entry time over champion
    time). Each model weighs one fifth, split equally over its cells.
 4. **Score.** The median of the round scores, the statistic admission bootstraps. Rounds are

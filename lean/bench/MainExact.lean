@@ -20,17 +20,22 @@ def main : IO UInt32 := do
   let env (name : String) (default : Nat) : IO Nat :=
     return ((← IO.getEnv name).bind String.toNat?).getD default
   let seed := UInt32.ofNat (← env "BENCH_SEED" 42)
-  let inner ← env "BENCH_INNER" 2
+  let inner ← env "BENCH_INNER" 3
+  if inner == 0 then throw (IO.userError "BENCH_INNER must be positive")
   let reps := parseReps ((← IO.getEnv "BENCH_REPS").getD "")
   for c in ExactSuite.cells do
+    let prepared := ExactSuite.prepareCell c seed
     let n := ((reps.find? (·.1 == c.name)).map (·.2)).getD 1
+    if n == 0 then throw (IO.userError "BENCH_REPS must be positive")
     let mut best := 0
     let mut sum : UInt32 := 0
     for _ in [0:inner] do
+      let mut output : Array ExactRuntime.Word := #[]
       let t0 ← IO.monoNanosNow
       for r in [0:n] do
-        sum ← IO.lazyPure fun _ => ExactSuite.runCell Submission.kernels c seed r
+        output ← IO.lazyPure fun _ => ExactSuite.runPrepared Submission.kernels prepared r
       let t1 ← IO.monoNanosNow
+      sum := ExactSuite.hashArr output
       best := if best == 0 || t1 - t0 < best then t1 - t0 else best
     IO.println s!"{c.name} true {best} {sum}"
   return 0

@@ -4,6 +4,7 @@
 #   ./setup.sh --check     report what is installed, change nothing
 #   ./setup.sh --service   also the gate worker, store client and .env
 #   ./setup.sh --chain     also the bittensor SDK the chain watcher and weight setter need
+#   ./setup.sh --exact     build the local exact-runtime kernels, benchmark and validation tools
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 lean="$here/lean"
@@ -12,12 +13,13 @@ log() { echo "[setup] $(date -u +%H:%M:%S) $*"; }
 missing=0
 have() { if command -v "$1" >/dev/null 2>&1; then log "ok       $1"; else log "MISSING  $1 - $2"; missing=1; fi; }
 
-check=0; service=0; chain=0
+check=0; service=0; chain=0; exact=0
 for arg in "$@"; do
   case "$arg" in
     --check) check=1 ;;
     --service) service=1 ;;
     --chain) service=1; chain=1 ;;
+    --exact) exact=1 ;;
     *) log "unknown option $arg"; exit 2 ;;
   esac
 done
@@ -54,8 +56,13 @@ python3 "$here/scripts/fetch-pinned-deps.py"
 lake exe cache get
 log "building FloatLib, the contract and the bench against the incumbent"
 mkdir -p work
-cp "$here/kernels/add/incumbent/Kernel.lean" work/Submission.lean
-lake build Contract Verify bench 2>&1 | tail -3
+if [ "$exact" = 1 ]; then
+  cp "$here/kernels/exact/incumbent/Kernel.lean" work/Submission.lean
+  lake build ExactToolkit.ModelProofs VerifyExact benchExact exactDev validateExact exactSpecProbe auditExactShapes 2>&1 | tail -3
+else
+  cp "$here/kernels/add/incumbent/Kernel.lean" work/Submission.lean
+  lake build Contract Verify bench 2>&1 | tail -3
+fi
 
 # Python dependencies for the local gate and miner submission CLI.
 cd "$here"
@@ -70,4 +77,8 @@ if [ "$chain" = 1 ]; then
   log "installing the bittensor SDK"
   .venv/bin/pip install -q -r requirements/chain.txt
 fi
-log "done - test the environment: .venv/bin/python selftest.py (about 15 minutes)"
+if [ "$exact" = 1 ]; then
+  log "done - validate: .venv/bin/python scripts/audit-exact-spec.py --native"
+else
+  log "done - test the environment: .venv/bin/python selftest.py (about 15 minutes)"
+fi

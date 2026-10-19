@@ -49,6 +49,20 @@ def test_a_panic_aborts_the_bench(monkeypatch):
     assert seen["LEAN_ABORT_ON_PANIC"] == "1"
 
 
+def test_benchmark_repetitions_reach_child_and_calibration_can_override(monkeypatch):
+    seen = []
+    monkeypatch.setenv("BENCH_INNER", "7")
+
+    def run(cmd, timeout, **kwargs):
+        seen.append(gate.sandbox_env(kwargs["env_extra"])["BENCH_INNER"])
+        return 0, "case true 100 42\n"
+
+    monkeypatch.setattr(gate, "run", run)
+    gate.bench(Path("bench"), 42, "")
+    gate.bench(Path("bench"), 42, "", {"BENCH_INNER": "1"})
+    assert seen == ["7", "1"]
+
+
 def test_successful_reference_can_recover_despite_checksum_rejection(monkeypatch):
     monkeypatch.setattr(gate, "_ROUNDS", 2)
     monkeypatch.setattr(

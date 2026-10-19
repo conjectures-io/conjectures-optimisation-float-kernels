@@ -58,6 +58,8 @@ jobs:
             lean/.lake
           key: lean-${{ hashFiles('lean/lake-manifest.json', 'lean/lean-toolchain') }}
       - run: ./setup.sh && .venv/bin/pip install -q -r requirements/test.txt
+      - name: Check exact-runtime mathematical proofs and allowed axioms
+        run: .venv/bin/python scripts/check-exact-proofs.py
       - name: Save the toolchain and Mathlib build
         if: always() && steps.toolchain.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -77,3 +79,10 @@ jobs:
           GATE_BUILD_MEMORY_MB: "0"
           GATE_BENCH_MEMORY_MB: "0"
           BENCH_CPU: ""
+      - name: Audit exact-runtime edge cases and generated model shapes
+        run: |
+          cp kernels/exact/incumbent/Kernel.lean lean/work/Submission.lean
+          (cd lean && lake build exactSpecProbe auditExactShapes validateExact)
+          .venv/bin/python scripts/audit-exact-spec.py --native --edge-cases --cases-per-kernel 200
+          .venv/bin/python scripts/audit-exact-models.py --random-seeds 4
+          lean/.lake/build/bin/validateExact 0 4294967295 42 > data/spec-audit/workloads.jsonl

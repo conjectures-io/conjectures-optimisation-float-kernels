@@ -1,9 +1,12 @@
 import ExactToolkit.Values
+import ExactToolkit.StableNorm
+import ExactToolkit.SqrtProof
 
 /-!
 # ContractExact: the exact-runtime slot's pinned specs, models and obligation
 
-Every kernel is specified from FloatLib definitions. Most are dot products: `dotOf n fa fb` is
+Scalar operations use FloatLib definitions; normalization uses exact rational statistics and
+a proved square-root rounding bridge. Most kernels are dot products: `dotOf n fa fb` is
 FloatLib's correctly rounded dot product of `[fa 0, …, fa (n-1)]` and `[fb 0, …, fb (n-1)]` (the
 exact sum of the products, rounded once), and a kernel says where its operands come from.
 
@@ -18,8 +21,8 @@ exact sum of the products, rounded once), and a kernel says where its operands c
 | element | `maxpool` | FloatLib's IEEE `maximum` over each window |
 | element | `addRelu` | FloatLib's `add` per element, optional ReLU |
 | element | `scaleShift` | FloatLib's `fma` per element (`x·s + t`, one rounding), per channel |
-| norm | `rmsnorm` | `x · g / sqrt(mean(x²) + eps)` in a fixed order of correctly rounded steps, `mean(x²)` exact |
-| norm | `layernorm` | `(x - mean) · g / sqrt(var + eps) + b`, the same way, `mean` and `var` exact sums |
+| norm | `rmsnorm` | exact mean square; round the square-root denominator, then the final scaled quotient |
+| norm | `layernorm` | exact mean, centering and variance; round the denominator, then the final affine expression |
 
 Each dot-based spec is written once over a dot product (`linearWith dot …`) and the spec is that
 definition with `dotOf`; an entry may use the same definitions with a faster proved dot product.
@@ -173,14 +176,12 @@ def invStd (n : Nat) (eps v : Word) : Word :=
     (Model.sqrt (Model.add (Model.div (ofW v) (ofW (natW n))) (ofW eps)))
 
 /-- `y = (x · scale[row]) · g`, where a row's scale is `invStd` of its exact sum of squares. -/
-@[specialize] def rmsnormWith (dot : DotFn) (rows n : Nat) (eps : Word) (x g : Array Word) :
+@[specialize] def rmsnormLegacyWith (dot : DotFn) (rows n : Nat) (eps : Word) (x g : Array Word) :
     Array Word :=
   let scale := Array.ofFn (n := rows) fun r =>
     invStd n eps (dot n (fun t => x[r.val * n + t]!) (fun t => x[r.val * n + t]!))
   Array.ofFn (n := rows * n) fun q =>
     toWord <| Model.mul (Model.mul (ofW x[q.val]!) (ofW scale[q.val / n]!)) (ofW g[q.val % n]!)
-
-def rmsnormSpec := rmsnormWith dotOf
 
 /-- `x - mean` for element `q`. -/
 @[inline] def centered (x : Array Word) (mean : Word) (q : Nat) : Word :=
@@ -188,7 +189,7 @@ def rmsnormSpec := rmsnormWith dotOf
 
 /-- `y = ((x - mean[row]) · scale[row]) · g + b`, where a row's mean is its exact sum divided by
 `n`, and its scale is `invStd` of the exact sum of squares of the centred row. -/
-@[specialize] def layernormWith (dot : DotFn) (rows n : Nat) (eps : Word) (x g b : Array Word) :
+@[specialize] def layernormLegacyWith (dot : DotFn) (rows n : Nat) (eps : Word) (x g b : Array Word) :
     Array Word :=
   let mean := Array.ofFn (n := rows) fun r =>
     toWord <| Model.div (ofW (dot n (fun t => x[r.val * n + t]!) (fun _ => oneW))) (ofW (natW n))
@@ -201,6 +202,19 @@ def rmsnormSpec := rmsnormWith dotOf
         (ofW g[q.val % n]!))
       (ofW b[q.val % n]!)
 
+/-- Stable finite statistics, with the previous staged semantics outside the stable domain. -/
+@[specialize] def rmsnormWith (dot : DotFn) (rows n : Nat) (eps : Word)
+    (x g : Array Word) : Array Word :=
+  if stableNormDomain rows n eps x g then rmsnormStable rows n eps x g
+  else rmsnormLegacyWith dot rows n eps x g
+
+@[specialize] def layernormWith (dot : DotFn) (rows n : Nat) (eps : Word)
+    (x g b : Array Word) : Array Word :=
+  if stableNormDomain rows n eps x g && b.size == n && b.all finiteWord then
+    layernormStable rows n eps x g b
+  else layernormLegacyWith dot rows n eps x g b
+
+def rmsnormSpec := rmsnormWith dotOf
 def layernormSpec := layernormWith dotOf
 
 /-! ## The kernels, by family -/

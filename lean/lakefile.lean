@@ -30,7 +30,8 @@ require TorchLean from git
 lean_lib Contract where
   srcDir := "contract"
   -- ContractTensor (the sum slot's rule) is its own module so the scalar slots compile as calibrated.
-  globs := #[.one `Contract, .one `ContractTensor, .one `ContractExact, .submodules `ExactToolkit]
+  globs := #[.one `Contract, .one `ContractTensor, .one `ContractExact,
+    .one `ContractExactChecked, .submodules `ExactToolkit]
 
 lean_lib Submission where
   srcDir := "work"
@@ -145,6 +146,18 @@ lean_exe benchExact where
 lean_exe exactDev where
   srcDir := "bench"
   root := `ExactDev
+
+lean_exe validateExact where
+  srcDir := "audit"
+  root := `ValidateSuite
+
+lean_exe exactSpecProbe where
+  srcDir := "audit"
+  root := `SpecProbe
+
+lean_exe auditExactShapes where
+  srcDir := "audit"
+  root := `SuiteAudit
 
 -- The exact runtime's showcase: trained digit models, four runtimes, speed, accuracy and ulps.
 lean_exe exactShowcase where

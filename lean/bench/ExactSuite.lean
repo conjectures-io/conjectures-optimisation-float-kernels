@@ -20,15 +20,16 @@ def lcg (n : Nat) (seed : UInt32) : Array UInt32 := Id.run do
     a := a.push s
   return a
 
-/-- Data types. normal: magnitudes 2^-6..2^0; wide: 2^-20..2^20; sparse: normal with half zeros. -/
+/-- Bounded data: normal in [2^-6, 1), wide in [2^-40, 1), sparse half zeros.
+Signs and significands vary; the exponent range never creates enormous initial activations. -/
 def gen (kind : String) (n : Nat) (seed : UInt32) : Array Word :=
   (lcg n seed).map fun (w : UInt32) =>
     let sgnFrac : UInt32 := w &&& 0x807FFFFF
     let e (lo span : UInt32) : UInt32 := (lo + (w >>> 23) % span) <<< (23 : UInt32)
     match kind with
-    | "wide" => sgnFrac ||| e 107 41
-    | "sparse" => if (w >>> 9) &&& 1 == 0 then 0 else sgnFrac ||| e 121 7
-    | _ => sgnFrac ||| e 121 7
+    | "wide" => sgnFrac ||| e 87 40
+    | "sparse" => if (w >>> 9) &&& 1 == 0 then 0 else sgnFrac ||| e 121 6
+    | _ => sgnFrac ||| e 121 6
 
 /-- Batch-norm and normalisation scales near 1. -/
 def scales (n : Nat) (seed : UInt32) : Array Word :=
@@ -37,9 +38,12 @@ def scales (n : Nat) (seed : UInt32) : Array Word :=
 /-- 1e-5, the normalisation epsilon. -/
 def eps : Word := 0x3727C5AC
 
-/-- A fresh weight array: `k` numbers the array within its model. -/
+/-- A bounded weight/bias array scaled by sqrt(array size). `k` distinguishes arrays.
+This conservative size scaling is deterministic and happens outside inference timing. -/
 def wts (kind : String) (seed : UInt32) (k : Nat) (n : Nat) : Array Word :=
-  gen kind n (seed + 101 * k.toUInt32)
+  let divisor := ofW (natW (max 1 (Nat.sqrt n)))
+  (gen kind n (seed + 101 * k.toUInt32)).map fun w =>
+    toWord (FloatLib.Floats.Formats.BinaryInterchange.Model.div (ofW w) divisor)
 
 def mlpLayers (kind : String) (seed : UInt32) (rows : Nat) (widths : List Nat) : List Layer :=
   let pairs := widths.zip widths.tail
@@ -150,8 +154,20 @@ def cellModel (c : Cell) (seed : UInt32) : List Layer × Nat × Nat :=
 
 /-- Run one cell with kernels `K`; the output's hash. `rep` (the repetition number) only reaches
 the input through `touch`, so repeated runs are really run. -/
-def runCell (K : Kernels) (c : Cell) (seed : UInt32) (rep : Nat := 0) : UInt32 :=
+structure PreparedCell where
+  layers : List Layer
+  samples : Nat
+  size : Nat
+  input : Array Word
+
+def prepareCell (c : Cell) (seed : UInt32) : PreparedCell :=
   let (layers, samples, size) := cellModel c seed
-  hashArr (runModel K layers samples size (touch rep (gen c.kind (samples * size) (seed + 999))))
+  ⟨layers, samples, size, gen c.kind (samples * size) (seed + 999)⟩
+
+def runPrepared (K : Kernels) (p : PreparedCell) (rep : Nat) : Array Word :=
+  runModel K p.layers p.samples p.size (touch rep p.input)
+
+def runCell (K : Kernels) (c : Cell) (seed : UInt32) (rep : Nat := 0) : UInt32 :=
+  hashArr (runPrepared K (prepareCell c seed) rep)
 
 end ExactSuite

@@ -155,6 +155,8 @@ SLOTS = {
             "contract/ExactToolkit/Decode.lean",
             "contract/ExactToolkit/Limbs.lean",
             "contract/ExactToolkit/Values.lean",
+            "contract/ExactToolkit/StableNorm.lean",
+            "contract/ExactToolkit/SqrtProof.lean",
             "bench/ExactSuite.lean",
         ),
         contract="ContractExact",
@@ -605,7 +607,12 @@ def bench(
     # One bench process: class -> (best ns, checksum), or the failure text; the submission's own
     # (built in its layer) count against its time budget, the pinned incumbent's do not.
     # A panic aborts the process, so a kernel cannot print into the output the gate parses.
-    env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS), "LEAN_ABORT_ON_PANIC": "1"}
+    env_extra = {
+        "BENCH_SEED": str(seed),
+        "BENCH_PAIRS": str(_PAIRS),
+        "BENCH_INNER": os.environ.get("BENCH_INNER", verifier.KNOBS["BENCH_INNER"]),
+        "LEAN_ABORT_ON_PANIC": "1",
+    }
     env_extra |= extra or {}
     pin_cpu = ["taskset", "-c", _BENCH_CPU] if _BENCH_CPU and shutil.which("taskset") else []
     code, out = (own if build else run)(
