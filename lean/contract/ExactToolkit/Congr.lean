@@ -27,7 +27,7 @@ theorem dyadic_scale_of_toRat_eq (n1 n2 : Bool) (m1 m2 : Nat) (e1 e2 : Int)
     exact_mod_cast this
   have hm1nn : (0 : ℚ) ≤ m1 := by positivity
   cases n1 <;> cases n2 <;>
-    simp only [Bool.false_eq_true, if_false, if_true, Rat.ofInt_eq_cast, Int.ofNat_eq_natCast,
+    simp only [Bool.false_eq_true, ite_false, ite_true, Rat.ofInt_eq_cast, Int.ofNat_eq_natCast,
       Int.cast_neg, Int.cast_natCast] at h
   · refine ⟨rfl, ?_⟩
     have : (m1 : ℚ) = m2 * 2 ^ k := by
@@ -63,7 +63,7 @@ theorem roundDyadic_congr (fmt : FloatFormat) (hfmt : fmt.isIEEE = true) (d1 d2 
   simp only at hb hle
   obtain ⟨hn, hm⟩ := dyadic_scale_of_toRat_eq na nb ma mb ea eb hle hb hab
   subst hn hm
-  simp only [Model.roundDyadic, hfmt, if_true, Model.ieeeRoundDyadic]
+  simp only [Model.roundDyadic, hfmt, ite_true, Model.ieeeRoundDyadic]
   congr 1
   have := round_scale (FloatFormat.toModel fmt) (Model.modelSign na) mb eb (eb - ea).toNat hb
   rwa [show eb - (((eb - ea).toNat : Nat) : ℤ) = ea by omega] at this

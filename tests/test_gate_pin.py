@@ -44,6 +44,7 @@ def test_every_run_rebuilds_the_shared_tree_from_the_shipped_incumbent(tmp_path,
     builds = []
 
     def run(cmd, timeout, build, layer=None):
+        # Records each build instead of running it.
         builds.append((cmd[1:], build, gate.WORK.read_text()))
         return 0, ""
 

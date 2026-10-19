@@ -41,6 +41,7 @@ def eps : Word := 0x3727C5AC
 def wts (kind : String) (seed : UInt32) (k : Nat) (n : Nat) : Array Word :=
   gen kind n (seed + 101 * k.toUInt32)
 
+/-- An MLP: `linear` layers through `widths`, with ReLU between them. -/
 def mlpLayers (kind : String) (seed : UInt32) (rows : Nat) (widths : List Nat) : List Layer :=
   let pairs := widths.zip widths.tail
   pairs.zipIdx.map fun ((i, o), k) =>
@@ -95,6 +96,7 @@ def mixerLayers (kind : String) (seed : UInt32) (T C classes : Nat) : List Layer
    .linear T (2 * C) C false (w 8 (C * 2 * C)) (w 9 C), .addSaved false,
    .linear 1 (T * C) classes false (w 10 (classes * T * C)) (w 11 classes)]
 
+/-- A cell's checksum: an FNV-1a hash of its output words. -/
 def hashArr (v : Array UInt32) : UInt32 := v.foldl (fun h x => (h ^^^ x) * 16777619) 2166136261
 
 /-- `a` unchanged, but only known at run time: stops the compiler computing a timed call once,
@@ -120,8 +122,10 @@ structure Cell where
   batch : Nat
   kind : String
 
+/-- `model:batch:kind`, the name the gate reads. -/
 def Cell.name (c : Cell) : String := s!"{c.model}:b{c.batch}:{c.kind}"
 
+/-- The 30 cells: 5 models × 2 batch sizes × 3 data types. -/
 def cells : List Cell :=
   ["normal", "wide", "sparse"].flatMap fun kind =>
     [⟨"mlp", 1, kind⟩, ⟨"mlp", 8, kind⟩, ⟨"cnn", 1, kind⟩, ⟨"cnn", 4, kind⟩,

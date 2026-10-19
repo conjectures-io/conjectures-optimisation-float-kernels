@@ -24,6 +24,7 @@ def test_every_contract_verify_and_bench_file_is_pinned():
 
 @pytest.mark.parametrize("knob, value", [("GATE_CELL_MS", "20"), ("GATE_GUARD", "1.5")])
 def test_the_exact_slots_settings_change_the_fingerprint(monkeypatch, knob, value):
+    # Both settings change what a score means, so both change the fingerprint.
     monkeypatch.delenv(knob, raising=False)
     before = fingerprint.current()
     monkeypatch.setenv(knob, value)

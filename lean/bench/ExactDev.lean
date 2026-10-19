@@ -15,18 +15,22 @@ Times the entry in `work/Submission.lean` against FloatLib's kernels (the specs)
 
 open ExactRuntime ExactSuite
 
+/-- `a / b` with three decimals. -/
 def ratio (a b : Nat) : String :=
   if b == 0 then "-" else
     let q := a * 1000 / b; s!"{q / 1000}.{toString (q % 1000 + 1000) |>.drop 1}"
 
+/-- A native `Float32` left-fold sum, for scale. -/
 def nativeSum (x : Array Float32) : UInt32 := (x.foldl (· + ·) (Float32.ofBits 0)).toBits
 
+/-- A native `Float32` left-fold dot product, for scale. -/
 def nativeDot (x y : Array Float32) : UInt32 := Id.run do
   let mut acc := Float32.ofBits 0
   for k in [0:x.size] do
     acc := acc + x[k]! * y[k]!
   return acc.toBits
 
+/-- `sum` and `dot` against FloatLib's kernels and native floats, at three sizes and data types. -/
 def kernelBench : IO Unit := do
   let K := Submission.kernels
   IO.println "| kernel | input | n | FloatLib | entry | native | entry/FloatLib | entry/native |"
@@ -48,6 +52,7 @@ def kernelBench : IO Unit := do
         IO.println s!"| {name} | {kind} | {n} | {s0.1 / 1000} us | {s1.1 / 1000} us | {s2.1 / 1000} us | {ratio s1.1 s0.1} | {ratio s1.1 s2.1} |"
         if s0.2 != s1.2 then IO.println "  ^ the entry disagrees with FloatLib"
 
+/-- Every suite cell against FloatLib's kernels, with bit identity. -/
 def modelBench : IO Unit := do
   IO.println "| cell | FloatLib | entry | entry/FloatLib | identical |"
   IO.println "|---|---:|---:|---:|---|"
@@ -86,6 +91,7 @@ def profile (model : String) : IO Unit := do
     st := l.apply K st
   IO.println s!"| total | {total / 1000} |"
 
+/-- `exactDev`, `exactDev profile <model>` or `exactDev models`. -/
 def main (args : List String) : IO UInt32 := do
   if args.contains "models" then modelBench
   else if args.head? == some "profile" then profile (args.getD 1 "cnn")

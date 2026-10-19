@@ -33,14 +33,17 @@ namespace ExactRuntime
 
 open FloatLib.Floats.Formats.BinaryInterchange FloatLib.Floats
 
+/-- A binary32 value, as its 32-bit word. -/
 abbrev Word := UInt32
 
+/-- A word as FloatLib's binary32 value. -/
 @[inline] def ofW (w : Word) : Model Fmt := Model.ofUInt32 w
 
 /-- ReLU on a word: negative non-NaN values (including -0) become +0. -/
 @[inline] def reluW (w : Word) : Word :=
   if w &&& 0x80000000 != 0 && !(expOf w = 255 && fracOf w != 0) then 0 else w
 
+/-- ReLU when `relu` is set; otherwise the word unchanged. -/
 @[inline] def act (relu : Bool) (w : Word) : Word := if relu then reluW w else w
 
 /-- FloatLib's correctly rounded dot product of `[fa 0, …, fa (n-1)]` and `[fb 0, …, fb (n-1)]`. -/
@@ -64,6 +67,7 @@ def natW (n : Nat) : Word := toWord (Model.roundDyadic Fmt ⟨false, n, 0⟩)
     act relu <| dot (inW + 1) (fun t => if t < inW then X[i * inW + t]! else oneW)
       (fun t => if t < inW then W[j * inW + t]! else b[j]!)
 
+/-- The `linear` spec: `linearWith` run with FloatLib's dot product. -/
 def linearSpec := linearWith dotOf
 
 /-- `C[β, i, j] = Σ_t A[β, i, t] · B[β, t, j]`, batched, row-major. -/
@@ -74,10 +78,12 @@ def linearSpec := linearWith dotOf
     let j := q.val % n
     dot k (fun t => A[(β * m + i) * k + t]!) (fun t => B[(β * k + t) * n + j]!)
 
+/-- The `gemm` spec: `gemmWith` run with FloatLib's dot product. -/
 def gemmSpec := gemmWith dotOf
 
 /-! ## Convolution, NCHW, one image -/
 
+/-- A convolution's shape: input channels and size, output channels, filter size, stride, zero padding. -/
 structure ConvShape where
   cin : Nat
   h : Nat
@@ -88,7 +94,9 @@ structure ConvShape where
   stride : Nat
   pad : Nat
 
+/-- Output height. -/
 def ConvShape.ho (s : ConvShape) : Nat := (s.h + 2 * s.pad - s.kh) / s.stride + 1
+/-- Output width. -/
 def ConvShape.wo (s : ConvShape) : Nat := (s.w + 2 * s.pad - s.kw) / s.stride + 1
 
 /-- Element `t` of the input window of output `(y, x)`, in `(c, dy, dx)` order; zero outside the
@@ -113,6 +121,7 @@ image. -/
     act relu <| dot (k + 1) (fun t => if t < k then windowAt s inp y x t else oneW)
       (fun t => if t < k then wts[o * k + t]! else b[o]!)
 
+/-- The `conv2d` spec: `conv2dWith` run with FloatLib's dot product. -/
 def conv2dSpec := conv2dWith dotOf
 
 /-- Depthwise: channel `c` of the output uses only channel `c` of the input and its own filter
@@ -127,6 +136,7 @@ def conv2dSpec := conv2dWith dotOf
     act relu <| dot (k + 1) (fun t => if t < k then windowAt s inp y x (c * k + t) else oneW)
       (fun t => if t < k then wts[c * k + t]! else b[c]!)
 
+/-- The `depthwise` spec: `depthwiseWith` run with FloatLib's dot product. -/
 def depthwiseSpec := depthwiseWith dotOf
 
 /-! ## Element-wise and pooling (`c` channels of `h × w`, `k × k` windows, stride `k`) -/
@@ -144,6 +154,7 @@ def depthwiseSpec := depthwiseWith dotOf
     let s := dot (k * k) (poolAt h w k inp ch y x) (fun _ => oneW)
     toWord (Model.div (ofW s) (ofW (natW (k * k))))
 
+/-- The `avgpool` spec: `avgpoolWith` run with FloatLib's dot product. -/
 def avgpoolSpec := avgpoolWith dotOf
 
 /-- FloatLib's IEEE `maximum` over each window, left to right. -/
@@ -180,6 +191,7 @@ def invStd (n : Nat) (eps v : Word) : Word :=
   Array.ofFn (n := rows * n) fun q =>
     toWord <| Model.mul (Model.mul (ofW x[q.val]!) (ofW scale[q.val / n]!)) (ofW g[q.val % n]!)
 
+/-- The `rmsnorm` spec: `rmsnormWith` run with FloatLib's dot product. -/
 def rmsnormSpec := rmsnormWith dotOf
 
 /-- `x - mean` for element `q`. -/
@@ -201,32 +213,39 @@ def rmsnormSpec := rmsnormWith dotOf
         (ofW g[q.val % n]!))
       (ofW b[q.val % n]!)
 
+/-- The `layernorm` spec: `layernormWith` run with FloatLib's dot product. -/
 def layernormSpec := layernormWith dotOf
 
 /-! ## The kernels, by family -/
 
+/-- The core family: `sum` and `dot`. -/
 structure CoreKernels where
   sum : Array Word → Word
   dot : Array Word → Array Word → Word
 
+/-- The dense family: `linear` and `gemm`. -/
 structure DenseKernels where
   linear : Nat → Nat → Nat → Bool → Array Word → Array Word → Array Word → Array Word
   gemm : Nat → Nat → Nat → Nat → Array Word → Array Word → Array Word
 
+/-- The convolution family: `conv2d` and `depthwise`. -/
 structure ConvKernels where
   conv2d : ConvShape → Bool → Array Word → Array Word → Array Word → Array Word
   depthwise : ConvShape → Bool → Array Word → Array Word → Array Word → Array Word
 
+/-- The element family: pooling, the residual add and batch norm. -/
 structure ElementKernels where
   avgpool : Nat → Nat → Nat → Nat → Array Word → Array Word
   maxpool : Nat → Nat → Nat → Nat → Array Word → Array Word
   addRelu : Bool → Array Word → Array Word → Array Word
   scaleShift : Bool → Nat → Nat → Array Word → Array Word → Array Word → Array Word
 
+/-- The normalisation family: `rmsnorm` and `layernorm`. -/
 structure NormKernels where
   rmsnorm : Nat → Nat → Word → Array Word → Array Word → Array Word
   layernorm : Nat → Nat → Word → Array Word → Array Word → Array Word → Array Word
 
+/-- An entry's 13 kernels, by family. -/
 structure Kernels where
   core : CoreKernels
   dense : DenseKernels
@@ -234,21 +253,31 @@ structure Kernels where
   elem : ElementKernels
   norm : NormKernels
 
+/-- The core family's specs. -/
 def specCore : CoreKernels := ⟨sumSpec, dotSpec⟩
+/-- The dense family's specs. -/
 def specDense : DenseKernels := ⟨linearSpec, gemmSpec⟩
+/-- The convolution family's specs. -/
 def specConv : ConvKernels := ⟨conv2dSpec, depthwiseSpec⟩
+/-- The element family's specs. -/
 def specElem : ElementKernels := ⟨avgpoolSpec, maxpoolSpec, addReluSpec, scaleShiftSpec⟩
+/-- The normalisation family's specs. -/
 def specNorm : NormKernels := ⟨rmsnormSpec, layernormSpec⟩
+/-- All 13 specs: what an entry's kernels must equal. -/
 def specKernels : Kernels := ⟨specCore, specDense, specConv, specElem, specNorm⟩
 
 /-- The obligation an entry proves: each of its kernels equals the spec. -/
 def Obligation (K : Kernels) : Prop := K = specKernels
 
-/-- Family obligations, for family boards. -/
+/-- The core family equals its specs (family obligations are for family boards). -/
 def CoreObligation (k : CoreKernels) : Prop := k = specCore
+/-- The dense family equals its specs. -/
 def DenseObligation (k : DenseKernels) : Prop := k = specDense
+/-- The convolution family equals its specs. -/
 def ConvObligation (k : ConvKernels) : Prop := k = specConv
+/-- The element family equals its specs. -/
 def ElementObligation (k : ElementKernels) : Prop := k = specElem
+/-- The normalisation family equals its specs. -/
 def NormObligation (k : NormKernels) : Prop := k = specNorm
 
 /-- Champions of the five families together meet the whole obligation. -/
@@ -263,6 +292,7 @@ theorem obligation_of_families (K : Kernels) (h1 : CoreObligation K.core)
 
 /-! ## Models: a list of layers, run on each sample -/
 
+/-- One layer of a model; `save` and `addSaved` make residual connections. -/
 inductive Layer where
   | linear (rows inW outW : Nat) (relu : Bool) (w b : Array Word)
   | gemm (m k n : Nat) (a : Array Word)       -- left-multiply the activation (`k × n`) by `a`

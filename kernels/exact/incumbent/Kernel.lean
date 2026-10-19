@@ -31,6 +31,7 @@ structure Acc where
   special : Bool
   negZero : Bool
 
+/-- No terms yet: zero limbs, no special value, and "every term was −0" vacuously true. -/
 def Acc.empty : Acc := ⟨Array.replicate 18 0, Array.replicate 18 0, false, true⟩
 
 /-- The exact integer total held in the limbs. -/
@@ -44,6 +45,7 @@ def Acc.total (acc : Acc) : Int := (limbVal acc.pos.toList : Int) - limbVal acc.
     else if neg then ⟨pos, addLimbs64 ng m.toUInt64 idx, sp, false⟩
     else ⟨addLimbs64 pos m.toUInt64 idx, ng, sp, false⟩
 
+/-- Record that a NaN or an infinity was seen. -/
 @[inline] def Acc.markSpecial (acc : Acc) : Acc :=
   match acc with
   | ⟨pos, ng, _, nz⟩ => ⟨pos, ng, true, nz⟩
@@ -489,6 +491,7 @@ end
 
 /-! ## The exact dot product -/
 
+/-- One term: a NaN or infinity marks the accumulator, otherwise the exact product goes into the limbs. -/
 @[inline] def dotStep (acc : Acc) (wa wb : UInt32) : Acc :=
   if expOf wa = 255 ∨ expOf wb = 255 then acc.markSpecial
   else acc.add (mantOf wa * mantOf wb) (idxOf wa + idxOf wb) (Bool.xor (signOf wa) (signOf wb))
@@ -680,9 +683,11 @@ theorem ofFn_const (n : Nat) (c : UInt32) :
 
 /-! ## The kernels -/
 
+/-- `dot`: `dotFn` over the two arrays; FloatLib's dot product for unequal sizes. -/
 def dotX (a b : Array UInt32) : UInt32 :=
   if a.size = b.size then dotFn a.size (fun i => a[i]!) (fun i => b[i]!) else dotSpec a b
 
+/-- `sum`: a dot product with ones. -/
 def sumX (x : Array UInt32) : UInt32 := dotFn x.size (fun i => x[i]!) (fun _ => oneW)
 
 theorem dotX_eq_spec (a b : Array UInt32) : dotX a b = dotSpec a b := by
@@ -787,6 +792,7 @@ theorem maxpoolW_eq : maxpoolW = maxpoolSpec := by
 
 /-! ## The entry -/
 
+/-- The entry: every dot-based kernel is the contract's definition run with `dotFn`. -/
 def kernels : Kernels where
   core := ⟨sumX, dotX⟩
   dense := ⟨linearWith dotFn, gemmWith dotFn⟩

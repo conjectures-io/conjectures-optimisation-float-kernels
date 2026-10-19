@@ -42,6 +42,7 @@ def sumSpec (x : Array UInt32) : UInt32 := dotSpec x (Array.replicate x.size one
 /-- Significand and binade index of a finite word: its value is `±mantOf · 2^(idxOf - 149)`. -/
 @[inline] def mantOf (w : UInt32) : Nat :=
   if expOf w = 0 then (fracOf w).toNat else 2 ^ 23 + (fracOf w).toNat
+/-- The power-of-two index of a finite word: its value is `±mantOf · 2^(idxOf − 149)`. -/
 @[inline] def idxOf (w : UInt32) : Nat := if expOf w = 0 then 0 else (expOf w).toNat - 1
 
 /-- Signed significand. -/
@@ -163,7 +164,7 @@ theorem finishLimbs_eq (pos neg : Array Nat) (e : Int) (negZero : Bool) :
   have hn : limbVal neg.toList = 2 ^ (32 * lo) * limbVal (neg.toList.drop lo) :=
     limbVal_drop _ _ fun i hi => by rw [getD_toList]; exact (hz i (by omega) hi).2
   rw [finishWord_scale, limbValA_eq, limbValA_eq, Array.toList_extract, Array.toList_extract,
-    List.extract_eq_drop_take, List.extract_eq_drop_take,
+    List.extract_eq_take_drop, List.extract_eq_take_drop,
     List.take_of_length_le (by simp), List.take_of_length_le (by simp), hp, hn]
   push_cast; ring_nf
 
@@ -181,7 +182,11 @@ def dallNZ (a b : Array UInt32) (index : Nat) : Nat → Bool
   | count + 1 => (decide (mantOf a[index]! * mantOf b[index]! = 0) &&
       Bool.xor (signOf a[index]!) (signOf b[index]!)) && dallNZ a b (index + 1) count
 
+-- The proof's casts meet `2 ^ 298`; evaluating it is harmless.
+set_option exponentiation.threshold 300 in
 open Model.Reduction in
+/-- For finite words, FloatLib's exact dot total over a slice is `dsum · 2^-298`, the same
+number the limbs hold. -/
 theorem finiteDotSlice_eq (a b : Array UInt32) (index remaining : Nat)
     (ha : index + remaining ≤ (a.map (Model.ofUInt32 (fmt := Fmt))).size)
     (hb : index + remaining ≤ (b.map (Model.ofUInt32 (fmt := Fmt))).size)
