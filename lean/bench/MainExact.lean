@@ -16,6 +16,7 @@ def parseReps (text : String) : List (String × Nat) :=
     | [cell, n] => n.toNat?.map (cell, ·)
     | _ => none
 
+/-- Time every cell as often as `BENCH_REPS` and `BENCH_INNER` say; one line per cell. -/
 def main : IO UInt32 := do
   let env (name : String) (default : Nat) : IO Nat :=
     return ((← IO.getEnv name).bind String.toNat?).getD default

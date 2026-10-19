@@ -33,6 +33,7 @@ def data():
 
 
 def init(*shape):
+    # He-initialised weights, fan-in from the trailing dimensions.
     fan_in = int(np.prod(shape[1:]))
     return (rng.standard_normal(shape) * np.sqrt(2.0 / fan_in)).astype(np.float32)
 
@@ -49,6 +50,7 @@ def softmax_grad(logits, y):
 
 
 def mlp_train(x, y, epochs=60, lr=0.1, batch=32):
+    # Plain minibatch SGD on cross-entropy.
     ws = [init(64, 64), init(32, 64), init(10, 32)]
     bs = [np.zeros(n, np.float32) for n in (64, 32, 10)]
     for _ in range(epochs):
@@ -69,6 +71,7 @@ def mlp_train(x, y, epochs=60, lr=0.1, batch=32):
 
 
 def mlp_predict(ws, bs, x):
+    # The predicted class of each image.
     for k, (w, b) in enumerate(zip(ws, bs)):
         x = x @ w.T + b
         x = np.maximum(x, 0) if k < 2 else x
@@ -98,6 +101,7 @@ def col2im(g, c):
 
 
 def cnn_forward(p, x):
+    # The logits, and what the backward pass needs.
     c1w, c1b, c2w, c2b, fw, fb = p
     x = x.reshape(-1, 1, 8, 8)
     col1 = im2col(x)
@@ -113,6 +117,7 @@ def cnn_forward(p, x):
 
 
 def cnn_train(x, y, epochs=60, lr=0.1, batch=32):
+    # Minibatch SGD, backpropagating by hand through both convolutions and the pooling.
     p = [init(8, 1, 3, 3), np.zeros(8, np.float32), init(16, 8, 3, 3), np.zeros(16, np.float32)]
     p += [init(10, 16), np.zeros(10, np.float32)]
     for _ in range(epochs):
@@ -138,6 +143,7 @@ def cnn_train(x, y, epochs=60, lr=0.1, batch=32):
 
 
 def main():
+    # Trains both models, prints their test accuracy, writes digits.bin.
     xtr, ytr, xte, yte = data()
     ws, bs = mlp_train(xtr, ytr)
     print(f"mlp test accuracy {(mlp_predict(ws, bs, xte) == yte).mean():.3f}")

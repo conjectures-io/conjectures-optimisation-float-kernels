@@ -42,14 +42,17 @@ def foldKernels : Kernels where
   elem := ⟨avgpoolWith foldDot, maxpoolSpec, addReluSpec, scaleShiftSpec⟩
   norm := ⟨rmsnormWith foldDot, layernormWith foldDot⟩
 
+/-- A word as a native `Float32`. -/
 @[inline] def f32 (w : Word) : Float32 := Float32.ofBits w
 
+/-- Native `Float32`: each product and each sum rounded, left to right. -/
 def nativeDot : DotFn := fun n fa fb => Id.run do
   let mut acc : Float32 := 0
   for t in [0:n] do
     acc := acc + f32 (fa t) * f32 (fb t)
   return acc.toBits
 
+/-- Native max pooling. -/
 def nativeMaxpool (c h w k : Nat) (inp : Array Word) : Array Word :=
   Array.ofFn (n := c * (h / k * (w / k))) fun q =>
     let ch := q.val / (h / k * (w / k))
@@ -60,6 +63,7 @@ def nativeMaxpool (c h w k : Nat) (inp : Array Word) : Array Word :=
       if acc < v then v else acc) (f32 (poolAt h w k inp ch y x 0))
     m.toBits
 
+/-- Native average pooling: a native sum, then a native divide. -/
 def nativeAvgpool (c h w k : Nat) (inp : Array Word) : Array Word :=
   Array.ofFn (n := c * (h / k * (w / k))) fun q =>
     let ch := q.val / (h / k * (w / k))
@@ -67,6 +71,7 @@ def nativeAvgpool (c h w k : Nat) (inp : Array Word) : Array Word :=
     let x := q.val % (w / k)
     (f32 (nativeDot (k * k) (poolAt h w k inp ch y x) (fun _ => oneW)) / (k * k).toFloat32).toBits
 
+/-- Hardware `Float32` through the same model code (norms keep the runtime's specs; unused here). -/
 def nativeKernels : Kernels where
   core := specCore
   dense := ⟨linearWith nativeDot, gemmWith nativeDot⟩
@@ -92,10 +97,12 @@ def readTensors (bytes : ByteArray) : Array (Array Word) := Id.run do
     i := i + 4 + 4 * n
   return out
 
+/-- The trained MLP: 64 → 64 → 32 → 10, ReLU between. -/
 def mlpLayers (t : Array (Array Word)) : List Layer :=
   [.linear 1 64 64 true t[0]! t[1]!, .linear 1 64 32 true t[2]! t[3]!,
    .linear 1 32 10 false t[4]! t[5]!]
 
+/-- The trained CNN: conv 1 → 8, max pool, conv 8 → 16, global average, linear. -/
 def cnnLayers (t : Array (Array Word)) : List Layer :=
   [.conv ⟨1, 8, 8, 8, 3, 3, 1, 1⟩ true t[6]! t[7]!, .maxpool 8 8 8 2,
    .conv ⟨8, 4, 4, 16, 3, 3, 1, 1⟩ true t[8]! t[9]!, .avgpool 16 4 4 4,
@@ -107,6 +114,7 @@ def cnnLayers (t : Array (Array Word)) : List Layer :=
 def ordered (w : Word) : Int :=
   if w &&& 0x80000000 != 0 then -((w &&& 0x7FFFFFFF).toNat : Int) else w.toNat
 
+/-- The distance between two words in ulps. -/
 def ulps (a b : Word) : Nat := (ordered a - ordered b).natAbs
 
 /-- How many of the samples' 10 logits peak at the label. -/
@@ -116,10 +124,12 @@ def correct (logits labels : Array Word) : Nat :=
       if f32 logits[i * 10 + j]! < f32 logits[i * 10 + k]! then k else j) 0
     best == labels[i]!.toNat
 
+/-- `q / 10^digits` with `digits` decimals. -/
 def fixed (q : Nat) (digits : Nat) : String :=
   let p := 10 ^ digits
   s!"{q / p}.{toString (q % p + p) |>.drop 1}"
 
+/-- The report: four runtimes on both trained models. -/
 def main (args : List String) : IO Unit := do
   let path := args.headD "showcase/digits.bin"
   let t := readTensors (← IO.FS.readBinFile path)

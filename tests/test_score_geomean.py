@@ -19,6 +19,7 @@ CELLS = ["a:b1:normal", "b:b1:normal", "b:b1:wide"]
 def fake_bench(champion_ns, entry_ns, calls):
     # A bench that answers the calibration run, the champion's runs and the entry's runs.
     def bench(binary, seed, build, extra=None):
+        # Answers each run with its side's fixed times and one checksum.
         calls.append((build, dict(extra or {})))
         ns = entry_ns if build else champion_ns
         return {c: (ns[c], 7) for c in CELLS}
@@ -35,6 +36,7 @@ def scoring(monkeypatch):
 
 
 def run(monkeypatch, champion_ns, entry_ns):
+    # Scores an entry with the fake bench: the reason, the verdict and the bench calls.
     calls: list = []
     monkeypatch.setattr(gate, "bench", fake_bench(champion_ns, entry_ns, calls))
     v = gate.Verdict(submission="probe", slot="exact")
@@ -42,6 +44,7 @@ def run(monkeypatch, champion_ns, entry_ns):
 
 
 def test_a_uniformly_faster_entry_scores_its_ratio(monkeypatch, scoring):
+    # The same speed-up on every cell is the score, in every round.
     champion = {c: 10_000_000 for c in CELLS}
     reason, v, _ = run(monkeypatch, champion, {c: 8_000_000 for c in CELLS})
     assert reason is None
@@ -79,7 +82,9 @@ def test_calibration_repeats_each_cell_to_the_target_for_both_sides(monkeypatch,
 
 
 def test_a_failed_calibration_is_the_champions(monkeypatch, scoring):
+    # A champion that cannot calibrate fails as the champion, which pauses the slot.
     def bench(binary, seed, build, extra=None):
+        # Every run of the champion fails.
         return "bench_incumbent killed"
 
     monkeypatch.setattr(gate, "bench", bench)
@@ -94,6 +99,7 @@ def test_score_and_admission_use_the_same_statistic(monkeypatch, scoring):
     calls: list = []
 
     def bench(binary, seed, build, extra=None):
+        # The entry's rounds at 0.6, 0.9 and 0.7 of the champion's times.
         calls.append(build)
         f = next(factors) if build else 1.0
         return {c: (int(10_000_000 * f), 7) for c in CELLS}

@@ -82,7 +82,9 @@ jobs:
       - name: Audit exact-runtime edge cases and generated model shapes
         run: |
           cp kernels/exact/incumbent/Kernel.lean lean/work/Submission.lean
-          (cd lean && lake build exactSpecProbe auditExactShapes validateExact)
+          (cd lean && lake build exactSpecProbe auditExactShapes validateExact exactAudit)
+          lean/.lake/build/bin/exactAudit --selftest
+          lean/.lake/build/bin/exactAudit 20 42
           .venv/bin/python scripts/audit-exact-spec.py --native --edge-cases --cases-per-kernel 200
           .venv/bin/python scripts/audit-exact-models.py --random-seeds 4
           lean/.lake/build/bin/validateExact 0 4294967295 42 > data/spec-audit/workloads.jsonl

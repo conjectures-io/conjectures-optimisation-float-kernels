@@ -93,6 +93,8 @@ theorem toDyadic_ofUInt32 (w : UInt32) (h : expOf w ≠ 255) :
     show Fmt.exponentBias = 127 from rfl,
     show Fmt.fracWidth = 23 from rfl]
   simp only [show Model.pow2 23 = 2 ^ 23 from rfl]
-  split_ifs <;> simp <;> omega
+  split_ifs
+  all_goals simp
+  all_goals omega
 
 end ExactRuntime

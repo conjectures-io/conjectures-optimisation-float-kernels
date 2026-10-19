@@ -140,7 +140,7 @@ theorem lowLimb_zero (pos neg : Array Nat) (fuel i : Nat) :
 theorem getD_toList (a : Array Nat) (j : Nat) : a.toList.getD j 0 = a[j]! := by
   rw [List.getD_eq_getElem?_getD, Array.getElem?_toList]
   rcases Nat.lt_or_ge j a.size with h | h
-  · simp [h, getElem!_pos a j h]
-  · simp [h, getElem!_neg a j (by omega)]
+  · simp [h]
+  · simp [h]
 
 end ExactRuntime
