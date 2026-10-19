@@ -38,67 +38,81 @@ def scales (n : Nat) (seed : UInt32) : Array Word :=
 /-- 1e-5, the normalisation epsilon. -/
 def eps : Word := 0x3727C5AC
 
-/-- A bounded weight/bias array scaled by sqrt(array size). `k` distinguishes arrays.
-This conservative size scaling is deterministic and happens outside inference timing. -/
-def wts (kind : String) (seed : UInt32) (k : Nat) (n : Nat) : Array Word :=
-  let divisor := ofW (natW (max 1 (Nat.sqrt n)))
-  (gen kind n (seed + 101 * k.toUInt32)).map fun w =>
-    toWord (FloatLib.Floats.Formats.BinaryInterchange.Model.div (ofW w) divisor)
+/-- Weights scaled by fan-in, not total parameter count. The bounded log-uniform draw has
+variance about 0.13, so a gain of four approximates a He-style scale for ReLU layers.
+Wide workloads vary input exponents; their weights use the ordinary bounded distribution.
+Sparse workloads retain half-zero weights. All preparation is outside inference timing. -/
+def wts (kind : String) (seed : UInt32) (k fanIn n : Nat) : Array Word :=
+  let divisor := ofW (natW (max 1 (Nat.sqrt fanIn)))
+  let scale := FloatLib.Floats.Formats.BinaryInterchange.Model.div (ofW (natW 4)) divisor
+  (gen (if kind == "sparse" then "sparse" else "normal") n
+      (seed + 101 * k.toUInt32)).map fun w =>
+    toWord (FloatLib.Floats.Formats.BinaryInterchange.Model.mul (ofW w) scale)
+
+/-- Small biases, independently scaled from weights; avoid erasing input-dependent signals. -/
+def biases (seed : UInt32) (k n : Nat) : Array Word :=
+  (gen "normal" n (seed + 101 * k.toUInt32)).map fun w =>
+    toWord (FloatLib.Floats.Formats.BinaryInterchange.Model.div (ofW w) (ofW (natW 256)))
 
 /-- An MLP: `linear` layers through `widths`, with ReLU between them. -/
 def mlpLayers (kind : String) (seed : UInt32) (rows : Nat) (widths : List Nat) : List Layer :=
   let pairs := widths.zip widths.tail
   pairs.zipIdx.map fun ((i, o), k) =>
-    .linear rows i o (k + 1 < pairs.length) (wts kind seed (2 * k) (i * o)) (wts kind seed (2 * k + 1) o)
+    .linear rows i o (k + 1 < pairs.length)
+      (wts kind seed (2 * k) i (i * o)) (biases seed (2 * k + 1) o)
 
 /-- ResNet-style: conv, a residual block, max pooling, conv, global average, classifier. -/
 def cnnLayers (kind : String) (seed : UInt32) (cin n c1 c2 classes : Nat) : List Layer :=
   let n2 := n / 2
   let w := wts kind seed
-  let bn (relu : Bool) (c hw k : Nat) : Layer := .bn relu c hw (scales c (seed + 7 * k.toUInt32)) (w k c)
-  [.conv ⟨cin, n, n, c1, 3, 3, 1, 1⟩ false (w 1 (c1 * cin * 9)) (w 2 c1), bn true c1 (n * n) 3,
+  let b := biases seed
+  let bn (relu : Bool) (c hw k : Nat) : Layer := .bn relu c hw (scales c (seed + 7 * k.toUInt32)) (b k c)
+  [.conv ⟨cin, n, n, c1, 3, 3, 1, 1⟩ false (w 1 (cin * 9) (c1 * cin * 9)) (b 2 c1), bn true c1 (n * n) 3,
    .save,
-   .conv ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 4 (c1 * c1 * 9)) (w 5 c1), bn true c1 (n * n) 6,
-   .conv ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 7 (c1 * c1 * 9)) (w 8 c1), bn false c1 (n * n) 9,
+   .conv ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 4 (c1 * 9) (c1 * c1 * 9)) (b 5 c1), bn true c1 (n * n) 6,
+   .conv ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 7 (c1 * 9) (c1 * c1 * 9)) (b 8 c1), bn false c1 (n * n) 9,
    .addSaved true,
    .maxpool c1 n n 2,
-   .conv ⟨c1, n2, n2, c2, 3, 3, 1, 1⟩ false (w 10 (c2 * c1 * 9)) (w 11 c2), bn true c2 (n2 * n2) 12,
+   .conv ⟨c1, n2, n2, c2, 3, 3, 1, 1⟩ false (w 10 (c1 * 9) (c2 * c1 * 9)) (b 11 c2), bn true c2 (n2 * n2) 12,
    .avgpool c2 n2 n2 n2,
-   .linear 1 c2 classes false (w 13 (classes * c2)) (w 14 classes)]
+   .linear 1 c2 classes false (w 13 c2 (classes * c2)) (b 14 classes)]
 
 /-- MobileNet-style: depthwise 3×3 and pointwise 1×1 convolutions, average pooling. -/
 def mnetLayers (kind : String) (seed : UInt32) (cin n c1 c2 classes : Nat) : List Layer :=
   let n2 := n / 2
   let w := wts kind seed
-  let bn (c hw k : Nat) : Layer := .bn true c hw (scales c (seed + 7 * k.toUInt32)) (w k c)
-  [.conv ⟨cin, n, n, c1, 3, 3, 1, 1⟩ false (w 1 (c1 * cin * 9)) (w 2 c1), bn c1 (n * n) 3,
-   .depthwise ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 4 (c1 * 9)) (w 5 c1), bn c1 (n * n) 6,
-   .conv ⟨c1, n, n, c2, 1, 1, 1, 0⟩ false (w 7 (c2 * c1)) (w 8 c2), bn c2 (n * n) 9,
+  let b := biases seed
+  let bn (c hw k : Nat) : Layer := .bn true c hw (scales c (seed + 7 * k.toUInt32)) (b k c)
+  [.conv ⟨cin, n, n, c1, 3, 3, 1, 1⟩ false (w 1 (cin * 9) (c1 * cin * 9)) (b 2 c1), bn c1 (n * n) 3,
+   .depthwise ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 4 9 (c1 * 9)) (b 5 c1), bn c1 (n * n) 6,
+   .conv ⟨c1, n, n, c2, 1, 1, 1, 0⟩ false (w 7 c1 (c2 * c1)) (b 8 c2), bn c2 (n * n) 9,
    .avgpool c2 n n 2,
-   .depthwise ⟨c2, n2, n2, c2, 3, 3, 1, 1⟩ false (w 10 (c2 * 9)) (w 11 c2), bn c2 (n2 * n2) 12,
-   .conv ⟨c2, n2, n2, c2, 1, 1, 1, 0⟩ false (w 13 (c2 * c2)) (w 14 c2), bn c2 (n2 * n2) 15,
+   .depthwise ⟨c2, n2, n2, c2, 3, 3, 1, 1⟩ false (w 10 9 (c2 * 9)) (b 11 c2), bn c2 (n2 * n2) 12,
+   .conv ⟨c2, n2, n2, c2, 1, 1, 1, 0⟩ false (w 13 c2 (c2 * c2)) (b 14 c2), bn c2 (n2 * n2) 15,
    .avgpool c2 n2 n2 n2,
-   .linear 1 c2 classes false (w 16 (classes * c2)) (w 17 classes)]
+   .linear 1 c2 classes false (w 16 c2 (classes * c2)) (b 17 classes)]
 
 /-- An MLP with RMS norm and layer norm between its layers. -/
 def nmlpLayers (kind : String) (seed : UInt32) (rows i h h2 out : Nat) : List Layer :=
   let w := wts kind seed
-  [.linear rows i h true (w 1 (h * i)) (w 2 h),
+  let b := biases seed
+  [.linear rows i h true (w 1 i (h * i)) (b 2 h),
    .rmsnorm rows h eps (scales h (seed + 3)),
-   .linear rows h h2 true (w 4 (h2 * h)) (w 5 h2),
-   .layernorm rows h2 eps (scales h2 (seed + 6)) (w 7 h2),
-   .linear rows h2 out false (w 8 (out * h2)) (w 9 out)]
+   .linear rows h h2 true (w 4 h (h2 * h)) (b 5 h2),
+   .layernorm rows h2 eps (scales h2 (seed + 6)) (b 7 h2),
+   .linear rows h2 out false (w 8 h2 (out * h2)) (b 9 out)]
 
 /-- A Mixer-style block (ReLU instead of GELU) on `T` tokens of `C` channels: layer norm, token
 mixing (a `gemm` across tokens), residual; layer norm, channel MLP, residual; classifier. -/
 def mixerLayers (kind : String) (seed : UInt32) (T C classes : Nat) : List Layer :=
   let w := wts kind seed
-  [.save, .layernorm T C eps (scales C (seed + 1)) (w 2 C),
-   .gemm T T C (w 3 (T * T)), .addSaved false,
-   .save, .layernorm T C eps (scales C (seed + 4)) (w 5 C),
-   .linear T C (2 * C) true (w 6 (2 * C * C)) (w 7 (2 * C)),
-   .linear T (2 * C) C false (w 8 (C * 2 * C)) (w 9 C), .addSaved false,
-   .linear 1 (T * C) classes false (w 10 (classes * T * C)) (w 11 classes)]
+  let b := biases seed
+  [.save, .layernorm T C eps (scales C (seed + 1)) (b 2 C),
+   .gemm T T C (w 3 T (T * T)), .addSaved false,
+   .save, .layernorm T C eps (scales C (seed + 4)) (b 5 C),
+   .linear T C (2 * C) true (w 6 C (2 * C * C)) (b 7 (2 * C)),
+   .linear T (2 * C) C false (w 8 (2 * C) (C * 2 * C)) (b 9 C), .addSaved false,
+   .linear 1 (T * C) classes false (w 10 (T * C) (classes * T * C)) (b 11 classes)]
 
 /-- A cell's checksum: an FNV-1a hash of its output words. -/
 def hashArr (v : Array UInt32) : UInt32 := v.foldl (fun h x => (h ^^^ x) * 16777619) 2166136261

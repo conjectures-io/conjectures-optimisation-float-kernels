@@ -78,14 +78,71 @@ overflow. See [the mathematical proof inventory](EXACT-PROOFS.md).
 
 - Five model families, two batch sizes and three distributions: 30 cases per seed.
 - Initial finite magnitudes: normal/sparse `[2^-6,1)`, wide `[2^-40,1)`; sparse has half zeros.
-- Weight/bias arrays are divided by `max(1, floor(sqrt(array length)))`, rounded by FloatLib.
+- Weights use a FloatLib-rounded scale of `4 / max(1, floor(sqrt(fan_in)))`, followed by a
+  rounded multiplication. Fan-in is the reduction length: input width for linear/GEMM,
+  `cin*kh*kw` for convolution, and `kh*kw` for depthwise convolution.
+- Weight draws use the ordinary bounded distribution, or half-zero draws for sparse cases.
+  Wide cases vary the input exponent range rather than making every parameter tiny as well.
+- Biases and affine shifts use ordinary bounded draws divided by 256, separately from weights.
   Batch-normalization gains remain in `[1,2)`. Shapes and values vary with the shared seed.
 - Model construction, input generation and output hashing are outside inference timing.
 - Repetition counts are calibrated on the reference and shared with the candidate.
 - `BENCH_INNER` defaults to 3 and is explicitly forwarded to child processes; calibration uses 1.
 
-This generator uses deterministic conservative scaling, not a claim of variance-preserving
-trained-model initialization. Inspect diagnostics before selecting final workload distributions.
+The gain of four approximates a He-style initialization for the bounded draw's variance
+(about 0.13), but is not an exact variance-preservation claim or a trained-model initialization.
+Sparse weights have lower variance. These choices are tested development workloads, not final
+production-machine calibration.
+
+### Workload quality and input sensitivity
+
+The untimed developer audit fixes the model's weights and shapes, then evaluates its original
+input, a fresh draw from the same input distribution, and a sign-flipped input. Every layer is
+checked for valid inputs and finite outputs. Descriptive statistics record zeros, bitwise constant
+arrays, subnormals, magnitudes, changed output words and squared L2 differences. Float64 is
+used only for these diagnostics, never for the kernel computation or its correctness oracle.
+
+Final relative change is `||output_changed - output_original||₂ / ||output_original||₂`.
+A zero baseline with a nonzero difference is recorded as an undefined finite ratio, rather than
+silently clipped. The optional `--check-quality` screen flags unchanged final outputs or a
+relative change below a configurable threshold (default 0.001). This is a developer regression
+screen on selected seeds, not an admission rule or statistical significance test.
+
+In a paired comparison of the previous array-size scaling with the current fan-in scaling:
+
+| Observation | Previous generator | Fan-in generator |
+|---|---:|---:|
+| Seeds | 8 calibration + 16 held-out | Same seeds |
+| Full-size model cases | 720 | 720 |
+| Sample-level final outputs | 1,368 | 1,368 |
+| Unchanged after a fresh input draw | 107 | 0 |
+| Unchanged after sign reversal | 103 | 0 |
+| Entirely zero intermediate arrays | 50 | 0 |
+| Nonfinite checked activations | 0 | 0 |
+
+The held-out draws were chosen before evaluating the refinement and were not used to tune it.
+The worst final relative response in the refined runs was about 0.00251 for sign reversal and
+0.0144 for fresh draws. This improves the tested workloads' responsiveness; it does not prove
+that all seeds stay informative, that every input coordinate matters, or that a model resembles
+a trained network. Universal builder-shape proofs and timing calibration remain separate work.
+
+Build and run:
+
+```bash
+(cd lean && lake build auditExactWorkloads)
+.venv/bin/python scripts/audit-exact-workloads.py --label refined --check-quality
+.venv/bin/python scripts/plot-exact-workloads.py baseline-calibration fanin-v1-calibration
+```
+
+Use a new label for each collection; existing raw files are not overwritten. Artifacts are under
+`data/benchmark-quality/raw`, `summaries` and `visualizations`. Plotting requires Matplotlib.
+Paired plots show one median per seed across batches/samples, with the same vertical scale
+within a model row; they are descriptive comparisons, not timing confidence intervals.
+Raw binary/source hashes and seeds are retained with each run. To reproduce the earlier
+generator without switching the checkout, use the saved standalone audit binary with
+`--binary data/benchmark-quality/raw/baseline-workload-audit` and its source snapshot via
+`--suite-source data/benchmark-quality/raw/baseline-ExactSuite.lean`. These local artifacts are
+ignored by Git; a fresh clone must build the older revision separately to reproduce it.
 
 ## Reproduce locally
 

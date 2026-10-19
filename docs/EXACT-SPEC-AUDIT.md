@@ -1,5 +1,10 @@
 # Exact-runtime specification audit
 
+The reviews below preceded the later fan-in workload refinement. For the current generator's
+paired input-sensitivity results and reproduction commands, see
+[workload quality](EXACT-CONTRACT.md#workload-quality-and-input-sensitivity).
+The arithmetic observations about average pooling and extreme final overflow still apply.
+
 ## Follow-up review: stable contract and generated models
 
 The revised contract was reviewed against its mathematical characterizations and independently

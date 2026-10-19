@@ -58,7 +58,7 @@ log "building FloatLib, the contract and the bench against the incumbent"
 mkdir -p work
 if [ "$exact" = 1 ]; then
   cp "$here/kernels/exact/incumbent/Kernel.lean" work/Submission.lean
-  lake build ExactToolkit.ModelProofs VerifyExact benchExact exactDev validateExact exactSpecProbe auditExactShapes exactAudit 2>&1 | tail -3
+  lake build ExactToolkit.ModelProofs VerifyExact benchExact exactDev validateExact exactSpecProbe auditExactShapes auditExactWorkloads exactAudit 2>&1 | tail -3
 else
   cp "$here/kernels/add/incumbent/Kernel.lean" work/Submission.lean
   lake build Contract Verify bench 2>&1 | tail -3

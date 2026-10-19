@@ -159,6 +159,10 @@ lean_exe auditExactShapes where
   srcDir := "audit"
   root := `SuiteAudit
 
+lean_exe auditExactWorkloads where
+  srcDir := "audit"
+  root := `WorkloadAudit
+
 -- The exact runtime's showcase: trained digit models, four runtimes, speed, accuracy and ulps.
 lean_exe exactShowcase where
   srcDir := "showcase"
