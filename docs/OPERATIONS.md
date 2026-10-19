@@ -159,6 +159,11 @@ champion's source for later gates. Measurements identify the reference source
 with `champion_sha256`; the default leaderboard shows comparisons against the
 current champion. Historical boards can be selected through the central API.
 
+Before every gate run, the gate rebuilds the shared build tree from operator code (the
+shipped reference). A contract, toolkit or bench change, or an interrupted build, therefore never
+leaves an entry's build to rebuild a shared module, which the statement stage would reject. With
+nothing to rebuild, this takes about ten seconds.
+
 A champion or shipped reference that cannot build or benchmark pauses its slot.
 The challenger remains first in that slot and normal verification is retried
 after `CHAMPION_RETRY_SECONDS` (default 300). Other slots receive turns between

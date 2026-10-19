@@ -456,21 +456,22 @@ def progress(phase: str, **fields) -> None:
 
 
 def pin(slot: Slot) -> str:
-    # Refreshes the Lake config, rebuilds the slot's pinned incumbent when its inputs change.
+    # Refreshes the Lake config and the shared build tree, rebuilds the slot's pinned incumbent
+    # when its inputs change.
     subprocess.run([LAKE, "env", "true"], cwd=LIB, check=True, capture_output=True)
+    shipped = KERNELS / slot.name / "incumbent" / "Kernel.lean"
+    WORK.parent.mkdir(exist_ok=True)
+    # The shared build tree is refreshed from operator code only, the shipped incumbent, on every
+    # run: Lake rebuilds whatever a contract, toolkit or bench change, or an interrupted build, left
+    # stale, so an entry's build never has to write a shared module (which `statement` rejects).
+    shutil.copy2(shipped, WORK)
+    code, out = run([LAKE, "build", slot.verify, slot.bench], _BUILD_TIMEOUT, build="trusted")
+    if code != 0:
+        raise RuntimeError(f"the {slot.name} shipped incumbent does not build: {errors(out)}")
     inputs = hashlib.sha256(b"".join(p.read_bytes() for p in slot.inputs)).hexdigest()
     stamp = slot.pinned.with_name("inputs.sha256")
     if not slot.pinned.exists() or not stamp.exists() or stamp.read_text() != inputs:
         logger.info(f"[pin] building {slot.bench} from {slot.incumbent}, inputs {inputs[:16]}")
-        shipped = KERNELS / slot.name / "incumbent" / "Kernel.lean"
-        WORK.parent.mkdir(exist_ok=True)
-        # The shared build tree is refreshed from operator code only: the shipped incumbent.
-        shutil.copy2(shipped, WORK)
-        code, out = run([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="trusted")
-        if code != 0:
-            raise RuntimeError(
-                f"the {slot.name} shipped incumbent bench does not build: {errors(out)}"
-            )
         slot.pinned.parent.mkdir(parents=True, exist_ok=True)
         if slot.incumbent.resolve() == shipped.resolve():
             shutil.copy2(BUILD / "bin" / slot.bench, slot.pinned)
