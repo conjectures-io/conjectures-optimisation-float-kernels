@@ -150,3 +150,8 @@ lean_exe exactDev where
 lean_exe exactShowcase where
   srcDir := "showcase"
   root := `Showcase
+
+-- The exact runtime's audit: each kernel of an entry against the specs, on edge-case inputs.
+lean_exe exactAudit where
+  srcDir := "audit"
+  root := `ExactAudit

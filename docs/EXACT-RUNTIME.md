@@ -1,6 +1,6 @@
 # Exact runtime slot (in development)
 
-The `exact` slot has thirteen neural-network kernels whose results must equal FloatLib's
+The `exact` slot has twelve neural-network kernels whose results must equal FloatLib's
 correctly rounded specifications, scored by how fast they run a suite of models. It runs in the
 local gate; the central API does not accept submissions for it.
 
@@ -110,6 +110,7 @@ Run from `lean/` with an entry in `work/Submission.lean` (the gate leaves its la
 | `lake exe exactDev` | `sum` and `dot` against FloatLib and native `Float32`, three sizes and data types |
 | `lake exe exactDev profile cnn` | one sample of a model, layer by layer (`mlp`, `cnn`, `mnet`, `nmlp`, `mixer`) |
 | `lake exe exactDev models` | every cell against FloatLib's kernels (slow) |
+| `lake exe exactAudit [--malformed] [cases] [seed]` | every kernel against the specs on random and edge-case inputs (subnormals, overflow, exponent gaps, NaN and infinities, zeros, ties, cancellation); `--malformed` adds inputs shorter than their shape; `--selftest` checks that planted wrong kernels are caught |
 | `lake exe exactShowcase` | trained 8×8 digit models: time, accuracy, bit identity and ulps for the entry, FloatLib's kernels, a proved left fold and native `Float32` |
 
 The showcase's models and test images are in `lean/showcase/digits.bin`; `train.py` rebuilds

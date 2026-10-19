@@ -245,7 +245,7 @@ structure NormKernels where
   rmsnorm : Nat → Nat → Word → Array Word → Array Word → Array Word
   layernorm : Nat → Nat → Word → Array Word → Array Word → Array Word → Array Word
 
-/-- An entry's 13 kernels, by family. -/
+/-- An entry's 12 kernels, by family. -/
 structure Kernels where
   core : CoreKernels
   dense : DenseKernels
@@ -263,7 +263,7 @@ def specConv : ConvKernels := ⟨conv2dSpec, depthwiseSpec⟩
 def specElem : ElementKernels := ⟨avgpoolSpec, maxpoolSpec, addReluSpec, scaleShiftSpec⟩
 /-- The normalisation family's specs. -/
 def specNorm : NormKernels := ⟨rmsnormSpec, layernormSpec⟩
-/-- All 13 specs: what an entry's kernels must equal. -/
+/-- All 12 specs: what an entry's kernels must equal. -/
 def specKernels : Kernels := ⟨specCore, specDense, specConv, specElem, specNorm⟩
 
 /-- The obligation an entry proves: each of its kernels equals the spec. -/
