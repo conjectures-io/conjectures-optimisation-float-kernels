@@ -1,4 +1,4 @@
-import ExactToolkit.ModelProofs
+import ExactSuiteProofs
 
 /-! Additional operator-side mathematical facts, checked separately from miner proofs. -/
 
@@ -61,3 +61,20 @@ end ExactRuntime.Audit
 #print axioms ExactRuntime.TensorMath.maxpool_math
 #print axioms ExactRuntime.accepted_model_shape
 #print axioms ExactRuntime.accepted_preserves_valid_shapes
+#print axioms ExactSuite.lcg_size
+#print axioms ExactSuite.gen_size
+#print axioms ExactSuite.scales_size
+#print axioms ExactSuite.wts_size
+#print axioms ExactSuite.biases_size
+#print axioms ExactSuite.mlp_wellShaped
+#print axioms ExactSuite.cnn_wellShaped
+#print axioms ExactSuite.mnet_wellShaped
+#print axioms ExactSuite.nmlp_wellShaped
+#print axioms ExactSuite.mixer_wellShaped
+#print axioms ExactSuite.cellModel_valid
+#print axioms ExactSuite.cells_batch_pos
+#print axioms ExactSuite.prepareCell_valid
+#print axioms ExactSuite.all_cells_valid
+#print axioms ExactSuite.accepted_cell_output_size
+#print axioms ExactSuite.prepared_sample_size
+#print axioms ExactSuite.accepted_cell_sample_shapes

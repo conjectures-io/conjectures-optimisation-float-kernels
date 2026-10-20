@@ -163,6 +163,11 @@ lean_exe auditExactWorkloads where
   srcDir := "audit"
   root := `WorkloadAudit
 
+-- Operator proofs that every seeded model satisfies the shape contract.
+lean_lib ExactSuiteProofs where
+  srcDir := "audit"
+  roots := #[`ExactSuiteProofs]
+
 -- The exact runtime's showcase: trained digit models, four runtimes, speed, accuracy and ulps.
 lean_exe exactShowcase where
   srcDir := "showcase"

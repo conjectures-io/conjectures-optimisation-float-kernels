@@ -4,6 +4,8 @@ The reviews below preceded the later fan-in workload refinement. For the current
 paired input-sensitivity results and reproduction commands, see
 [workload quality](EXACT-CONTRACT.md#workload-quality-and-input-sensitivity).
 The arithmetic observations about average pooling and extreme final overflow still apply.
+Universal builder-shape proofs were subsequently added for all scored cells and every UInt32
+seed; see [the proof inventory](EXACT-PROOFS.md#generated-benchmark-models-every-seed).
 
 ## Follow-up review: stable contract and generated models
 
@@ -68,8 +70,9 @@ Three boundaries remain important:
    in the tested seeds.
 
 The model tests establish validity of the tested generated instances. They do **not** constitute
-a universal proof of the builders for every seed. The existing model theorems establish shape
-preservation once a program is well-shaped. Cross-architecture compiler/hardware validation
+a universal proof; that was supplied separately by the later builder-shape theorems linked above.
+The general model theorems establish shape preservation once a program is well-shaped.
+Cross-architecture compiler/hardware validation
 and timing/admission calibration also remain separate work.
 
 ### Reproduce the follow-up

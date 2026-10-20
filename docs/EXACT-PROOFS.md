@@ -83,6 +83,41 @@ These results apply to arbitrary layer lists, not just the five benchmark builde
 claim that every arbitrary list is well-shaped. Nor do shape proofs establish numerical safety:
 finiteness, positive epsilon and useful activation distributions are separate conditions.
 
+## Generated benchmark models: every seed
+
+File: `lean/audit/ExactSuiteProofs.lean`, namespace `ExactSuite`.
+
+The main theorem closes the gap between the model builders and the general shape-preservation
+theorem:
+
+```lean
+theorem all_cells_valid (c : Cell) (hc : c ∈ cells) (seed : UInt32) :
+    (prepareCell c seed).ShapeValid c.batch
+```
+
+This quantifies over every UInt32 seed and every scored cell; it does not enumerate seeds or
+use native execution as a proof. `ShapeValid` establishes:
+
+- Positive sample count and input size, with exactly `samples * size` input words.
+- Compatible dimensions and exact parameter-array lengths at every layer.
+- Matching saved-residual and activation lengths.
+- Exactly `batch * 10` classifier output words in total.
+
+The proof starts with `lcg_size`, an invariant over the actual generator's loop, then establishes
+the lengths of `gen`, `scales`, `wts` and `biases`. Each builder has a separate `*_wellShaped`
+theorem: arbitrary nonempty positive-width MLP lists; positive normalized-MLP and Mixer
+dimensions; positive CNN/MobileNet channels/classes with spatial side at least two. The spatial
+proofs include floor-sized pooling, so odd image sides are covered too.
+
+`cellModel_valid` proves the seeded selector always satisfies these premises for positive
+batches. `cells_batch_pos` discharges that premise for the actual suite. `prepareCell_valid`
+then connects the selected program to its generated input.
+
+`accepted_cell_sample_shapes` transfers the result to every actual sample's layer execution
+for any kernel set satisfying `Obligation`; `accepted_cell_output_size` proves its exact total
+output length. These statements are about shapes. They do not prove that every seed avoids
+numerical overflow, dead ReLU paths or poor timing behavior.
+
 ## Check and reproduce
 
 ```bash
@@ -90,8 +125,8 @@ finiteness, positive epsilon and useful activation distributions are separate co
 .venv/bin/python scripts/check-exact-proofs.py --replay
 ```
 
-The command builds the three proof modules, checks the audit's theorem axiom reports, and fails
-if a report is missing or an additional axiom appears. `--replay` also checks all three modules
+The command builds the four proof modules, checks the audit's theorem axiom reports, and fails
+if a report is missing or an additional axiom appears. `--replay` also checks all four modules
 with `leanchecker`. The existing nightly/manual Lean CI job runs the axiom audit after setup.
 
 For independent executable comparisons, build `exactSpecProbe` and run:

@@ -10,7 +10,12 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULES = ["ExactToolkit.SqrtProof", "ExactToolkit.TensorProofs", "ExactToolkit.ModelProofs"]
+MODULES = [
+    "ExactToolkit.SqrtProof",
+    "ExactToolkit.TensorProofs",
+    "ExactToolkit.ModelProofs",
+    "ExactSuiteProofs",
+]
 ALLOWED = {"propext", "Classical.choice", "Quot.sound"}
 
 

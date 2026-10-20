@@ -124,7 +124,9 @@ The held-out draws were chosen before evaluating the refinement and were not use
 The worst final relative response in the refined runs was about 0.00251 for sign reversal and
 0.0144 for fresh draws. This improves the tested workloads' responsiveness; it does not prove
 that all seeds stay informative, that every input coordinate matters, or that a model resembles
-a trained network. Universal builder-shape proofs and timing calibration remain separate work.
+a trained network. Universal builder-shape proofs are now implemented; see
+[the generated-model theorems](EXACT-PROOFS.md#generated-benchmark-models-every-seed).
+Numerical safety for every seed and timing calibration remain separate work.
 
 Build and run:
 
@@ -191,8 +193,8 @@ does not establish that every benchmark case contains useful work.
   rejected invalid inputs and per-layer traces for 15 small model/distribution combinations.
   Across two seeds: 7,676 comparisons and 30 small-model runs, no mismatches.
   Raw records and source hashes are under `data/spec-audit/`.
-- All three mathematical proof modules compiled and passed `leanchecker` replay.
-  The audit checked 33 theorem axiom reports, using only the three allowed standard axioms.
+- The mathematical proof modules compiled and passed `leanchecker` replay. The audit now also
+  includes universal generated-model shape proofs; its check rejects any extra axioms.
 
 Reduced five-round timing smoke tests gave an identical incumbent about 0.968× in an earlier
 run and 0.989× in the latest run, whose worst regression group measured 1.194× and failed
