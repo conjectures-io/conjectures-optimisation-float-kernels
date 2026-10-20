@@ -32,6 +32,7 @@ if [ "$check" = 1 ]; then
 fi
 have taskset "apt install util-linux, or run the gate with BENCH_CPU= (noisier timing)"
 have prlimit "apt install util-linux, or run the gate with GATE_FILE_MB=0 (no per-file disk cap)"
+have setpriv "apt install util-linux (required for worker subprocess cleanup)"
 have lake "installed below via elan"
 # The service's Postgres runs under docker compose (skip with a managed DATABASE_URL); pm2 runs its processes.
 if [ "$service" = 1 ]; then

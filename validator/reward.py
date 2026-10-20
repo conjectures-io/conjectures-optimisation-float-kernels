@@ -102,9 +102,11 @@ class Scoring:
     def summary(self) -> str:
         # One line for the weight_sets row and the log: each slot's paid champions, if any.
         kings = [
-            f"{s.slot}#{s.rank}:{s.hotkey[:8]}…@{s.ratio:.4f}={s.weight:.2f}"
+            f"{s.slot}#{s.rank}:{s.hotkey[:8]}…"
+            + (f"@{s.ratio:.4f}" if s.ratio is not None else "")
+            + f"={s.weight:.2f}"
             for s in self.scores
-            if s.weight > 0 and s.ratio is not None
+            if s.weight > 0
         ]
         hotkeys = len({s.hotkey for s in self.scores})
         return f"competitors={hotkeys} kings=[{', '.join(kings) or 'none'}]"

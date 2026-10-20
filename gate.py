@@ -15,7 +15,7 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -282,6 +282,8 @@ def limits(memory_mb: int) -> list[str]:
 def check_limits() -> None:
     # Refuses to gate when the caps are asked for but the host cannot apply them: without this, a
     # missing user systemd would surface as every submission's build failing.
+    if not shutil.which("setpriv"):
+        raise RuntimeError("setpriv (util-linux) is required for subprocess parent-death cleanup")
     if _SANDBOX:
         try:
             probe = subprocess.run([BWRAP, "--help"], capture_output=True, text=True, timeout=10)
@@ -354,7 +356,13 @@ def run(
         shutil.copytree(CONFIG, SCRATCH, symlinks=True)
         box += ["--bind", str(SCRATCH), str(CONFIG)]
     fsize = ["prlimit", f"--fsize={_FILE_MB * 2**20}", "--"] if _FILE_MB > 0 else []
-    argv = limits(memory_mb) + fsize + (box + ["--"] if _SANDBOX else []) + cmd
+    argv = (
+        ["setpriv", "--pdeathsig", "KILL", "--"]
+        + limits(memory_mb)
+        + fsize
+        + (box + ["--"] if _SANDBOX else [])
+        + cmd
+    )
     t0 = time.monotonic()
     with subprocess.Popen(
         argv,
@@ -372,6 +380,10 @@ def run(
             out, _ = proc.communicate()
             logger.warning(f"[run] {Path(cmd[0]).name} timed out after {timeout:.0f}s")
             return 124, out
+        except BaseException:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise
     logger.debug(
         f"[run] {' '.join(cmd[:3])} exit={proc.returncode} in {time.monotonic() - t0:.1f}s"
     )
@@ -457,7 +469,7 @@ def progress(phase: str, **fields) -> None:
         temporary.replace(target)
 
 
-def pin(slot: Slot) -> str:
+def pin(slot: Slot, *, proof_only: bool = False) -> str:
     # Refreshes the Lake config and the shared build tree, rebuilds the slot's pinned incumbent
     # when its inputs change.
     subprocess.run([LAKE, "env", "true"], cwd=LIB, check=True, capture_output=True)
@@ -467,9 +479,12 @@ def pin(slot: Slot) -> str:
     # run: Lake rebuilds whatever a contract, toolkit or bench change, or an interrupted build, left
     # stale, so an entry's build never has to write a shared module (which `statement` rejects).
     shutil.copy2(shipped, WORK)
-    code, out = run([LAKE, "build", slot.verify, slot.bench], _BUILD_TIMEOUT, build="trusted")
+    targets = [slot.verify] if proof_only else [slot.verify, slot.bench]
+    code, out = run([LAKE, "build", *targets], _BUILD_TIMEOUT, build="trusted")
     if code != 0:
         raise RuntimeError(f"the {slot.name} shipped incumbent does not build: {errors(out)}")
+    if proof_only:
+        return ""
     inputs = hashlib.sha256(b"".join(p.read_bytes() for p in slot.inputs)).hexdigest()
     stamp = slot.pinned.with_name("inputs.sha256")
     if not slot.pinned.exists() or not stamp.exists() or stamp.read_text() != inputs:
@@ -568,9 +583,10 @@ def statement(src: Path, v: Verdict) -> str | None:
     code, out = own([LAKE, "build", slot.verify], _BUILD_TIMEOUT, build="write")
     if code != 0:
         return f"the obligation does not typecheck: {errors(out, code)}"
-    code, out = own([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="write")
-    if code != 0:
-        return f"the bench binary does not build: {errors(out, code)}"
+    if v.mode != "proof":
+        code, out = own([LAKE, "build", slot.bench], _BUILD_TIMEOUT, build="write")
+        if code != 0:
+            return f"the bench binary does not build: {errors(out, code)}"
     if bad := foreign(LAYER / "upper"):
         return f"the build wrote outside the submission's modules: {bad[:5]}"
     logger.debug(f"[statement] layer holds {sum(1 for _ in (LAYER / 'upper').rglob('*'))} entries")
@@ -810,7 +826,15 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
     (LAYER / "upper").mkdir(parents=True)
     (LAYER / "work").mkdir()
     try:
-        run_stages(src, v, BENCH_STAGES if mode == "bench" else STAGES)
+        run_stages(
+            src,
+            v,
+            BENCH_STAGES
+            if mode == "bench"
+            else [s for s in STAGES if s[0] != "score"]
+            if mode == "proof"
+            else STAGES,
+        )
     finally:
         wipe(LAYER)
     v.exhausted = _budget.exhausted and not v.passed
@@ -852,6 +876,10 @@ def log_to(name: str, stamp: str) -> None:
 
 def main() -> int:
     # Gates each submission under one lock; exit 0 all accepted, 1 any rejected, 2 validator error.
+    def stop(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
     argv, opts = sys.argv[1:], {}
     for flag in ("--verdict", "--slot"):
         if flag in argv:
@@ -860,8 +888,11 @@ def main() -> int:
             argv = argv[:i] + argv[i + 2 :]
     verdict_path = Path(opts["--verdict"]) if opts.get("--verdict") else None
     slot = opts.get("--slot", "full")
-    args = [a for a in argv if a != "--bench"]
-    mode = "bench" if "--bench" in argv else "gate"
+    args = [a for a in argv if a not in ("--bench", "--proof-only")]
+    mode = "proof" if "--proof-only" in argv else "bench" if "--bench" in argv else "gate"
+    if mode == "proof" and slot in SLOTS:
+        # Correctness is independent of a paid board's possibly broken reference.
+        SLOTS[slot] = replace(SLOTS[slot], incumbent=KERNELS / slot / "incumbent" / "Kernel.lean")
     bad_verdict = "--verdict" in sys.argv and (verdict_path is None or len(args) != 1)
     if not args or bad_verdict or slot not in SLOTS:
         slots = "|".join(SLOTS)
@@ -874,7 +905,7 @@ def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_to("gate", stamp)
     if pruned := prune(HERE / "logs", ("gate-*.log",)) + prune(
-        HERE / "results", ("*-gate-*.json", "*-bench-*.json")
+        HERE / "results", ("*-gate-*.json", "*-bench-*.json", "*-proof-*.json")
     ):
         logger.info(f"[gate] pruned {pruned} per-run file(s) older than {_KEEP_DAYS:g} days")
     results = HERE / "results"
@@ -891,7 +922,7 @@ def main() -> int:
             )
             progress("reference-build", champion_sha256=reference_hash, reference_complete=False)
             check_limits()
-            digest = pin(SLOTS[slot])
+            digest = pin(SLOTS[slot], proof_only=True) if mode == "proof" else pin(SLOTS[slot])
             progress("challenger")
         except Exception:  # noqa: BLE001 - no limits or no pinned incumbent: nothing can be scored
             logger.exception("[pin] failed")

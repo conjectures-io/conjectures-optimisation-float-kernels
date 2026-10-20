@@ -91,9 +91,12 @@ class WeightSetterConfig:
     treasury_hotkey: str | None = None
     # Off mainnet only: the competition's fraction of the validator's weight.
     competition_share_override: float | None = None
+    scoring_source: str = "legacy"
 
     def __post_init__(self) -> None:
         # Refuse nonsensical knobs at startup, not mid-run.
+        if self.scoring_source not in ("legacy", "exact"):
+            raise ValueError("WEIGHT_SCORING_SOURCE must be legacy or exact")
         if (
             self.snapshot_retention_seconds <= 0
             or self.snapshot_cleanup_interval_seconds <= 0
@@ -131,6 +134,7 @@ class WeightSetterConfig:
         treasury_uid = env.get("WEIGHT_TREASURY_UID", "").strip()
         share = env.get("WEIGHT_COMPETITION_SHARE", "").strip()
         return cls(
+            scoring_source=env.get("WEIGHT_SCORING_SOURCE", "legacy"),
             snapshot_retention_seconds=int(env.get("API_SNAPSHOT_RETENTION_SECONDS", "3600")),
             snapshot_cleanup_interval_seconds=float(
                 env.get("API_SNAPSHOT_CLEANUP_INTERVAL_SECONDS", "60")
@@ -191,17 +195,25 @@ def plan_for(
         plan = burn(meta, treasury_uid=treasury, burn_uid=config.burn_uid, competition_share=share)
         return plan, None, None
     try:
-        captured = store.scoring.read_boards(reward.PAYING_SLOTS, scoring_config.max_ratio)
-        boards = captured.boards
-        result = reward.score(boards, scoring_config)
-        snapshot = reward.publication(
-            result,
-            boards,
-            scoring_config,
-            competition_share=share,
-            computed_at=clock.now(),
-        )
-        snapshot["submission_state_sha256"] = captured.submission_state_sha256
+        if config.scoring_source == "exact":
+            from db.exact import ExactDb
+            from exact import rewards as exact_rewards
+
+            publication = ExactDb(store.sessions).publication()
+            result = exact_rewards.score(publication)
+            snapshot = exact_rewards.snapshot(publication, result, share, clock.now())
+        else:
+            captured = store.scoring.read_boards(reward.PAYING_SLOTS, scoring_config.max_ratio)
+            boards = captured.boards
+            result = reward.score(boards, scoring_config)
+            snapshot = reward.publication(
+                result,
+                boards,
+                scoring_config,
+                competition_share=share,
+                computed_at=clock.now(),
+            )
+            snapshot["submission_state_sha256"] = captured.submission_state_sha256
     except Exception as exc:  # noqa: BLE001 - any scoring failure pays the treasury
         logger.exception(f"[weights] scoring failed; paying the treasury this epoch: {exc}")
         plan = split(None, meta, treasury_uid=treasury, reason=f"scoring failed: {exc}")
@@ -374,13 +386,17 @@ def run(
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     # Tick forever, logging each outcome; a failed tick is logged and retried next poll.
+    scoring_description = (
+        "exact: board and two-rank allocations from coordinator publication"
+        if config.scoring_source == "exact"
+        else f"last {len(reward.RANK_SHARES)} champions by rank {reward.RANK_SHARES}; "
+        f"slots={','.join(reward.PAYING_SLOTS)} winner_share={scoring_config.winner_share:.2f}"
+    )
     logger.info(
         f"[weights] running netuid={config.netuid} treasury_uid={config.treasury_uid} "
         f"competition_share={config.competition_share:.3f} margin={config.set_margin} "
         f"burn_mode={config.burn_mode} burn_uid={config.burn_uid} dry_run={config.dry_run} "
-        f"scoring=last {len(reward.RANK_SHARES)} champions by rank {reward.RANK_SHARES}, "
-        f"slots={','.join(reward.PAYING_SLOTS)} "
-        f"winner_share={scoring_config.winner_share:.2f}"
+        f"scoring={scoring_description}"
     )
     ticks = TickLog()
     next_cleanup = 0.0

@@ -78,6 +78,61 @@ def test_the_migrations_are_reversible(migrated):
     assert set(remaining) <= {"alembic_version"}
 
 
+def test_exact_upgrade_preserves_legacy_rows_and_refuses_destructive_downgrade(migrated):
+    config = _alembic_config(migrated)
+    command.downgrade(config, "0017")
+    engine = sa.create_engine(migrated)
+    try:
+        with engine.begin() as conn:
+            sid = conn.scalar(
+                sa.text(
+                    "INSERT INTO submissions(hotkey,digest,slot,state) "
+                    "VALUES (:hotkey,:digest,:slot,:state) RETURNING id"
+                ),
+                {"hotkey": "legacy-miner", "digest": "a" * 64, "slot": "full", "state": "accepted"},
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO submission_files(submission_id,name,content) "
+                    "VALUES (:id,:name,:body)"
+                ),
+                {"id": sid, "name": "Kernel.lean", "body": b"legacy kernel"},
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO promotions(slot,submission_id,champion_sha256) "
+                    "VALUES (:slot,:id,:hash)"
+                ),
+                {"slot": "full", "id": sid, "hash": "a" * 64},
+            )
+        command.upgrade(config, "head")
+        with engine.begin() as conn:
+            assert (
+                conn.scalar(sa.text("SELECT hotkey FROM submissions WHERE id=:id"), {"id": sid})
+                == "legacy-miner"
+            )
+            assert (
+                conn.scalar(
+                    sa.text("SELECT content FROM submission_files WHERE submission_id=:id"),
+                    {"id": sid},
+                )
+                == b"legacy kernel"
+            )
+            assert conn.scalar(sa.text("SELECT submission_id FROM promotions")) == sid
+            conn.execute(
+                sa.text(
+                    "INSERT INTO submissions(hotkey,digest,slot) VALUES (:hotkey,:digest,:slot)"
+                ),
+                {"hotkey": "exact-miner", "digest": "b" * 64, "slot": "exact"},
+            )
+        with pytest.raises(RuntimeError, match="archive exact submissions"):
+            command.downgrade(config, "0017")
+        with engine.connect() as conn:
+            assert "exact_jobs" in sa.inspect(conn).get_table_names()
+    finally:
+        engine.dispose()
+
+
 # ── The contracts the schema encodes ──────────────────────────────────────
 
 
