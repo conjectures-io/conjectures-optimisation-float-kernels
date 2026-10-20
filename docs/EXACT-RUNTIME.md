@@ -113,7 +113,10 @@ Run from `lean/` with an entry in `work/Submission.lean` (the gate leaves its la
 | `lake exe exactDev` | `sum` and `dot` against FloatLib and native `Float32`, three sizes and data types |
 | `lake exe exactDev profile cnn` | one sample of a model, layer by layer (`mlp`, `cnn`, `mnet`, `nmlp`, `mixer`) |
 | `lake exe exactDev models` | every cell against FloatLib's kernels (slow) |
-| `lake exe exactAudit [--malformed] [cases] [seed]` | every kernel against the specs on random and edge-case inputs (subnormals, overflow, exponent gaps, NaN and infinities, zeros, ties, cancellation); `--malformed` adds inputs shorter than their shape; `--selftest` checks that planted wrong kernels are caught |
+| `lake exe exactAudit [--malformed] [cases] [seed]` | every kernel against the specs on random and edge-case inputs (subnormals, overflow, exponent gaps, NaN and infinities, zeros, ties, cancellation); `--malformed` adds inputs shorter than their shape |
+| `lake exe exactAudit --mutants [cases]` | the mutation score: 23 plausible wrong kernels (wrong rounding mode, ties away from zero, canonical NaN, lost −0, saturation, an off-by-one, a transposed index, clamped padding, no `fma`, the old normalisation, …), each of which the audit must catch |
+| `lake exe exactAudit --coverage [cases]` | per kernel, how many outputs are +0, −0, subnormal, normal, ∞ and NaN: a 0 marks a case the inputs never reach |
+| `lake exe exactAudit --selftest` | the spec against itself is clean and every mutant is caught |
 | `lake exe exactShowcase` | trained 8×8 digit models: time, accuracy, bit identity and ulps for the entry, FloatLib's kernels, a proved left fold and native `Float32` |
 
 The showcase's models and test images are in `lean/showcase/digits.bin`; `train.py` rebuilds

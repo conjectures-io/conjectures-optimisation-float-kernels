@@ -11,7 +11,9 @@ exact cancellation, and shapes at the edges (empty, mismatched and short arrays)
 can only fail here through a gap in what the gate checks.
 
     lake exe exactAudit [--malformed] [cases per kernel and kind] [seed]
-    lake exe exactAudit --selftest       planted wrong kernels must be caught
+    lake exe exactAudit --selftest       the spec is clean against itself and every mutant is caught
+    lake exe exactAudit --mutants [n]    the mutation score: plausible wrong kernels caught
+    lake exe exactAudit --coverage [n]   output classes the inputs reach, per kernel
 
 `--malformed` adds short arrays (inputs shorter than their shape says); Lean then prints a panic
 message for each read past the end, which is expected.
@@ -25,10 +27,12 @@ open ExactRuntime ExactSuite
 
 /-! ## Inputs -/
 
-/-- The input kinds: the suite's three, the edge cases, and all of them mixed. -/
+/-- The input kinds: the suite's three, the edge cases, and all of them mixed. `tiny` values
+(about 2^-63 to 2^-75) have products in the subnormal range, so dot products round to
+subnormal results. -/
 def kinds : List String :=
-  ["normal", "wide", "sparse", "subnormal", "huge", "gap", "special", "zeros", "negzero", "ties",
-    "cancel", "mixed"]
+  ["normal", "wide", "sparse", "subnormal", "tiny", "huge", "gap", "special", "zeros", "negzero",
+    "zerosign", "ties", "cancel", "mixed"]
 
 /-- A sign and a fraction from `w`, with exponent field `e`. -/
 @[inline] def withExp (w : UInt32) (e : UInt32) : UInt32 :=
@@ -39,6 +43,7 @@ def edgeWord (kind : String) (w c : UInt32) : UInt32 :=
   let near := withExp w ((124 : UInt32) + (w >>> 23) % 7)
   match kind with
   | "subnormal" => w &&& 0x807FFFFF
+  | "tiny" => withExp w (52 + c % 13)
   | "huge" => withExp w (250 + c % 5)
   | "gap" => if c % 2 == 0 then withExp w (1 + c % 4) else withExp w (250 + c % 5)
   | "special" =>
@@ -53,9 +58,11 @@ def edgeWord (kind : String) (w c : UInt32) : UInt32 :=
 
 /-- `n` words of `kind` from `seed`. For `cancel`, the second half repeats the first, negated
 when `seed` is odd: one such array sums to exactly zero, and an odd-seed array dotted with an
-even-seed one cancels term by term. -/
+even-seed one cancels term by term. For `zerosign`, all −0 for an odd seed and all +0 for an even
+one: every product of the two is −0, so dot products round to exactly −0. -/
 def input (kind : String) (n : Nat) (seed : UInt32) : Array UInt32 :=
   if kind == "normal" || kind == "wide" || kind == "sparse" then gen kind n seed else
+  if kind == "zerosign" then Array.replicate n (if seed % 2 == 1 then 0x80000000 else 0) else
   let ws := lcg n seed
   let cs := lcg n (seed ^^^ 0x9E3779B9)
   let pick (i : Nat) : UInt32 :=
@@ -195,7 +202,7 @@ def summary (found : Array Mismatch) : List String :=
     if mine.isEmpty then none else
       some s!"  {k}: {mine.size} mismatches, kinds {(mine.map (·.kind)).toList.eraseDups}"
 
-/-! ## Planted bugs for the self-test -/
+/-! ## Planted bugs (also mutants below) -/
 
 section
 open FloatLib.Floats.Formats.BinaryInterchange
@@ -219,22 +226,182 @@ def foldDot : Kernels :=
 
 end
 
-/-- Each planted bug must be found, in its own kernel only; the spec against itself must be clean. -/
+/-! ## Mutants: plausible wrong kernels (loop L1, mutation testing)
+
+Each mutant changes one kernel the way a real bug or a careless implementation would. The audit
+should catch every one; a mutant it misses shows a gap in the inputs. -/
+
+section
+open FloatLib.Floats.Formats.BinaryInterchange
+
+/-- A word is a NaN. -/
+@[inline] def isNaNW (w : UInt32) : Bool := expOf w == 255 && fracOf w != 0
+
+/-- FloatLib's dot product in another rounding mode. -/
+def dotMode (mode : Model.IEEERoundingMode) (a b : Array UInt32) : UInt32 :=
+  match Model.dot Fmt (a.map (Model.ofUInt32 (fmt := Fmt))) (b.map (Model.ofUInt32 (fmt := Fmt)))
+      mode with
+  | .ok z => toWord z
+  | .error _ => 0
+
+/-- The dot product with ties rounded away from zero instead of to even. -/
+def dotTiesAway (a b : Array UInt32) : UInt32 :=
+  let r := dotSpec a b
+  if !(a.all finiteWord && b.all finiteWord) then r else
+  let exact := (List.range (min a.size b.size)).foldl
+    (fun acc i => acc + rationalWord a[i]! * rationalWord b[i]!) (0 : ℚ)
+  let lo := dotMode .towardNegativeInfinity a b
+  let hi := dotMode .towardPositiveInfinity a b
+  if lo != hi && finiteWord lo && finiteWord hi &&
+      2 * exact == rationalWord lo + rationalWord hi then (if exact > 0 then hi else lo) else r
+
+/-- A dot product rounded after every product and every sum, left to right. -/
+def foldDotFn : DotFn := fun n fa fb => toWord <| (List.range n).foldl (fun acc i =>
+  Model.add acc (Model.mul (ofW (fa i)) (ofW (fb i)))) (ofW 0)
+
+/-- ReLU that leaves −0 as −0. -/
+@[inline] def actKeepsNegZero (relu : Bool) (w : UInt32) : UInt32 :=
+  if relu && w != 0x80000000 then reluW w else w
+
+/-- Element `t` of a window with out-of-image reads clamped to the edge instead of zero. -/
+def windowClamp (s : ConvShape) (inp : Array UInt32) (y x t : Nat) : UInt32 :=
+  let c := t / (s.kh * s.kw)
+  let yy := min (s.h - 1) ((y * s.stride + t / s.kw % s.kh) - s.pad)
+  let xx := min (s.w - 1) ((x * s.stride + t % s.kw) - s.pad)
+  inp[(c * s.h + yy) * s.w + xx]!
+
+/-- One mutant: a name, the kernel it changes, and the kernels with the change. -/
+structure Mutant where
+  name : String
+  kernel : String
+  kernels : Kernels
+
+/-- Replace the core family's `dot`. -/
+def withDot (d : Array UInt32 → Array UInt32 → UInt32) : Kernels :=
+  { specKernels with core := { specCore with dot := d } }
+
+/-- Replace the core family's `sum`. -/
+def withSum (f : Array UInt32 → UInt32) : Kernels :=
+  { specKernels with core := { specCore with sum := f } }
+
+/-- The mutants, one plausible bug each. -/
+def mutants : List Mutant := [
+  ⟨"sum flushes subnormal inputs", "sum", flushSum⟩,
+  ⟨"sum flushes a subnormal result", "sum", withSum fun x =>
+    let r := sumSpec x; if expOf r == 0 && fracOf r != 0 then r &&& 0x80000000 else r⟩,
+  ⟨"dot rounds every step", "dot", foldDot⟩,
+  ⟨"dot flushes a subnormal result", "dot", withDot fun a b =>
+    let r := dotSpec a b; if expOf r == 0 && fracOf r != 0 then r &&& 0x80000000 else r⟩,
+  ⟨"dot rounds toward zero", "dot", withDot (dotMode .towardZero)⟩,
+  ⟨"dot rounds ties away from zero", "dot", withDot dotTiesAway⟩,
+  ⟨"dot returns the canonical NaN", "dot", withDot fun a b =>
+    let r := dotSpec a b; if isNaNW r then 0x7FC00000 else r⟩,
+  ⟨"dot returns +0 for every zero", "dot", withDot fun a b =>
+    let r := dotSpec a b; if r == 0x80000000 then 0 else r⟩,
+  ⟨"dot saturates overflow", "dot", withDot fun a b =>
+    let r := dotSpec a b; if r &&& 0x7FFFFFFF == 0x7F800000 then (r &&& 0x80000000) ||| 0x7F7FFFFF else r⟩,
+  ⟨"dot drops the last term", "dot", withDot fun a b =>
+    if a.size == b.size && a.size > 0 then dotSpec a.pop b.pop else dotSpec a b⟩,
+  ⟨"linear rounds before adding the bias", "linear", { specKernels with dense := { specDense with
+    linear := fun rows inW outW relu X W b => Array.ofFn (n := rows * outW) fun q =>
+      let i := q.val / outW
+      let j := q.val % outW
+      act relu <| toWord (Model.add (ofW (dotOf inW (fun t => X[i * inW + t]!)
+        (fun t => W[j * inW + t]!))) (ofW b[j]!)) } }⟩,
+  ⟨"linear's ReLU keeps −0", "linear", { specKernels with dense := { specDense with
+    linear := fun rows inW outW relu X W b =>
+      (linearSpec rows inW outW false X W b).map (actKeepsNegZero relu) } }⟩,
+  ⟨"gemm reads B transposed", "gemm", { specKernels with dense := { specDense with
+    gemm := fun batch m k n A B => Array.ofFn (n := batch * (m * n)) fun q =>
+      let β := q.val / (m * n)
+      let i := q.val / n % m
+      let j := q.val % n
+      dotOf k (fun t => A[(β * m + i) * k + t]!) (fun t => B[(β * n + j) * k + t]!) } }⟩,
+  ⟨"conv2d clamps padding to the edge", "conv2d", { specKernels with conv := { specConv with
+    conv2d := fun s relu inp wts b =>
+      let k := s.cin * s.kh * s.kw
+      Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
+        let o := q.val / (s.ho * s.wo)
+        let y := q.val / s.wo % s.ho
+        let x := q.val % s.wo
+        act relu <| dotOf (k + 1) (fun t => if t < k then windowClamp s inp y x t else oneW)
+          (fun t => if t < k then wts[o * k + t]! else b[o]!) } }⟩,
+  ⟨"depthwise uses the first channel's filter", "depthwise", { specKernels with conv := { specConv with
+    depthwise := fun s relu inp wts b =>
+      depthwiseSpec s relu inp (Array.ofFn (n := s.cin * (s.kh * s.kw)) fun i =>
+        wts[i.val % (s.kh * s.kw)]!) b } }⟩,
+  ⟨"avgpool divides by k, not k²", "avgpool", { specKernels with elem := { specElem with
+    avgpool := fun c h w k inp => Array.ofFn (n := c * (h / k * (w / k))) fun q =>
+      let ch := q.val / (h / k * (w / k))
+      let y := q.val / (w / k) % (h / k)
+      let x := q.val % (w / k)
+      toWord (Model.div (ofW (dotOf (k * k) (poolAt h w k inp ch y x) (fun _ => oneW)))
+        (ofW (natW k))) } }⟩,
+  ⟨"avgpool rounds every step of its sum", "avgpool", { specKernels with elem := { specElem with
+    avgpool := avgpoolWith foldDotFn } }⟩,
+  ⟨"maxpool loses the sign of −0", "maxpool", zeroSignMaxpool⟩,
+  ⟨"maxpool ignores NaNs", "maxpool", { specKernels with elem := { specElem with
+    maxpool := fun c h w k inp => Array.ofFn (n := c * (h / k * (w / k))) fun q =>
+      let ch := q.val / (h / k * (w / k))
+      let y := q.val / (w / k) % (h / k)
+      let x := q.val % (w / k)
+      toWord <| (List.range (k * k)).foldl (fun acc t =>
+        Model.maximumNumber acc (ofW (poolAt h w k inp ch y x t))) (ofW (poolAt h w k inp ch y x 0)) } }⟩,
+  ⟨"addRelu returns the canonical NaN", "addRelu", { specKernels with elem := { specElem with
+    addRelu := fun relu a b => (addReluSpec relu a b).map fun r => if isNaNW r then 0x7FC00000 else r } }⟩,
+  ⟨"scaleShift rounds twice (no fma)", "scaleShift", { specKernels with elem := { specElem with
+    scaleShift := fun relu c hw x s t => Array.ofFn (n := c * hw) fun i =>
+      let ch := i.val / hw
+      act relu <| toWord (Model.add (Model.mul (ofW x[i.val]!) (ofW s[ch]!)) (ofW t[ch]!)) } }⟩,
+  ⟨"rmsnorm uses the old staged spec", "rmsnorm", { specKernels with norm := { specNorm with
+    rmsnorm := rmsnormLegacyWith dotOf } }⟩,
+  ⟨"layernorm uses the old staged spec", "layernorm", { specKernels with norm := { specNorm with
+    layernorm := layernormLegacyWith dotOf } }⟩
+]
+
+end
+
+/-- Run the audit on every mutant: which are caught, by which kinds; exit 1 if any is missed. -/
+def mutationRun (cases : Nat) : IO UInt32 := do
+  let mut caught := 0
+  for m in mutants do
+    let (_, found) := audit m.kernels specKernels false cases 11
+    let mine := found.filter (·.kernel == m.kernel)
+    let ok := mine.size > 0
+    if ok then caught := caught + 1
+    IO.println s!"{if ok then "caught" else "MISSED"}  {m.name}: {mine.size} cases, kinds {(mine.map (·.kind)).toList.eraseDups}"
+  IO.println s!"mutation score: {caught}/{mutants.length}"
+  return if caught == mutants.length then 0 else 1
+
+/-! ## Coverage of output classes (loop L2) -/
+
+/-- The class of an output word. -/
+def outClass (w : UInt32) : String :=
+  if w == 0 then "+0" else if w == 0x80000000 then "-0"
+  else if expOf w == 0 then "subnormal" else if expOf w != 255 then "normal"
+  else if fracOf w == 0 then "inf" else "NaN"
+
+/-- For every kernel, how many spec outputs fall in each class; a 0 marks an untested class. -/
+def coverage (cases : Nat) : IO Unit := do
+  let classes := ["+0", "-0", "subnormal", "normal", "inf", "NaN"]
+  IO.println s!"| kernel | {" | ".intercalate classes} |"
+  IO.println s!"|---|{"".intercalate (classes.map fun _ => "---:|")}"
+  for (kernel, ki) in kernelNames.zipIdx do
+    let mut counts := classes.map fun _ => 0
+    for (kind, ti) in kinds.zipIdx do
+      for c in [0:cases] do
+        let o := runCase specKernels specKernels false kernel kind (1 + (ki * 1000003 + ti * 10007 + c).toUInt32)
+        for w in o.spec do
+          counts := counts.zipWith (fun n cl => if cl == outClass w then n + 1 else n) classes
+    IO.println s!"| {kernel} | {" | ".intercalate (counts.map toString)} |"
+
+/-- The self-test: the spec against itself is clean, and every mutant is caught. -/
 def selftest : IO UInt32 := do
-  let cases := 6
-  let (_, clean) := audit specKernels specKernels false cases 7
-  let mut ok := clean.isEmpty
+  let (_, clean) := audit specKernels specKernels false 6 7
   IO.println s!"spec against itself: {clean.size} mismatches"
-  for (name, K, kernel) in [("flushSum", flushSum, "sum"), ("zeroSignMaxpool", zeroSignMaxpool, "maxpool"),
-      ("foldDot", foldDot, "dot")] do
-    let (_, found) := audit K specKernels false cases 7
-    let elsewhere := found.filter (·.kernel != kernel)
-    let caught := found.size > 0 && elsewhere.isEmpty
-    ok := ok && caught
-    IO.println s!"{name}: {found.size} mismatches in `{kernel}`, {elsewhere.size} elsewhere: {if caught then "caught" else "MISSED"}"
-    for line in summary found do IO.println line
-  IO.println (if ok then "selftest passed" else "selftest FAILED")
-  return if ok then 0 else 1
+  let code ← mutationRun 6
+  IO.println (if clean.isEmpty && code == 0 then "selftest passed" else "selftest FAILED")
+  return if clean.isEmpty && code == 0 then 0 else 1
 
 end ExactAudit
 
@@ -242,6 +409,11 @@ open ExactAudit in
 /-- `exactAudit [--malformed] [cases] [seed]` on the entry, or `exactAudit --selftest`. -/
 def main (args : List String) : IO UInt32 := do
   if args == ["--selftest"] then return ← selftest
+  if args.head? == some "--mutants" then
+    return ← mutationRun (((args.drop 1).head? >>= String.toNat?).getD 20)
+  if args.head? == some "--coverage" then
+    coverage (((args.drop 1).head? >>= String.toNat?).getD 20)
+    return 0
   let malformed := args.head? == some "--malformed"
   let args := if malformed then args.drop 1 else args
   let cases := (args.head? >>= String.toNat?).getD 20
