@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import dataclasses
-import importlib.util
 import json
 import math
 import os
@@ -14,21 +12,15 @@ import random
 import statistics
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/float-kernels-matplotlib")
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path[:0] = [str(ROOT), str(ROOT / "validator")]
 
+from config import measurement_hash  # noqa: E402
 from loguru import logger  # noqa: E402
-
-import gate  # noqa: E402
-
-spec = importlib.util.spec_from_file_location("timing_admission", ROOT / "validator/admission.py")
-admission = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = admission
-spec.loader.exec_module(admission)
+from scoring import assess  # noqa: E402
 
 
 def ci(values, rng):
@@ -45,12 +37,11 @@ def ci(values, rng):
 def analyse(directory):
     logger.remove()
     # The pilot explicitly evaluates the default guard, independent of the caller's shell.
-    gate._GUARD = 1.10
     manifest = json.loads((directory / "raw/manifest.json").read_text())
     # Refuse to silently replay changed scoring code after a branch switch.
     import hashlib
 
-    for name in ("gate.py", "validator/admission.py"):
+    for name in ("validator/scoring.py", "validator/config.py"):
         if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != manifest["sources"][name]:
             raise RuntimeError(f"{name} changed since collection; use the recorded revision")
     sessions = json.loads((directory / "raw/sessions.json").read_text())
@@ -110,19 +101,67 @@ def analyse(directory):
                 inputs[role].append(
                     {c: (v["ns"], v["checksum"]) for c, v in pair[role]["cells"].items()}
                 )
-        verdict = gate.Verdict(submission=s["candidate"], slot="exact")
-        error = gate.score_geomean(inputs["reference"], inputs["candidate"], verdict)
-        if not math.isclose(verdict.ratio, statistics.median(scores), rel_tol=1e-12):
-            raise RuntimeError("independent score aggregation disagrees with gate")
-        evidence = admission.Evidence(
-            submission_id=1,
-            hotkey="local-calibration",
-            ratio=verdict.ratio,
-            submitted_at=datetime(2026, 10, 20, tzinfo=timezone.utc),
-            rounds=tuple(tuple(r) for r in verdict.rounds),
-        )
-        decision = admission.assess(evidence, 0.97)
-        guard = verdict.classes["guard"]
+        cell_names = sorted(inputs["reference"][0])
+        request = {
+            "environment": "pilot",
+            "identity": "a" * 64,
+            "seed": s["seed"],
+            "candidate_hash": "b" * 64,
+            "reference_hash": "c" * 64,
+            "cells": cell_names,
+            "benchmark_identity": "d" * 64,
+            "timing": {
+                "rounds": s["rounds"],
+                "inner": s["inner"],
+                "cell_ms": s["target_ms"],
+                "run_seconds": 300,
+                "job_seconds": 900,
+            },
+        }
+        plan = {
+            "strata": [
+                {"environment": "pilot", "identity": "a" * 64, "seed": s["seed"], "weight": 1}
+            ],
+            "cells": dict.fromkeys(cell_names, 1 / len(cell_names)),
+            "timing": request["timing"],
+            "benchmark_identity": "d" * 64,
+            "admission": {
+                "min_rounds": 5,
+                "draws": 2000,
+                "bar": 0.97,
+                "guard": 1.1,
+                "quantile": 0.05,
+            },
+        }
+        result = {
+            "request_hash": measurement_hash(request),
+            "provenance": {"identity": "a" * 64, "machine": "pilot"},
+            "repetitions": next(iter(paired.values()))["reference"]["reps"],
+            "rounds": [
+                {
+                    "reference_first": orders[i],
+                    "cells": {
+                        c: {
+                            "reference_ns": inputs["reference"][i][c][0],
+                            "candidate_ns": inputs["candidate"][i][c][0],
+                            "reference_checksum": inputs["reference"][i][c][1],
+                            "candidate_checksum": inputs["candidate"][i][c][1],
+                        }
+                        for c in cell_names
+                    },
+                }
+                for i in range(len(scores))
+            ],
+        }
+        decision = assess(plan, [(request, result)])
+        if not math.isclose(decision["score"], statistics.median(scores), rel_tol=1e-12):
+            raise RuntimeError("independent score aggregation disagrees with scorer")
+        guard = {
+            "ok": decision["guard_passed"],
+            "groups": decision["strata"][0]["guards"],
+            "limit": 1.1,
+        }
+        error = None if decision["guard_passed"] else "regression guard failed"
         order_medians = {
             role: statistics.median([x for x, first in zip(scores, orders) if first == want])
             for role, want in (("reference_first", True), ("candidate_first", False))
@@ -130,15 +169,15 @@ def analyse(directory):
         summaries.append(
             dict(
                 **s,
-                score=verdict.ratio,
+                score=decision["score"],
                 ci95=ci(scores, rng),
                 round_scores=scores,
                 reference_first=orders,
-                admission=dataclasses.asdict(decision),
-                gain_p05=admission.gain_vs_incumbent(evidence),
+                admission=decision,
+                gain_p05=decision["gain_lower"],
                 guard=guard,
                 gate_error=error,
-                would_promote=error is None and decision.outcome == "qualifies",
+                would_promote=error is None and decision["outcome"] == "qualifies",
                 order_medians=order_medians,
                 order_gap_percent=100
                 * (order_medians["candidate_first"] / order_medians["reference_first"] - 1),
@@ -161,10 +200,10 @@ def analyse(directory):
                 "ci_seed": 20261020,
                 "ci_probabilities": [0.025, 0.975],
                 "promotion_bar": 0.97,
-                "guard_limit": gate._GUARD,
+                "guard_limit": 1.10,
                 "submission_id": 1,
-                "admission_draws": admission.DRAWS,
-                "admission_quantile": admission.QUANTILE,
+                "admission_draws": 2000,
+                "admission_quantile": 0.05,
             },
             indent=2,
         )
@@ -582,7 +621,7 @@ def report(directory, manifest, planned, sessions):
         "both directions. The reverse is a genuine algorithm comparison against a weaker "
         "reference, not a newly discovered improvement over the current champion. Controls "
         "use seven rounds, 25 ms and inner=2 to keep the pilot bounded.",
-        "- Scores and guards are replayed through gate.score_geomean; promotion through "
+        "- Scores and guards are replayed through scoring.assess; promotion through "
         "the existing admission implementation. Numeric aggregation is cross-checked.",
         "- Intervals bootstrap paired round scores within one fixed workload. They do not "
         "measure variation across seeds, sessions or machines, and assume exchangeable "
@@ -590,7 +629,7 @@ def report(directory, manifest, planned, sessions):
         "- Plotted intervals are two-sided 95% intervals. Admission uses a one-sided 95% "
         "gain bound with its own 2,000 deterministic resamples; the two are different tests. "
         "Admission replay uses submission ID 1, recorded in the analysis code.",
-        "- Guard values use separate per-cell minima across rounds, exactly as the gate "
+        "- Guard values use median paired ratios for each cell, as the scorer "
         "does. They are not the medians shown in the cell-noise heatmap.",
         "- Trusted binaries run directly, pinned to one logical CPU. Both fixtures "
         "typecheck VerifyExact. Full sandbox/kernel/security checks and build time are "

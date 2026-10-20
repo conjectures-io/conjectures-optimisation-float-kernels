@@ -1,8 +1,7 @@
-# Exact runtime slot (in development)
+# Exact tensor runtime
 
-The `exact` slot has twelve neural-network kernels whose results must equal the pinned
-specifications, scored by how fast they run a suite of models. It runs in the
-local gate; the central API does not accept submissions for it.
+One complete kernel set is proved once, then compared on model-family boards and an overall board.
+The coordinator and hardware workers run locally; central API rollout is a separate task.
 
 See [the contract and validation guide](EXACT-CONTRACT.md) for stable normalization, valid
 shapes, checked execution, numerical limits, and the remaining assurance work.
@@ -43,8 +42,8 @@ word decoding, an exact limb accumulator, and the final rounding through FloatLi
 
 ```bash
 cp -r kernels/exact/incumbent my-entry
-python gate.py --slot exact --bench my-entry
-python gate.py --slot exact my-entry
+python scripts/test-exact-workflow.py --help
+PYTHONPATH=.:validator python -m verification my-entry --verdict results/trial.json
 ```
 
 The [starting champion](../kernels/exact/incumbent/Kernel.lean) has an exact dot product
@@ -52,10 +51,10 @@ The [starting champion](../kernels/exact/incumbent/Kernel.lean) has an exact dot
 rounding (`finishFast`) works on 32-bit digits and rounds from the top 62 bits and a sticky bit,
 which FloatLib's rounding cannot tell apart from the exact total (`roundDyadic_jam`). It also has
 a word-level max pooling (`maxW`), proved against FloatLib's `maximum`. The rest are the specs.
-The gate stages and source policy are those of the other slots ([Proofs and policy](PROOFS.md));
+The proof stages and source policy are documented in ([Proofs and policy](PROOFS.md));
 the statement check is [VerifyExact.lean](../lean/verify/VerifyExact.lean).
 
-`GATE_INCUMBENT_EXACT` selects another champion file for local comparisons.
+Each board reference is selected through the coordinator configuration and promotion history.
 
 ## Benchmark and score
 
@@ -72,41 +71,29 @@ the statement check is [VerifyExact.lean](../lean/verify/VerifyExact.lean).
 Each runs at two batch sizes on three data types (normal, wide exponent range, half zeros): 30
 cells. Every cell's output checksum must match the champion's.
 
-1. **Calibration.** The gate runs the champion once and repeats each cell so it takes about
-   `GATE_CELL_MS` (default 100 ms). Both sides use the same repetitions.
-2. **Rounds.** Champion and entry alternate over `BENCH_ROUNDS` rounds (default 25). Each cell
-   reports the fastest of `BENCH_INNER` runs (default 3). Input/model generation and output hashing are outside timing.
-3. **Round score.** The weighted geometric mean of the 30 cell ratios (entry time over champion
-   time). Each model weighs one fifth, split equally over its cells.
-4. **Score.** The median of the round scores, the statistic admission bootstraps. Rounds are
-   recorded so admission's per-round ratios are these round scores.
-5. **Regression guard.** For each model and data type, the geometric mean of the best-time ratios
-   must be at most `GATE_GUARD` (default 1.10). An entry over the limit is rejected at the score
-   stage, whatever its score.
+1. The reference calibrates repetitions for the selected cells (100 ms by default).
+2. Both sides use the same seed and repetitions over alternating paired rounds (25 by default,
+   best of 3 inner runs). Input generation and output hashing remain outside timing.
+3. Cell ratios are combined with the evaluation's frozen model weights. The median paired-round
+   score is calculated separately for each environment/seed stratum.
+4. Stratum medians are combined geometrically with configured hardware/seed weights.
+5. A per-cell median-ratio regression guard and stratified bootstrap decide admission.
+   Defaults are a score at most 0.97, guard at most 1.10, and positive fifth-percentile gain.
 
-Promotion uses the same admission rule as the other slots: a score at most `PROMOTION_BAR`
-(default 0.97) and a positive fifth-percentile bootstrapped gain.
+All thresholds and weights live in the coordinator TOML. The overall board defaults to equal
+model weights; a family board selects that model's six cells. Reward allocations are independent.
+A guard failure is an evaluation outcome; it does not invalidate the submitted proof.
 
-`GATE_CELL_MS` and `GATE_GUARD` are part of the verifier fingerprint.
+## Proof fixtures
 
-## Fixtures
-
-Rows in `kernels/expected.tsv`, checked by `selftest.py`:
-
-| Fixture | Expected verdict |
-| --- | --- |
-| `exact/incumbent` | accepted, ratio 0.97–1.03 |
-| `exact/slowdepthwise` | rejected at score by the regression guard |
-| `exact/wrong` | rejected at statement |
-| `exact/sorryax` | rejected at axioms |
-| `exact/forge`, `exact/tamper` | rejected at policy; with policy skipped, at kernel and statement |
-
-`exact/baseline` (FloatLib's kernels, `correct := rfl`) is valid but has no row: it is about 30x
-slower, so a calibrated run takes hours.
+selftest.py checks incumbent, baseline and slowdepthwise as mathematically valid; wrong is rejected
+at statement, sorryax at axioms, and forge/tamper at policy. Bypassing policy deliberately must still
+reject forge at kernel and tamper at statement. Benchmark outcomes have separate automated tests
+and the real disposable-DB rehearsal.
 
 ## Developer tools
 
-Run from `lean/` with an entry in `work/Submission.lean` (the gate leaves its last entry there):
+Run from `lean/` with an entry in `work/Submission.lean` (copy an entry there for developer commands):
 
 | Command | What it shows |
 | --- | --- |

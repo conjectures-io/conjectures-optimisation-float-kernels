@@ -1,1 +1,1 @@
-"""The gate worker, its settings and shared signing helpers; HTTP intake lives centrally."""
+"""Shared signing helpers; HTTP intake lives in the central API."""

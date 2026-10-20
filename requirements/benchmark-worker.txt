@@ -1,0 +1,4 @@
+# Architecture-local compilation, timing and remote database access.
+-r gate.txt
+SQLAlchemy==2.0.54
+psycopg[binary]==3.3.6

@@ -10,10 +10,9 @@ import time
 from pathlib import Path
 
 import pytest
+import sandbox as gate
 
-import gate
-
-HEADER = "import Contract\n\nnamespace Submission\n\n"
+HEADER = "import ContractExact\n\nnamespace Submission\n\n"
 PROOF = (
     "theorem add_spec : ∀ x y : Binary32, add x y = ExecFloat.Spec.add x y :=\n"
     "  fun x y => ExecFloat.Proof.add_eq_spec x y\n"
@@ -24,7 +23,7 @@ def policy_of(tmp_path: Path, body: str) -> str | None:
     # The policy's reason for refusing a file with `body` between the header and the proof.
     src = tmp_path / "Kernel.lean"
     src.write_text(HEADER + body + "\n" + PROOF + "\nend Submission\n")
-    return gate.policy(src, gate.Verdict(submission="probe", slot="add"))
+    return gate.policy(src, gate.Verdict(submission="probe"))
 
 
 @pytest.mark.parametrize(
@@ -65,9 +64,9 @@ def test_a_build_over_the_disk_cap_is_charged(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "run", lambda cmd, timeout, **kw: (0, ""))
     monkeypatch.setattr(gate, "disk_mb", lambda path: gate._BUILD_DISK_MB + 1.0)
     gate._budget.reset()
-    v = gate.Verdict(submission="fill", slot="full")
+    v = gate.Verdict(submission="fill")
     src = tmp_path / "Kernel.lean"
-    src.write_text("import ContractTensor\n")
+    src.write_text("import ContractExact\n")
     gate.run_stages(src, v, [("statement", gate.statement)])
     assert not v.passed and "disk cap" in v.reason and gate._budget.exhausted
 

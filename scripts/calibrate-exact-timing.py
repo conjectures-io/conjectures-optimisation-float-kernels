@@ -83,7 +83,7 @@ def main():
     with (ROOT / "gate.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         binaries = prepare(raw)
-        sources = [ROOT / "gate.py", ROOT / "validator/admission.py", Path(__file__)]
+        sources = [ROOT / "validator/scoring.py", ROOT / "validator/config.py", Path(__file__)]
         sources += sorted((ROOT / "lean/bench").glob("*Exact*.lean"))
         sources += sorted((ROOT / "lean/contract").rglob("*.lean"))
         manifest = {

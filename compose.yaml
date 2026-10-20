@@ -5,12 +5,12 @@
 #
 #   docker compose up -d db          postgres, healthy
 #   docker compose up migrate        alembic upgrade head
-name: conjectures-floatlib
+name: conjectures-tensor
 
 services:
   db:
     image: postgres:17
-    container_name: conjectures_floatlib_db
+    container_name: conjectures_tensor_db
     restart: unless-stopped
     env_file: .env
     environment:
@@ -22,7 +22,7 @@ services:
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     # Loopback only: Docker-published ports bypass ufw, and the pm2 workers connect locally.
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5435}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Mounted as single files, not directories: a bind that names a missing path
@@ -49,11 +49,12 @@ services:
     build:
       context: .
       dockerfile: deploy/migrate/Dockerfile
-    container_name: conjectures_floatlib_migrate
+    container_name: conjectures_tensor_migrate
     env_file: .env
     environment:
-      # Inside the compose network the host is the service name, never localhost.
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-conjectures}:${POSTGRES_PASSWORD:-conjectures}@db:5432/${POSTGRES_DB:-conjectures}
+      # Resolve credentials through URL.create, including reserved password characters.
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
     depends_on:
       db:
         condition: service_healthy

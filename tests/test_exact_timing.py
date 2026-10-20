@@ -21,7 +21,7 @@ def collection(tmp_path, ratio):
     manifest = {
         "sources": {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-            for name in ("gate.py", "validator/admission.py")
+            for name in ("validator/scoring.py", "validator/config.py")
         }
     }
     (raw / "manifest.json").write_text(json.dumps(manifest))

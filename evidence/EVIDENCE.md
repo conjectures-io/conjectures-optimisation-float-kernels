@@ -1,3 +1,5 @@
+> Historical evidence for the retired scalar/practice workflow. Current tensor checks are in MANUAL.md.
+
 # Evidence - TorchLean kernel competition (on FloatLib)
 
 ```mermaid

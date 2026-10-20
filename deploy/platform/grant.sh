@@ -5,7 +5,7 @@
 #   set -a; . ./.env; set +a; deploy/platform/grant.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")/../.." && pwd)"
-psql=(docker exec -i -e PLATFORM_API_PASSWORD conjectures_floatlib_db
+psql=(docker exec -i -e PLATFORM_API_PASSWORD conjectures_tensor_db
       psql -v ON_ERROR_STOP=1 -q -U "${POSTGRES_USER:-conjectures}" -d "${POSTGRES_DB:-conjectures}")
 if [ -n "${PLATFORM_API_PASSWORD:-}" ]; then
   "${psql[@]}" <<'SQL'

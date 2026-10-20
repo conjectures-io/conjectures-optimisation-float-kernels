@@ -18,13 +18,9 @@ from unittest.mock import Mock
 
 import pytest
 from loguru import logger
-from test_weight_setter import FakeChain, accept, at_epoch_boundary, config
 
 import axiom
-import reward
-from conftest import kernel_file, post_submission, register
 from service import sig
-from workers.weight_setter import step
 
 ALICE = sig.load_keypair("//Alice")
 
@@ -217,64 +213,3 @@ def test_reset_removes_the_bridge():
     axiom.reset()
     logger.error("after reset")
     assert capture.records() == []
-
-
-# ── The weight setter ─────────────────────────────────────────────────────
-
-
-def test_the_weight_setter_reports_a_set_vector_with_its_split(store):
-    capture = Capture()
-    axiom.init("competition-weight-setter", client=axiom_client(capture))
-    accept(store, "hk-fast", 0.53, uid=2)
-    chain = FakeChain(hotkeys={"hk-fast": 2}, block=at_epoch_boundary())
-    assert step(chain, store, config(), reward.ScoringConfig()).action == "set"
-    (event,) = of_type(flushed(capture), "weights_set")
-    assert event["severity"] == "info" and event["treasury_uid"] == 0
-    # The only champion: 60% of the competition's 0.2 to the miner, the rest to the treasury.
-    assert event["uids"] == [0, 2] and event["weights"] == pytest.approx([0.88, 0.12])
-    assert event["treasury_share"] == pytest.approx(0.88) and event["miners"] == 1
-
-
-@pytest.mark.parametrize(
-    ("dry_run", "accepted", "event_type", "severity"),
-    [(True, True, "weights_planned", "info"), (False, False, "weights_failed", "error")],
-)
-def test_the_weight_setter_reports_every_other_outcome(
-    store, dry_run, accepted, event_type, severity
-):
-    capture = Capture()
-    axiom.init("competition-weight-setter", client=axiom_client(capture))
-    chain = FakeChain(block=at_epoch_boundary(), accept=accepted)
-    step(chain, store, config(dry_run=dry_run), reward.ScoringConfig())
-    (event,) = of_type(flushed(capture), event_type)
-    assert event["severity"] == severity and event["dry_run"] is dry_run
-
-
-# ── The gate worker ───────────────────────────────────────────────────────
-
-
-def test_a_claim_and_its_verdict_are_reported(client, store, drain, tmp_path):
-    capture = Capture()
-    axiom.init("competition-gate-worker", client=axiom_client(capture))
-    register(store, ALICE.ss58_address)
-    d = kernel_file(tmp_path, "a", "RATIO=0.8")
-    sid = post_submission(client, ALICE, d).json()["submission"]
-    drain()
-    records = flushed(capture)
-    (claimed,) = of_type(records, "submission_claimed")
-    (verdict,) = of_type(records, "gate_verdict")
-    assert claimed["submission_id"] == sid and claimed["slot"] == "add"
-    assert verdict["state"] == "accepted" and verdict["ratio"] == 0.8
-    assert verdict["severity"] == "info" and verdict["stage"] == "score"
-
-
-def test_a_validator_error_is_an_error_and_counts_toward_the_cap(client, store, drain, tmp_path):
-    capture = Capture()
-    axiom.init("competition-gate-worker", client=axiom_client(capture))
-    register(store, ALICE.ss58_address)
-    post_submission(client, ALICE, kernel_file(tmp_path, "a", "MISCONFIGURED"))
-    drain()
-    records = flushed(capture)
-    assert of_type(records, "gate_validator_error")[0]["severity"] == "error"
-    (verdict,) = of_type(records, "gate_verdict")
-    assert verdict["severity"] == "error" and verdict["state"] == "queued"

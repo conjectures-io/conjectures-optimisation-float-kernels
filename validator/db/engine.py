@@ -6,7 +6,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import URL, Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -20,7 +20,14 @@ def database_url() -> str:
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     name = os.getenv("POSTGRES_DB", "conjectures")
-    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
+    return URL.create(
+        "postgresql+psycopg",
+        username=user,
+        password=password,
+        host=host,
+        port=int(port),
+        database=name,
+    ).render_as_string(hide_password=False)
 
 
 def create_db_engine(url: str | None = None, *, echo: bool = False, pool_size: int = 5) -> Engine:

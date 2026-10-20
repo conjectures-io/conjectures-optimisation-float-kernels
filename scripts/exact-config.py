@@ -11,8 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "validator")]
 
+from benchmark import machine_identity  # noqa: E402
+
 import fingerprint  # noqa: E402
-from exact.runner import machine_identity  # noqa: E402
 
 
 def main():
@@ -22,16 +23,22 @@ def main():
     parser.add_argument(
         "--quick", action="store_true", help="development only: 5 rounds, 2 ms cells"
     )
+    parser.add_argument(
+        "--reference", type=Path, default=ROOT / "kernels/exact/incumbent/Kernel.lean"
+    )
+    parser.add_argument(
+        "--board", choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+    )
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output already exists; edit it or choose a new path")
-    source = ROOT / "kernels/exact/incumbent/Kernel.lean"
-    fp = fingerprint.current()
+    source = args.reference.resolve()
+    proof, bench = fingerprint.proof(), fingerprint.benchmark()
     lines = [
         "# Development configuration; calibrate production settings before enabling payouts.",
-        f"proof_identity = {fp!r}",
-        f"benchmark_identity = {fp!r}",
-        "seeds = [42]",
+        f"proof_identity = {proof!r}",
+        f"benchmark_identity = {bench!r}",
+        "seeds = [42]" if args.quick else "seed_count = 1",
         f"seed_mode = {'fixed' if args.quick else 'fresh'!r}",
         "retry_seconds = 300",
         "lease_seconds = 120",
@@ -61,11 +68,13 @@ def main():
         "paused_policy = 'preserve'",
         "",
         "[rewards.board_weights]",
-        "overall = 0.5",
     ]
     names = ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"]
-    lines += [f"{name} = 0.1" for name in names]
-    for board in ["overall", *names]:
+    selected = [args.board] if args.board else ["overall", *names]
+    lines += [
+        f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.1}" for name in selected
+    ]
+    for board in selected:
         lines += ["", f"[boards.{board}.models]"]
         lines += [
             f"{name} = {0.2 if board == 'overall' else 1.0}"

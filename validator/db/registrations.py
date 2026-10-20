@@ -7,9 +7,8 @@ from collections.abc import Callable, Iterable
 from typing import Protocol, cast
 
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from axiom import get_events
@@ -19,8 +18,6 @@ from .engine import session_scope
 
 # Log backfill progress this often, or a first load of the subnet looks hung.
 PROGRESS_EVERY = 25
-# Free registrations to try before giving up, each one possibly taken by a concurrent claim.
-_CLAIM_ATTEMPTS = 5
 
 
 class Neuron(Protocol):
@@ -139,60 +136,3 @@ class RegistrationsDb:
                 ).first()
                 is not None
             )
-
-    def available_slots(self, hotkey: str) -> int:
-        # Registrations this hotkey holds that no verdict has spent yet.
-        with session_scope(self._sessions) as session:
-            return _available_slots(session, hotkey)
-
-    def claim_slot(self, session: Session, hotkey: str, submission_id: int) -> int:
-        # Spend the oldest free registration in the caller's transaction (SKIP LOCKED stops races),
-        # unless the submission already holds one, so re-verifying never charges a hotkey twice.
-        held = session.execute(
-            select(models.EntitlementClaim.registration_id).where(
-                models.EntitlementClaim.submission_id == submission_id
-            )
-        ).scalar_one_or_none()
-        if held is not None:
-            return int(held)
-        claimed = select(models.EntitlementClaim.registration_id)
-        for _ in range(_CLAIM_ATTEMPTS):
-            row = session.execute(
-                select(models.Registration.id)
-                .where(
-                    models.Registration.ss58_hot == hotkey,
-                    models.Registration.id.not_in(claimed),
-                )
-                .order_by(models.Registration.block, models.Registration.id)
-                .limit(1)
-                .with_for_update(skip_locked=True)
-            ).first()
-            if row is None:
-                break
-            # A claim committed after this statement's snapshot leaves the row unlocked but taken:
-            # the unique constraint refuses it, and the savepoint keeps the transaction usable.
-            try:
-                with session.begin_nested():
-                    session.add(
-                        models.EntitlementClaim(registration_id=row[0], submission_id=submission_id)
-                    )
-            except IntegrityError:
-                logger.info(f"[registrations] registration {row[0]} was claimed concurrently")
-                continue
-            return int(row[0])
-        raise NoSlot(f"{hotkey[:8]}… has no unclaimed registration")
-
-
-def _available_slots(session: Session, hotkey: str) -> int:
-    # Takes a session so the worker can ask inside the transaction that is about to claim.
-    claimed = select(models.EntitlementClaim.registration_id)
-    return int(
-        session.execute(
-            select(func.count())
-            .select_from(models.Registration)
-            .where(
-                models.Registration.ss58_hot == hotkey,
-                models.Registration.id.not_in(claimed),
-            )
-        ).scalar_one()
-    )

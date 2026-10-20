@@ -1,4 +1,4 @@
-"""The validator schema; the Alembic revisions under deploy/migrate must match these models."""
+"""Tensor competition schema; the initial migration freezes this layout."""
 
 from __future__ import annotations
 
@@ -19,38 +19,26 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-
-from .status import SLOTS, STATE_VALUES
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
-    # The declarative root every table below hangs off.
     pass
 
 
-def _in_list(values: tuple[str, ...]) -> str:
-    # Render a tuple of strings as a SQL IN list body: 'a', 'b', 'c'.
-    return ", ".join(f"'{v}'" for v in values)
+def timestamp():
+    return mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class Registration(Base):
-    # One uid's hot/cold key assignment as of the block it registered at; one submission slot.
     __tablename__ = "registrations"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    uid: Mapped[int] = mapped_column(Integer, nullable=False)
-    ss58_hot: Mapped[str] = mapped_column(Text, nullable=False)
-    ss58_cold: Mapped[str] = mapped_column(Text, nullable=False)
-    # The block this uid registered at (its on-chain BlockAtRegistration).
-    block: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    block_date: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    inserted_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-    claim: Mapped[EntitlementClaim | None] = relationship(back_populates="registration")
-
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    uid: Mapped[int] = mapped_column(Integer)
+    ss58_hot: Mapped[str] = mapped_column(Text)
+    ss58_cold: Mapped[str] = mapped_column(Text)
+    block: Mapped[int] = mapped_column(BigInteger)
+    block_date: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    inserted_at: Mapped[dt.datetime] = timestamp()
     __table_args__ = (
         UniqueConstraint("uid", "block", name="uq_registrations_uid_block"),
         Index("ix_registrations_uid", "uid"),
@@ -58,331 +46,168 @@ class Registration(Base):
     )
 
 
-class Submission(Base):
-    # One signed upload of Kernel.lean, and what the gate made of it.
-    __tablename__ = "submissions"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    hotkey: Mapped[str] = mapped_column(Text, nullable=False)
-    # Which slot the entry is for: `full` (the paid entry; the platform's inserts land here) or a
-    # single-kernel practice board (add, mul, fma, div, sqrt, sum, bmm).
-    slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="full")
-    # sha256(Kernel.lean), hex: what the miner signed, and the submission's identity.
-    digest: Mapped[str] = mapped_column(Text, nullable=False)
-    submitted_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+class Source(Base):
+    __tablename__ = "sources"
+    sha256: Mapped[str] = mapped_column(Text, primary_key=True)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[dt.datetime] = timestamp()
+    __table_args__ = (
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_sources_hash"),
+        CheckConstraint("octet_length(content) BETWEEN 1 AND 256000", name="ck_sources_size"),
     )
-    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    exit_code: Mapped[int | None] = mapped_column(Integer)
 
-    # --- the gate's verdict ------------------------------------------------------
-    # The stage it stopped at (or `score` when accepted) and the one-line reason.
+
+class Submission(Base):
+    __tablename__ = "submissions"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    hotkey: Mapped[str] = mapped_column(Text)
+    registration_id: Mapped[int] = mapped_column(ForeignKey("registrations.id"), unique=True)
+    source_sha256: Mapped[str] = mapped_column(ForeignKey("sources.sha256"))
+    submitted_at: Mapped[dt.datetime] = timestamp()
+    account_id: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text, server_default="queued")
+    verification_identity: Mapped[str | None] = mapped_column(Text)
+    proof_report: Mapped[dict | None] = mapped_column(JSONB)
     stage: Mapped[str | None] = mapped_column(Text)
     reason: Mapped[str | None] = mapped_column(Text)
-    # Submission time over incumbent time, summed over the timed classes; lower is faster.
-    ratio: Mapped[float | None] = mapped_column(Float)
-    # Per operand class: incumbent_ns, submission_ns, ratio, spreads.
-    classes: Mapped[dict[str, object] | None] = mapped_column(JSONB)
-    # Per round, [incumbent ns, submission ns] over the timed classes: admission's evidence.
-    rounds: Mapped[list[list[float]] | None] = mapped_column(JSONB)
-    seed: Mapped[int | None] = mapped_column(BigInteger)
-    # The incumbent used for this measurement; informational provenance.
-    incumbent_sha256: Mapped[str | None] = mapped_column(Text)
-    # The champion's Kernel.lean this was measured against; the board counts the latest one's only.
-    champion_sha256: Mapped[str | None] = mapped_column(Text)
-    # The verifier the verdict came from; informational provenance.
-    verifier_fingerprint: Mapped[str | None] = mapped_column(Text)
-    gate_seconds: Mapped[float | None] = mapped_column(Float)
-    # The gate's verdict JSON in full: what a miner reads to see why, and what the platform serves.
-    report: Mapped[str | None] = mapped_column(Text)
-    # The conjectures platform account the submission came through; NULL from this API.
-    account_id: Mapped[str | None] = mapped_column(Text)
-
-    # Exact proof evidence is independent of per-board performance/admission.
-    exact_verification: Mapped[dict | None] = mapped_column(JSONB)
-
-    # --- queue bookkeeping -------------------------------------------------------
-    worker_id: Mapped[str | None] = mapped_column(Text)
-    claimed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-    # A fresh token per claim, so a finish from a stale worker is refused.
-    verification_attempt: Mapped[str | None] = mapped_column(Text)
-    # Gate runs that crashed on this submission; at the cap it ends in `error`, uncharged.
-    gate_errors: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    next_attempt_at: Mapped[dt.datetime] = timestamp()
+    owner: Mapped[str | None] = mapped_column(Text)
+    token: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-
-    claim: Mapped[EntitlementClaim | None] = relationship(back_populates="submission")
-    files: Mapped[list[SubmissionFile]] = relationship(
-        back_populates="submission", cascade="all, delete-orphan", passive_deletes=True
-    )
-
     __table_args__ = (
-        UniqueConstraint("hotkey", "slot", "digest", name="uq_submissions_hotkey_slot_digest"),
-        CheckConstraint(f"slot IN ({_in_list(SLOTS)})", name="ck_submissions_slot"),
-        CheckConstraint("digest ~ '^[0-9a-f]{64}$'", name="ck_submissions_digest"),
+        UniqueConstraint("hotkey", "source_sha256", name="uq_submissions_hotkey_source"),
+        CheckConstraint("state IN ('queued','running','proved','rejected')", name="ck_proof_state"),
         CheckConstraint(
-            "incumbent_sha256 IS NULL OR incumbent_sha256 ~ '^[0-9a-f]{64}$'",
-            name="ck_submissions_incumbent_sha256",
+            "(state = 'running') = (owner IS NOT NULL AND token IS NOT NULL "
+            "AND lease_until IS NOT NULL)",
+            name="ck_proof_lease",
         ),
-        CheckConstraint(
-            "champion_sha256 IS NULL OR champion_sha256 ~ '^[0-9a-f]{64}$'",
-            name="ck_submissions_champion_sha256",
-        ),
-        CheckConstraint(
-            "verifier_fingerprint IS NULL OR verifier_fingerprint ~ '^[0-9a-f]{64}$'",
-            name="ck_submissions_verifier_fingerprint",
-        ),
-        CheckConstraint("ratio IS NULL OR ratio > 0", name="ck_submissions_ratio"),
-        CheckConstraint(f"state IN ({_in_list(STATE_VALUES)})", name="ck_submissions_state"),
-        Index("ix_submissions_hotkey", "hotkey"),
-        # The queue scan: oldest queued first, arrival order.
-        Index("ix_submissions_state_submitted_at", "state", "submitted_at", "id"),
+        Index("ix_submissions_queue", "state", "next_attempt_at", "submitted_at", "id"),
+        Index("ix_submissions_proof_cache", "source_sha256", "verification_identity", "state"),
     )
 
 
-class SubmissionFile(Base):
-    # A submission's Kernel.lean, kept in the store so whoever queued it needs no shared disk.
-    __tablename__ = "submission_files"
-
-    submission_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("submissions.id", ondelete="CASCADE"), primary_key=True
-    )
-    name: Mapped[str] = mapped_column(Text, primary_key=True)
-    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-    submission: Mapped[Submission] = relationship(back_populates="files")
-
-    __table_args__ = (CheckConstraint("name = 'Kernel.lean'", name="ck_submission_files_name"),)
+class BoardProgress(Base):
+    __tablename__ = "board_progress"
+    board: Mapped[str] = mapped_column(Text, primary_key=True)
+    activation_boundary: Mapped[int] = mapped_column(BigInteger)
+    last_submission_id: Mapped[int | None] = mapped_column(ForeignKey("submissions.id"))
+    last_submitted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class EntitlementClaim(Base):
-    # One registration spent on one entry's verdict; the keys enforce the rule.
-    __tablename__ = "entitlement_claims"
-
-    registration_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("registrations.id", ondelete="CASCADE"), primary_key=True
-    )
-    submission_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("submissions.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-    )
-    claimed_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-    registration: Mapped[Registration] = relationship(back_populates="claim")
-    submission: Mapped[Submission] = relationship(back_populates="claim")
-
-
-class WeightSet(Base):
-    # Every set_weights attempt, accepted or not, so a disputed epoch stays reconstructable.
-    __tablename__ = "weight_sets"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    netuid: Mapped[int] = mapped_column(Integer, nullable=False)
-    block: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    uids: Mapped[list[int]] = mapped_column(JSONB, nullable=False)
-    weights: Mapped[list[float]] = mapped_column(JSONB, nullable=False)
-    summary: Mapped[str | None] = mapped_column(Text)
-    accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    error: Mapped[str | None] = mapped_column(Text)
-    dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    scoring_content_sha256: Mapped[str | None] = mapped_column(Text)
-    # The scoring this vector was computed from, as the platform publishes it (reward.py).
-    api_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB)
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-    __table_args__ = (
-        Index("ix_weight_sets_created_at", "created_at"),
-        Index("ix_weight_sets_netuid_id", "netuid", "id"),
-        Index(
-            "ix_weight_sets_snapshot_latest",
-            "netuid",
-            "id",
-            postgresql_where=api_snapshot.is_not(None),
-        ),
-        Index(
-            "ix_weight_sets_snapshot_expiry",
-            "netuid",
-            "created_at",
-            "id",
-            postgresql_where=api_snapshot.is_not(None),
-        ),
-    )
-
-
-class ScoreSnapshot(Base):
-    # One hotkey's scoring input and output in one slot, for one weight_sets row.
-    __tablename__ = "score_snapshots"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    weight_set_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("weight_sets.id", ondelete="CASCADE"), nullable=False
-    )
-    # The slot this line scores; each paying slot's last champions are paid by rank (reward.py).
-    slot: Mapped[str] = mapped_column(Text, nullable=False, server_default="add")
-    hotkey: Mapped[str] = mapped_column(Text, nullable=False)
-    submission_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("submissions.id", ondelete="SET NULL")
-    )
-    ratio: Mapped[float | None] = mapped_column(Float)
-    weight: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
-
-    __table_args__ = (
-        Index("ix_score_snapshots_weight_set_id", "weight_set_id"),
-        Index("ix_score_snapshots_hotkey", "hotkey"),
-    )
-
-
-class RateLimitWindow(Base):
-    # A fixed-window write counter per subject (a hotkey, or an IP), shared by all API workers.
-    __tablename__ = "rate_limit_windows"
-
-    subject: Mapped[str] = mapped_column(Text, primary_key=True)
-    window_start: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
-    hits: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-
-    __table_args__ = (Index("ix_rate_limit_windows_window_start", "window_start"),)
-
-
-class ObservedState(Base):
-    """Last observed gate provenance per slot, surviving worker restarts."""
-
-    __tablename__ = "observed_states"
-    key: Mapped[str] = mapped_column(Text, primary_key=True)
-    details: Mapped[dict] = mapped_column(JSONB)
-
-
-class Promotion(Base):
-    # One automatic promotion: an accepted submission that beat its slot's champion, now champion.
-    __tablename__ = "promotions"
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    slot: Mapped[str] = mapped_column(Text, nullable=False)
-    submission_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, unique=True
-    )
-    # The promoted Kernel.lean's sha256 (its digest): what every later verdict records as champion.
-    champion_sha256: Mapped[str] = mapped_column(Text, nullable=False)
-    promoted_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    # Historical benchmark failure count; failures no longer automatically demote champions.
-    failures: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    # When it was demoted, so its predecessor is champion again; null while it holds.
-    demoted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-
-    __table_args__ = (
-        CheckConstraint(
-            f"slot IN ({_in_list(tuple(s for s in SLOTS if s != 'exact'))})",
-            name="ck_promotions_slot",
-        ),
-        CheckConstraint("champion_sha256 ~ '^[0-9a-f]{64}$'", name="ck_promotions_champion_sha256"),
-        Index("ix_promotions_slot_id", "slot", "id"),
-    )
-
-
-class SlotPause(Base):
-    """An unavailable reference and the challenger waiting to retry it."""
-
-    __tablename__ = "slot_pauses"
-    slot: Mapped[str] = mapped_column(Text, primary_key=True)
-    challenger_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("submissions.id", ondelete="SET NULL")
-    )
-    reference_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("submissions.id", ondelete="SET NULL")
-    )
-    reference_sha256: Mapped[str | None] = mapped_column(Text)
-    revision: Mapped[str] = mapped_column(Text, nullable=False)
-    paused_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_failure_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    next_retry_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    phase: Mapped[str] = mapped_column(Text, nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-
-
-class ExactEvaluation(Base):
-    """An immutable board comparison plan; replacements retain their earlier evidence."""
-
-    __tablename__ = "exact_evaluations"
+class Evaluation(Base):
+    __tablename__ = "evaluations"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), nullable=False)
-    board: Mapped[str] = mapped_column(Text, nullable=False)
-    generation: Mapped[int] = mapped_column(Integer, nullable=False)
-    planning_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    config_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    reference_promotion_id: Mapped[int | None] = mapped_column(BigInteger)
-    reference_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    reference_source: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    plan: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
-    decision: Mapped[dict | None] = mapped_column(JSONB)
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"))
+    board: Mapped[str] = mapped_column(Text)
+    generation: Mapped[int] = mapped_column(Integer)
+    config_hash: Mapped[str] = mapped_column(Text)
+    reference_promotion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("promotions.id", use_alter=True, name="fk_evaluation_reference")
     )
+    reference_hash: Mapped[str] = mapped_column(ForeignKey("sources.sha256"))
+    plan: Mapped[dict] = mapped_column(JSONB)
+    state: Mapped[str] = mapped_column(Text, server_default="pending")
+    decision: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[dt.datetime] = timestamp()
     completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("submission_id", "board", "generation"),
         CheckConstraint(
-            "state IN ('pending','completed','superseded')",
-            name="ck_exact_evaluation_state",
+            "state IN ('pending','completed','superseded')", name="ck_evaluation_state"
         ),
-        Index("ix_exact_evaluation_pending", "board", "state", "submission_id"),
+        Index("ix_evaluation_pending", "board", "state", "submission_id"),
+        Index(
+            "uq_evaluation_board_pending", "board", unique=True, postgresql_where=state == "pending"
+        ),
     )
 
 
-class ExactJob(Base):
-    __tablename__ = "exact_jobs"
+class BenchmarkJob(Base):
+    __tablename__ = "benchmark_jobs"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    evaluation_id: Mapped[int] = mapped_column(
-        ForeignKey("exact_evaluations.id", ondelete="CASCADE"), nullable=False
-    )
-    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    request: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    environment: Mapped[str] = mapped_column(Text, nullable=False)
-    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    due_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    request_hash: Mapped[str] = mapped_column(Text)
+    request: Mapped[dict] = mapped_column(JSONB)
+    candidate_hash: Mapped[str] = mapped_column(ForeignKey("sources.sha256"))
+    reference_hash: Mapped[str] = mapped_column(ForeignKey("sources.sha256"))
+    environment: Mapped[str] = mapped_column(Text)
+    lease_seconds: Mapped[float] = mapped_column(Float)
+    retry_seconds: Mapped[float] = mapped_column(Float)
+    state: Mapped[str] = mapped_column(Text, server_default="queued")
+    due_at: Mapped[dt.datetime] = timestamp()
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0")
     owner: Mapped[str | None] = mapped_column(Text)
     token: Mapped[str | None] = mapped_column(Text)
     lease_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[dt.datetime] = timestamp()
     result: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[dict | None] = mapped_column(JSONB)
     __table_args__ = (
-        UniqueConstraint("evaluation_id", "request_hash"),
         CheckConstraint(
-            "state IN ('queued','running','completed','failed','cancelled')",
-            name="ck_exact_job_state",
+            "state IN ('queued','running','completed','failed','cancelled')", name="ck_job_state"
         ),
-        Index("ix_exact_job_due", "environment", "state", "due_at", "id"),
-        Index("ix_exact_job_expiry", "state", "lease_until"),
+        CheckConstraint(
+            "lease_seconds > 0 AND lease_seconds <= 86400 AND retry_seconds > 0 "
+            "AND retry_seconds <= 86400",
+            name="ck_job_periods",
+        ),
+        CheckConstraint(
+            "(state = 'running') = (owner IS NOT NULL AND token IS NOT NULL "
+            "AND lease_until IS NOT NULL)",
+            name="ck_job_lease",
+        ),
+        Index("ix_job_due", "environment", "state", "due_at", "id"),
+        Index("ix_job_reuse", "request_hash", "state"),
     )
 
 
-class ExactPromotion(Base):
-    """Separate history keeps legacy one-slot promotion constraints and reads unchanged."""
+class EvaluationJob(Base):
+    __tablename__ = "evaluation_jobs"
+    evaluation_id: Mapped[int] = mapped_column(ForeignKey("evaluations.id"), primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("benchmark_jobs.id"), primary_key=True)
+    environment: Mapped[str] = mapped_column(Text)
+    seed: Mapped[int] = mapped_column(BigInteger)
+    __table_args__ = (UniqueConstraint("evaluation_id", "environment", "seed"),)
 
-    __tablename__ = "exact_promotions"
+
+class Promotion(Base):
+    __tablename__ = "promotions"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    board: Mapped[str] = mapped_column(Text, nullable=False)
-    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), nullable=False)
-    evaluation_id: Mapped[int] = mapped_column(
-        ForeignKey("exact_evaluations.id"), nullable=False, unique=True
-    )
-    source_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    promoted_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    board: Mapped[str] = mapped_column(Text)
+    evaluation_id: Mapped[int] = mapped_column(ForeignKey("evaluations.id"), unique=True)
+    promoted_at: Mapped[dt.datetime] = timestamp()
     disqualified_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-    __table_args__ = (Index("ix_exact_promotions_board", "board", "id"),)
+    disqualification_reason: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (Index("ix_promotions_board", "board", "id"),)
+
+
+class CoordinatorState(Base):
+    __tablename__ = "coordinator_state"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    leader_token: Mapped[str | None] = mapped_column(Text)
+    config_hash: Mapped[str | None] = mapped_column(Text)
+    config_evidence: Mapped[dict | None] = mapped_column(JSONB)
+    publication: Mapped[dict | None] = mapped_column(JSONB)
+    publication_hash: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (CheckConstraint("id = 1", name="ck_coordinator_singleton"),)
+
+
+class WeightSet(Base):
+    __tablename__ = "weight_sets"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    netuid: Mapped[int] = mapped_column(Integer)
+    block: Mapped[int] = mapped_column(BigInteger)
+    uids: Mapped[list] = mapped_column(JSONB)
+    weights: Mapped[list] = mapped_column(JSONB)
+    summary: Mapped[str | None] = mapped_column(Text)
+    accepted: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    error: Mapped[str | None] = mapped_column(Text)
+    dry_run: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    publication_hash: Mapped[str | None] = mapped_column(Text)
+    publication: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[dt.datetime] = timestamp()
+    __table_args__ = (Index("ix_weight_sets_netuid_id", "netuid", "id"),)

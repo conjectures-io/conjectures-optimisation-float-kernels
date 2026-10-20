@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir \
 # which also imports two sibling modules: admission (scoring.py) and axiom (the
 # event sink); both are standard library plus loguru.
 COPY validator/db ./validator/db
-COPY validator/admission.py validator/axiom.py ./validator/
+COPY validator/axiom.py ./validator/
 
 # Alembic config and revisions are ops artifacts, not part of any package.
 COPY deploy/migrate/alembic.ini ./alembic.ini

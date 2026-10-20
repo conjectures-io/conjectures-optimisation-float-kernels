@@ -1,111 +1,65 @@
-# FloatLib kernel competition
+# Proved tensor kernels
 
-Optimise four binary32 kernels and prove that their results are exactly equal to
-FloatLib and TorchLean's specifications. Miners upload one Lean file containing
-`add`, `mul`, `sum`, and batched matrix multiplication (`bmm`), together with their
-proofs.
+One submission supplies all 12 neural-network kernels and a Lean proof that they equal the pinned
+specification. The coordinator checks correctness once, then dispatches paired benchmark jobs to
+hardware workers. Five model-family boards and an overall board compare complete implementations.
+Each board pays its current and previous eligible champion using configurable allocations.
 
-The central [Conjectures API](https://github.com/conjectures-io/conjectures-validator)
-receives submissions. This repository provides the contracts, local verification
-and benchmarking tools, miner CLI, and competition workers.
+This branch replaces the former FloatLib workflow. It uses a **fresh competition database**
+with migration revision `tensor_0001`. Central API/frontend support must be updated to the
+[new schema contract](deploy/platform/CONTRACT.md) before public activation.
 
-## How the competition works
-
-1. The gate checks the file's policy, all four proof statements, compiled Lean
-   declarations, and allowed axioms.
-2. It benchmarks the submission alongside the current champion and compares output
-   checksums on generated inputs.
-3. A verified submission becomes champion if its timing ratio is at most the
-   promotion bar (default `0.97`) and the paired statistical test establishes a
-   speed advantage.
-4. The latest three champions share the competition budget `60/30/10`, excluding
-   any explicitly removed by an operator.
-   Empty ranks go to treasury. On subnet 66, the competition budget is 20% of the
-   validator's weight.
-
-An entry can pass verification without becoming champion. Its proofs must cover
-all inputs required by the contract. Its timing results apply to the benchmark
-inputs and the validator's hardware.
-
-See the [live competition](https://conjectures.io/competitions/floatlib) for current
-champions and measurements. Repository examples illustrate implementation and
-proof techniques; they are not a live leaderboard.
-
-## Miner quick start
-
-On Linux x86_64, clone this repository and run from its root:
+## Local setup
 
 ```bash
-./setup.sh
-source .venv/bin/activate
-export PATH="$HOME/.elan/bin:$PATH"
-
-cp -r kernels/full/incumbent my-entry
-python gate.py --slot full --bench my-entry
-python gate.py --slot full my-entry
+./setup.sh --service
+export PYTHONPATH=.:validator
+.venv/bin/python scripts/exact-config.py --quick --output competition.toml
+docker compose up -d db
+docker compose build migrate
+docker compose run --rm migrate
 ```
 
-Setup installs the Lean dependencies, project-local bubblewrap, and Python
-packages for the gate and miner CLI. See the [miner guide](MANUAL.md) for system
-packages and sandbox requirements.
+Use `./setup.sh --chain` to add the Bittensor SDK. Setup installs the pinned Lean packages,
+project-local bubblewrap, proof/benchmark targets and miner dependencies.
+The sandbox needs user namespaces and a working user systemd session for memory limits.
 
-The copied entry is the **shipped reference**. Local runs use it by default;
-server verification uses the current champion, which may have changed since the
-repository was released.
+For a benchmark-only host with a remote database, use `./setup.sh --benchmark-worker`.
+It builds only `VerifyExact` and `benchExact` and installs the database client and timing
+dependencies. It needs neither Docker nor PM2, miner signing libraries or Bittensor.
+Configure remote DB credentials as described in [distributed workers](docs/EXACT-WORKERS.md).
 
-Edit `my-entry/Kernel.lean`, benchmark your changes, complete all proofs, then
-submit using an eligible registered hotkey:
+For development, run `./setup.sh --dev`. This builds the full local toolset and installs
+tests, database clients, Bittensor, lint and plotting dependencies into `.venv`.
+Select `.venv/bin/python` as your IDE's Python interpreter (in VS Code:
+**Python: Select Interpreter**). For bare imports such as `db`, add `validator` to your
+language server's import paths; for VS Code/Pylance, set `python.analysis.extraPaths`
+to `["./validator"]`. Development setup does not start services or create a database.
+
+## Run
 
 ```bash
-python miner/submit.py submit my-entry \
-  --hotkey ~/.bittensor/wallets/<wallet>/hotkeys/<hotkey>
-python miner/submit.py status <submission-id>
-python miner/submit.py report <submission-id>
+pm2 start deploy/pm2.config.js --only tensor-coordinator,tensor-benchmark-worker
 ```
 
-The CLI defaults to `https://conjectures.io`; `--url` selects another API origin.
-Only entries containing all four kernels can be uploaded. Single-kernel slots remain available for local
-experiments and historical reads.
+The config file selects boards, reference sources, hardware identities, seeds, timings, admission
+and rewards. Hardware workers use the same code on each architecture and receive immutable jobs.
+The weight setter reads the coordinator's compact publication; it defaults to dry run.
 
-## Documentation
+See [MANUAL.md](MANUAL.md) for verification, testing and operations,
+[distributed workers](docs/EXACT-WORKERS.md), [specification](docs/EXACT-CONTRACT.md),
+[mathematical proofs](docs/EXACT-PROOFS.md), and [independent audits](docs/EXACT-SPEC-AUDIT.md).
 
-| Guide | Contents |
-| --- | --- |
-| [Miner guide](MANUAL.md) | Setup, full-entry workflow, eligibility, submission and results |
-| [Proofs and policy](docs/PROOFS.md) | Exact obligations, proof patterns, permitted code and gate stages |
-| [Benchmarking](docs/BENCHMARKING.md) | Workloads, timing aggregation and statistical promotion |
-| [Operations](docs/OPERATIONS.md) | Database, workers, API access, reward switching and recovery |
-| [Local experiments](docs/LOCAL-EXPERIMENTS.md) | Single-kernel slots and example implementations |
-| [Exact runtime slot](docs/EXACT-RUNTIME.md) | Twelve proved neural-network kernels and their local model-suite benchmark |
-| [Exact-runtime workers](docs/EXACT-WORKERS.md) | Optional model-family boards, distributed benchmark jobs and configurable two-rank rewards; API integration pending |
-| [Research background](docs/RESEARCH.md) | TorchLean link proofs and exploratory targets |
-| [Platform contract](deploy/platform/CONTRACT.md) | Database integration and access grants |
-| [Central API reference](https://github.com/conjectures-io/conjectures-validator/blob/main/docs/COMPETITION_API.md) | HTTP endpoints, schemas and refusal codes |
-
-## Main source files
-
-- [Scalar contract](lean/contract/Contract.lean) and
-  [tensor contract](lean/contract/ContractTensor.lean): required semantics.
-- [Full reference entry](kernels/full/incumbent/Kernel.lean): a starting implementation
-  with all four proofs.
-- [gate.py](gate.py): verification, sandboxing and benchmark orchestration.
-- [admission.py](validator/admission.py) and [reward.py](validator/reward.py):
-  promotion and reward rules.
-- [BenchFull.lean](lean/bench/BenchFull.lean): full-entry benchmark.
-
-## Development checks
+## Test
 
 ```bash
-.venv/bin/pip install -r requirements/test.txt ruff==0.16.9
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format --check .
-.venv/bin/python -m pytest -q -m "not slow"
+.venv/bin/pip install -r requirements/gate.txt -r requirements/test.txt # already included by --dev
+.venv/bin/pytest -q -m 'not slow'
+.venv/bin/python selftest.py
 ```
 
-Database tests require a separate test database; see [Operations](docs/OPERATIONS.md#development-tests).
-For a real toolchain and sandbox check, run `.venv/bin/python selftest.py`. It
-verifies the fixtures listed in `kernels/expected.tsv`, including rejection cases.
-Timing assertions can fail on a busy host.
+Database tests create and migrate a disposable database on the configured PostgreSQL server.
+They require CREATE DATABASE and role-management privileges. Missing PostgreSQL causes skips;
+inspect the reported counts. The real proof fixtures take several minutes.
 
-CI runs lint and fast tests on pushes and pull requests. Scheduled and manually
-triggered gate jobs also run setup, real-gate tests, and the self-test.
+See the [refactor validation report](docs/TENSOR-REFACTOR-VALIDATION.md) for test results and real worker rehearsals.
