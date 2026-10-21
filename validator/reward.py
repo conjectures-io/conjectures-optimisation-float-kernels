@@ -208,6 +208,8 @@ def publication(
                 "version": admission.POLICY_VERSION,
                 "draws": admission.DRAWS,
                 "quantile": admission.QUANTILE,
+                "suite_version": admission.SUITE_POLICY_VERSION,
+                "regression_guard": admission.REGRESSION_GUARD,
             },
         },
         "slots": slots,

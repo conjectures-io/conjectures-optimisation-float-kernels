@@ -69,6 +69,7 @@ def evidence_of(row: models.Submission) -> admission.Evidence:
         float(row.ratio or 0.0),
         row.submitted_at,
         tuple((float(i), float(s)) for i, s in (row.rounds or [])),
+        admission.suite_evidence(row.report),
     )
 
 
@@ -95,6 +96,8 @@ class ScoringDb:
         key = (
             bar,
             admission.POLICY_VERSION,
+            admission.SUITE_POLICY_VERSION,
+            admission.REGRESSION_GUARD,
             champion.id if champion else None,
             self._submissions.evidence_key(slot),
         )

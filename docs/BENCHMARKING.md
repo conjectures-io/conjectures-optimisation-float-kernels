@@ -17,9 +17,64 @@ champion.
 be timed. Checksum checks still run; the result is not a verification verdict or
 promotion decision.
 
-## Current workloads
+## Suite scoring
 
-The full entry measures twelve classes, three per kernel:
+When the operator sets `GATE_FULL_SUITE`, the full entry is timed on cases drawn
+from a *suite* instead of the twelve legacy classes below. Practice boards keep
+their legacy classes.
+
+- **A suite** is a JSON file. It names *groups* (`dense`, `ml`, `sparse`,
+  `specials`, `subnormal`, `paired`, `extremes`) and gives each group *families* of
+  inputs, with parameter ranges and size distributions.
+- **Per evaluation**, the gate draws a fresh plan from the seed: several cases per
+  kernel and group, each with its own family, parameters and size. One untimed
+  raw-bits case per kernel is only checksummed. Champion and entry run the same plan.
+- **The paid board is scored on a private suite.** It has the public suite's
+  groups, but its families, parameter ranges and sizes are not published, and
+  every evaluation draws new ones.
+- **[suites/public-v2.json](../suites/public-v2.json)** is the public suite. It
+  uses the same generators and groups, so tune on it, then expect the private
+  suite to differ in detail.
+- **What is published:** results. The verdict gives each cell's (kernel and
+  group's) ratio, and every case's per-round times under its cell. It does not give
+  a case's parameters, its size or the plan.
+- **What the cases are made of:** [BenchSuite.lean](../lean/bench/BenchSuite.lean)
+  builds them. Ordinary values have uniform or normal-like magnitudes. On top of
+  those it can place:
+  - zeros, in runs, signed or as tiny leaked values;
+  - blocks of subnormals;
+  - ±∞, NaN, ±largest finite and ±0, at random, on a stride, in bursts or at row
+    ends;
+  - fractions rounded to bf16 or fp16 precision;
+  - small codebooks of repeated values;
+  - per-block scales.
+
+  For `add` and `mul`, the second operand can also be tied to the first: equal,
+  negated, nearly cancelling, constant, an identity, or a set number of binades
+  below it. `sum` lengths and `bmm` shapes are drawn from wide ranges, from
+  single elements to long vectors and tall, skinny or degenerate matrices.
+
+**How a suite is scored**
+- Per case, the fastest round of each side gives a ratio.
+- A cell's ratio is the geometric mean of its cases' ratios.
+- The headline ratio is the weighted geometric mean of the cells. Each kernel
+  weighs the same, split over its groups by the suite's group weights.
+
+Time does not weigh a case, so a fast path for one kind of input cannot hide a
+slowdown on another behind its share of the total time.
+
+**Admission under a suite**
+- The headline ratio must be at most the bar.
+- No cell may be slower than the champion by more than 5%
+  (`REGRESSION_GUARD = 1.05`). An entry that breaks this is `regressed`.
+- The bootstrap resamples both the rounds and the cases within each cell, so the
+  gain must hold across the kinds of input drawn, not only across timing noise.
+
+The rule is `SUITE_POLICY_VERSION` in [admission.py](../validator/admission.py).
+
+## Legacy workloads
+
+Without a suite, the full entry measures twelve classes, three per kernel:
 
 | Kernel | Classes | Default work per class |
 | --- | --- | --- |
@@ -84,7 +139,14 @@ BENCH_SEED=42 BENCH_CPU=3 python gate.py --slot full --bench my-entry
 ```
 
 Choose a CPU that exists on your host. Repeat with other seeds and inspect every
-class; fixed-seed improvements may not generalise. `BENCH_CPU=` removes pinning
+class; fixed-seed improvements may not generalise. To time on the public suite, as
+the paid board is timed on its private one:
+
+```bash
+GATE_FULL_SUITE=suites/public-v2.json BENCH_SEED=42 python gate.py --slot full --bench my-entry
+```
+
+Look at every cell, and at several seeds: each seed draws different cases. `BENCH_CPU=` removes pinning
 and can increase noise. `BENCH_ROUNDS` and `BENCH_PAIRS` change measurement work;
 local overrides do not change the server configuration.
 

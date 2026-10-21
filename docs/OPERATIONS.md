@@ -184,6 +184,29 @@ the current champion's exact ID. The next attempt uses the remaining champion
 or shipped reference. Run gate workers on one host per shared queue; the host
 lock is not a distributed lock.
 
+## Scoring the full board on a private suite
+
+`GATE_FULL_SUITE` switches the full entry from the legacy classes to suite
+scoring ([Benchmarking](BENCHMARKING.md#suite-scoring)). Unset, nothing changes.
+
+1. Keep the private suite file outside the checkout, readable only by the gate's
+   account (for example `/etc/floatlib/suites/scoring.json`, mode 0600). Never commit
+   it to this repository. Its hash enters the verifier fingerprint; its contents
+   reach only the bench processes, through `BENCH_PLAN`.
+2. Check that it loads and draws:
+   `python -c "import benchmark_suite as b; b.make_plan(b.load('<path>'), 1, 500000)"`.
+3. Raise the time limits. A suite run times more cases, and the public suite's
+   process takes about 1.5× a legacy one. Use `GATE_BUDGET_SECONDS=900` and
+   `VERIFY_TOTAL_TIMEOUT=2700`, then re-check them against a real gate run on the
+   validator.
+4. Set `GATE_FULL_SUITE` in the worker's environment and restart the gate worker.
+   Ratios measured under the suite are not comparable with legacy ratios. Decide
+   before switching whether the current champion stays, or whether the leading
+   entries are re-timed under the suite first.
+
+To retire a private suite's draws, change its `version`; old verdicts keep the hash
+they were scored under.
+
 ## Provenance and explicit reverification
 
 Verifier fingerprints and incumbent binary hashes record provenance. Changes are

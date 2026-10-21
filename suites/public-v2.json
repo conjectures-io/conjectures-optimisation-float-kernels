@@ -1,0 +1,106 @@
+{
+  "version": "public-v2",
+  "description": "The public suite: the kinds of input the full entry is scored on, for local tuning. The paid board is scored on a private suite with the same groups and other families, parameters and sizes.",
+  "kernel_weights": {"add": 1, "mul": 1, "sum": 1, "bmm": 1},
+  "work": {"add": 3, "mul": 3, "sum": 3, "bmm": 3},
+  "sizes": {
+    "sum": [
+      {"length": {"loguniform": [1, 64]}},
+      {"length": {"loguniform": [64, 1024]}},
+      {"length": {"loguniform": [1024, 16384]}}
+    ],
+    "bmm": [
+      {"m": {"loguniform": [1, 16]}, "n": {"loguniform": [1, 64]}, "p": {"loguniform": [1, 16]}},
+      {"m": [16, 64], "n": [16, 128], "p": [16, 64]},
+      {"m": {"loguniform": [1, 256]}, "n": {"loguniform": [1, 64]}, "p": {"loguniform": [1, 8]}},
+      {"m": {"loguniform": [1, 8]}, "n": {"loguniform": [64, 512]}, "p": {"loguniform": [1, 8]}}
+    ]
+  },
+  "groups": [
+    {
+      "name": "dense",
+      "weight": 2,
+      "cases": 3,
+      "families": [
+        {"magnitude": "uniform", "center": [124, 130], "spread": [1, 3]},
+        {"magnitude": "uniform", "center": [64, 190], "spread": [20, 60]},
+        {"magnitude": "uniform", "center": 127, "spread": [30, 100], "positive": {"choices": [50, 100]}}
+      ]
+    },
+    {
+      "name": "ml",
+      "weight": 3,
+      "cases": 4,
+      "families": [
+        {"magnitude": "geometric", "center": [118, 132], "spread": [12, 24]},
+        {"magnitude": "geometric", "center": [115, 123], "spread": [8, 16]},
+        {"magnitude": "geometric", "center": [88, 106], "spread": [8, 20]},
+        {"magnitude": "geometric", "center": [110, 135], "spread": [6, 14], "scale_block": {"choices": [16, 64, 256]}, "scale_shift": [4, 20]},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [10, 20], "mantissa_bits": 7},
+        {"magnitude": "geometric", "center": [113, 141], "spread": [6, 14], "mantissa_bits": 10},
+        {"magnitude": "uniform", "center": [118, 126], "spread": [1, 4], "codebook": {"choices": [16, 256]}},
+        {"magnitude": "geometric", "center": [118, 126], "spread": [16, 30], "positive": 100}
+      ]
+    },
+    {
+      "name": "sparse",
+      "weight": 2,
+      "cases": 3,
+      "families": [
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "positive": 100, "zero_pct": [35, 65]},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "zero_pct": [70, 95], "zero_cluster": {"choices": [1, 4, 16]}, "zero_kind": "signed"},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "zero_pct": [30, 60], "zero_kind": "leak"},
+        {"magnitude": "uniform", "center": [120, 134], "spread": [2, 8], "zero_pct": [1, 10]}
+      ]
+    },
+    {
+      "name": "specials",
+      "weight": 1,
+      "cases": 3,
+      "families": [
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "special_rate": [10, 1000], "specials": ["inf", "nan"]},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "special_rate": 1, "special_place": "stride", "special_period": {"choices": [17, 64, 100, 333, 1024]}, "specials": ["nan", "inf", "max"]},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "special_rate": [500, 5000], "special_place": "burst", "special_burst": {"choices": [4, 32, 256]}},
+        {"magnitude": "uniform", "center": [120, 134], "spread": [2, 8], "special_rate": [20000, 100000], "special_place": "edge"},
+        {"magnitude": "uniform", "center": [120, 134], "spread": [2, 8], "special_rate": [5000, 30000]},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "special_rate": [5000, 50000], "specials": ["zero"]}
+      ]
+    },
+    {
+      "name": "subnormal",
+      "weight": 1,
+      "cases": 2,
+      "families": [
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "sub_pct": [5, 30], "sub_block": {"choices": [8, 64, 512]}},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "sub_pct": [1, 10]},
+        {"magnitude": "geometric", "center": [5, 25], "spread": [5, 20]},
+        {"magnitude": "uniform", "center": [11, 30], "spread": [1, 10]}
+      ]
+    },
+    {
+      "name": "paired",
+      "kernels": ["add", "mul"],
+      "weight": 2,
+      "cases": 4,
+      "families": [
+        {"magnitude": "uniform", "center": [100, 150], "spread": [1, 10], "relation": "cancel", "relation_param": [0, 12]},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "relation": "near", "relation_param": [0, 12]},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "relation": "equal"},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "relation": "negate"},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "relation": "identity", "relation_param": [5, 50]},
+        {"magnitude": "uniform", "center": [110, 140], "spread": [1, 6], "relation": "offset", "relation_param": {"choices": [1, 8, 23, 24, 25, 30, 60]}},
+        {"magnitude": "geometric", "center": [118, 130], "spread": [8, 20], "relation": "broadcast"}
+      ]
+    },
+    {
+      "name": "extremes",
+      "weight": 1,
+      "cases": 2,
+      "families": [
+        {"magnitude": "uniform", "center": [230, 250], "spread": [1, 6]},
+        {"magnitude": "uniform", "center": 127, "spread": 126},
+        {"magnitude": "uniform", "center": 127, "spread": 4, "scale_block": {"choices": [1, 8]}, "scale_shift": [60, 110]}
+      ]
+    }
+  ]
+}

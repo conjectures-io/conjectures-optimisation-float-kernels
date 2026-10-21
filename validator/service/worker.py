@@ -102,6 +102,7 @@ def beats_champion(sub: models.Submission, fields: dict[str, object]) -> bool:
         float(cast("float", fields.get("ratio") or 0.0)),
         sub.submitted_at,
         tuple((float(i), float(s)) for i, s in rounds),
+        admission.suite_evidence(cast("str | None", fields.get("report"))),
     )
     return admission.assess(evidence, PROMOTION_BAR).outcome == "qualifies"
 
