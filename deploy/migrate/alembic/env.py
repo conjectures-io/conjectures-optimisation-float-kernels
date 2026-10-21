@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -27,17 +26,10 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def _database_url() -> str:
-    # Same resolution as validator/db/engine.py, so migrations hit the service's database.
-    url = os.getenv("DATABASE_URL")
-    if url:
-        return url
-    user = os.getenv("POSTGRES_USER", "conjectures")
-    password = os.getenv("POSTGRES_PASSWORD", "conjectures")
-    host = os.getenv("POSTGRES_HOST", "localhost")
-    port = os.getenv("POSTGRES_PORT", "5432")
-    name = os.getenv("POSTGRES_DB", "conjectures")
-    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
+def _database_url():
+    from db.engine import database_url
+
+    return database_url()
 
 
 def run_migrations_offline() -> None:

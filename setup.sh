@@ -4,7 +4,8 @@
 #   ./setup.sh --check     report what is installed, change nothing
 #   ./setup.sh --service   also the gate worker, store client and .env
 #   ./setup.sh --chain     also the bittensor SDK the chain watcher and weight setter need
-#   ./setup.sh --exact     build the local exact-runtime kernels, benchmark and validation tools
+#   ./setup.sh --benchmark-worker  only local builds, timing and remote DB access
+#   ./setup.sh --dev       full build and all Python development dependencies
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 lean="$here/lean"
@@ -13,16 +14,21 @@ log() { echo "[setup] $(date -u +%H:%M:%S) $*"; }
 missing=0
 have() { if command -v "$1" >/dev/null 2>&1; then log "ok       $1"; else log "MISSING  $1 - $2"; missing=1; fi; }
 
-check=0; service=0; chain=0; exact=0
+check=0; service=0; chain=0; benchmark_worker=0; dev=0
 for arg in "$@"; do
   case "$arg" in
     --check) check=1 ;;
     --service) service=1 ;;
     --chain) service=1; chain=1 ;;
-    --exact) exact=1 ;;
+    --benchmark-worker) benchmark_worker=1 ;;
+    --dev) dev=1 ;;
     *) log "unknown option $arg"; exit 2 ;;
   esac
 done
+if [ "$benchmark_worker" = 1 ] && { [ "$service" = 1 ] || [ "$dev" = 1 ]; }; then
+  log "--benchmark-worker is a minimal mode; use it without --service, --chain or --dev"
+  exit 2
+fi
 
 have python3 "apt install python3 python3-venv"
 have curl "apt install curl"
@@ -33,6 +39,8 @@ fi
 have taskset "apt install util-linux, or run the gate with BENCH_CPU= (noisier timing)"
 have prlimit "apt install util-linux, or run the gate with GATE_FILE_MB=0 (no per-file disk cap)"
 have setpriv "apt install util-linux (required for worker subprocess cleanup)"
+have cc "apt install build-essential (required for native Lean binaries)"
+have systemd-run "install systemd with a working user session for sandbox memory limits"
 have lake "installed below via elan"
 # The service's Postgres runs under docker compose (skip with a managed DATABASE_URL); pm2 runs its processes.
 if [ "$service" = 1 ]; then
@@ -57,18 +65,24 @@ python3 "$here/scripts/fetch-pinned-deps.py"
 lake exe cache get
 log "building FloatLib, the contract and the bench against the incumbent"
 mkdir -p work
-if [ "$exact" = 1 ]; then
-  cp "$here/kernels/exact/incumbent/Kernel.lean" work/Submission.lean
-  lake build ExactSuiteProofs VerifyExact benchExact exactDev validateExact exactSpecProbe auditExactShapes auditExactWorkloads exactAudit 2>&1 | tail -3
+cp "$here/kernels/exact/incumbent/Kernel.lean" work/Submission.lean
+if [ "$benchmark_worker" = 1 ]; then
+  lake build VerifyExact benchExact 2>&1 | tail -3
 else
-  cp "$here/kernels/add/incumbent/Kernel.lean" work/Submission.lean
-  lake build Contract Verify bench 2>&1 | tail -3
+  lake build ExactSuiteProofs VerifyExact benchExact exactDev validateExact exactSpecProbe auditExactShapes auditExactWorkloads exactAudit 2>&1 | tail -3
 fi
 
 # Python dependencies for the local gate and miner submission CLI.
 cd "$here"
 [ -x .venv/bin/python ] || python3 -m venv .venv
-.venv/bin/pip install -q -r requirements/gate.txt -r requirements/miner.txt
+if [ "$benchmark_worker" = 1 ]; then
+  .venv/bin/pip install -q -r requirements/benchmark-worker.txt
+elif [ "$dev" = 1 ]; then
+  log "installing all Python development dependencies into .venv"
+  .venv/bin/pip install -q -r requirements/dev.txt
+else
+  .venv/bin/pip install -q -r requirements/gate.txt -r requirements/miner.txt
+fi
 if [ "$service" = 1 ]; then
   log "installing the validator worker dependencies"
   .venv/bin/pip install -q -r requirements/service.txt
@@ -78,8 +92,10 @@ if [ "$chain" = 1 ]; then
   log "installing the bittensor SDK"
   .venv/bin/pip install -q -r requirements/chain.txt
 fi
-if [ "$exact" = 1 ]; then
-  log "done - validate: .venv/bin/python scripts/audit-exact-spec.py --native"
+if [ "$benchmark_worker" = 1 ]; then
+  log "done - configure remote DB access; run with PYTHONPATH=.:validator .venv/bin/python -m workers.benchmark_worker --environment NAME"
+elif [ "$dev" = 1 ]; then
+  log "done - select $here/.venv/bin/python as your IDE interpreter; test with .venv/bin/python -m pytest -m 'not slow'"
 else
-  log "done - test the environment: .venv/bin/python selftest.py (about 15 minutes)"
+  log "done - test: .venv/bin/python selftest.py"
 fi

@@ -1,31 +1,23 @@
-"""The verifier fingerprint covers every file and setting that decides a verdict."""
+"""Proof, measurement, scoring and rewards have separate identities."""
 
-from __future__ import annotations
-
-import pytest
+from pathlib import Path
 
 import fingerprint
 
-DEV_TOOLS = {"Micro.lean", "ExactDev.lean"}
 
-
-def test_every_contract_verify_and_bench_file_is_pinned():
-    # Subfolders too: the exact slot's toolkit lives in contract/ExactToolkit/.
-    lean = fingerprint.LIB
+def test_exact_contract_and_all_toolkit_are_proof_pinned():
     files = {
         str(p.relative_to(fingerprint.HERE))
-        for d in ("contract", "verify", "bench")
-        for p in (lean / d).rglob("*.lean")
-        if p.name not in DEV_TOOLS
+        for p in (fingerprint.HERE / "lean/contract/ExactToolkit").glob("*.lean")
     }
-    assert "lean/contract/ExactToolkit/Values.lean" in files
-    assert files <= set(fingerprint.PINNED)
+    assert files <= set(fingerprint.PROOF_FILES)
+    assert "lean/verify/VerifyExact.lean" in fingerprint.PROOF_FILES
+    assert "lean/bench/MainExact.lean" not in fingerprint.PROOF_FILES
 
 
-@pytest.mark.parametrize("knob, value", [("GATE_CELL_MS", "20"), ("GATE_GUARD", "1.5")])
-def test_the_exact_slots_settings_change_the_fingerprint(monkeypatch, knob, value):
-    # Both settings change what a score means, so both change the fingerprint.
-    monkeypatch.delenv(knob, raising=False)
-    before = fingerprint.current()
-    monkeypatch.setenv(knob, value)
-    assert fingerprint.current() != before
+def test_benchmark_excludes_reward_and_scoring_code():
+    assert not {"validator/rewards.py", "validator/config.py", "validator/scoring.py"} & set(
+        fingerprint.PINNED
+    )
+    assert fingerprint.proof() != fingerprint.benchmark()
+    assert all((Path(fingerprint.HERE) / name).is_file() for name in fingerprint.PINNED)

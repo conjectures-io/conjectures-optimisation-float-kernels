@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import gate
+import sandbox as gate
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -36,14 +36,12 @@ def test_an_oversized_or_missing_file_is_rejected(tmp_path):
     assert "over" in gate.intake(big, v)
 
 
-def test_each_slot_imports_only_its_own_contract(tmp_path):
-    # Scalar slots import Contract, the tensor slot sum ContractTensor; never the other one.
-    src = kernel(tmp_path, b"import ContractTensor\n")
-    assert gate.policy(src, gate.Verdict(submission="k", slot="sum")) is None
-    assert "other than Contract" in gate.policy(src, gate.Verdict(submission="k", slot="add"))
-    src.write_bytes(b"import Contract\n")
-    assert gate.policy(src, gate.Verdict(submission="k", slot="add")) is None
-    assert "other than ContractTensor" in gate.policy(src, gate.Verdict(submission="k", slot="sum"))
+def test_only_tensor_contract_import_is_allowed(tmp_path):
+    src = kernel(tmp_path, b"import ContractExact\n")
+    assert gate.policy(src, gate.Verdict(submission="k")) is None
+    for contract in ("Contract", "ContractTensor", "Lean"):
+        src.write_text(f"import {contract}\n")
+        assert "other than ContractExact" in gate.policy(src, gate.Verdict(submission="k"))
 
 
 def test_an_entry_out_of_time_is_rejected_and_marked_exhausted(tmp_path, monkeypatch):
@@ -57,8 +55,8 @@ def test_an_entry_out_of_time_is_rejected_and_marked_exhausted(tmp_path, monkeyp
     monkeypatch.setattr(gate, "run", slow)
     monkeypatch.setattr(gate, "WORK", tmp_path / "work" / "Submission.lean")
     gate._budget.reset()
-    v = gate.Verdict(submission="slow", slot="full")
-    src = kernel(tmp_path, b"import ContractTensor\n")
+    v = gate.Verdict(submission="slow")
+    src = kernel(tmp_path, b"import ContractExact\n")
     gate.run_stages(src, v, [("statement", gate.statement)])
     assert not v.passed and v.stage == "statement"
     assert "time budget" in v.reason and gate._budget.exhausted
@@ -70,8 +68,8 @@ def test_an_ordinary_rejection_is_not_exhausted(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "run", lambda cmd, timeout, **kw: (1, "error: type mismatch"))
     monkeypatch.setattr(gate, "WORK", tmp_path / "work" / "Submission.lean")
     gate._budget.reset()
-    v = gate.Verdict(submission="wrong", slot="full")
-    src = kernel(tmp_path, b"import ContractTensor\n")
+    v = gate.Verdict(submission="wrong")
+    src = kernel(tmp_path, b"import ContractExact\n")
     gate.run_stages(src, v, [("statement", gate.statement)])
     assert not v.passed and "type mismatch" in v.reason and not gate._budget.exhausted
 

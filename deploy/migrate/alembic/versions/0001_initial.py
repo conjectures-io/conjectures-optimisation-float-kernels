@@ -1,166 +1,202 @@
-"""Initial schema: submissions, registrations, entitlement claims, weight sets, rate limits.
+"""Fresh tensor competition schema; not an upgrade of the former competition."""
 
-Revision ID: 0001
-Revises:
-Create Date: 2026-09-24 13:16:56 UTC
+from pathlib import Path
+
+from alembic import op
+
+revision = "tensor_0001"
+down_revision = None
+branch_labels = None
+depends_on = None
+
+SCHEMA = """
+CREATE TABLE registrations (
+	id BIGSERIAL NOT NULL,
+	uid INTEGER NOT NULL,
+	ss58_hot TEXT NOT NULL,
+	ss58_cold TEXT NOT NULL,
+	block BIGINT NOT NULL,
+	block_date TIMESTAMP WITH TIME ZONE NOT NULL,
+	inserted_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_registrations_uid_block UNIQUE (uid, block)
+);
+CREATE INDEX ix_registrations_ss58_hot ON registrations (ss58_hot);
+CREATE INDEX ix_registrations_uid ON registrations (uid);
+CREATE TABLE sources (
+	sha256 TEXT NOT NULL,
+	content BYTEA NOT NULL,
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	PRIMARY KEY (sha256),
+	CONSTRAINT ck_sources_hash CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+	CONSTRAINT ck_sources_size CHECK (octet_length(content) BETWEEN 1 AND 256000)
+);
+CREATE TABLE coordinator_state (
+	id SERIAL NOT NULL,
+	leader_token TEXT,
+	config_hash TEXT,
+	config_evidence JSONB,
+	publication JSONB,
+	publication_hash TEXT,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_coordinator_singleton CHECK (id = 1)
+);
+CREATE TABLE weight_sets (
+	id BIGSERIAL NOT NULL,
+	netuid INTEGER NOT NULL,
+	block BIGINT NOT NULL,
+	uids JSONB NOT NULL,
+	weights JSONB NOT NULL,
+	summary TEXT,
+	accepted BOOLEAN DEFAULT 'false' NOT NULL,
+	error TEXT,
+	dry_run BOOLEAN DEFAULT 'false' NOT NULL,
+	publication_hash TEXT,
+	publication JSONB,
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	PRIMARY KEY (id)
+);
+CREATE INDEX ix_weight_sets_netuid_id ON weight_sets (netuid, id);
+CREATE TABLE submissions (
+	id BIGSERIAL NOT NULL,
+	hotkey TEXT NOT NULL,
+	registration_id BIGINT NOT NULL,
+	source_sha256 TEXT NOT NULL,
+	submitted_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	account_id TEXT,
+	state TEXT DEFAULT 'queued' NOT NULL,
+	verification_identity TEXT,
+	proof_report JSONB,
+	stage TEXT,
+	reason TEXT,
+	attempts INTEGER DEFAULT '0' NOT NULL,
+	next_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	owner TEXT,
+	token TEXT,
+	lease_until TIMESTAMP WITH TIME ZONE,
+	finished_at TIMESTAMP WITH TIME ZONE,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_submissions_hotkey_source UNIQUE (hotkey, source_sha256),
+	CONSTRAINT ck_proof_state CHECK (state IN ('queued','running','proved','rejected')),
+	CONSTRAINT ck_proof_lease CHECK ((state = 'running') = (owner IS NOT NULL AND token IS NOT NULL AND lease_until IS NOT NULL)),
+	UNIQUE (registration_id),
+	FOREIGN KEY(registration_id) REFERENCES registrations (id),
+	FOREIGN KEY(source_sha256) REFERENCES sources (sha256)
+);
+CREATE INDEX ix_submissions_proof_cache ON submissions (source_sha256, verification_identity, state);
+CREATE INDEX ix_submissions_queue ON submissions (state, next_attempt_at, submitted_at, id);
+CREATE TABLE benchmark_jobs (
+	id BIGSERIAL NOT NULL,
+	request_hash TEXT NOT NULL,
+	request JSONB NOT NULL,
+	candidate_hash TEXT NOT NULL,
+	reference_hash TEXT NOT NULL,
+	environment TEXT NOT NULL,
+	lease_seconds FLOAT NOT NULL,
+	retry_seconds FLOAT NOT NULL,
+	state TEXT DEFAULT 'queued' NOT NULL,
+	due_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	attempts INTEGER DEFAULT '0' NOT NULL,
+	owner TEXT,
+	token TEXT,
+	lease_until TIMESTAMP WITH TIME ZONE,
+	started_at TIMESTAMP WITH TIME ZONE,
+	completed_at TIMESTAMP WITH TIME ZONE,
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	result JSONB,
+	error JSONB,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_job_state CHECK (state IN ('queued','running','completed','failed','cancelled')),
+	CONSTRAINT ck_job_periods CHECK (lease_seconds > 0 AND lease_seconds <= 86400 AND retry_seconds > 0 AND retry_seconds <= 86400),
+	CONSTRAINT ck_job_lease CHECK ((state = 'running') = (owner IS NOT NULL AND token IS NOT NULL AND lease_until IS NOT NULL)),
+	FOREIGN KEY(candidate_hash) REFERENCES sources (sha256),
+	FOREIGN KEY(reference_hash) REFERENCES sources (sha256)
+);
+CREATE INDEX ix_job_reuse ON benchmark_jobs (request_hash, state);
+CREATE INDEX ix_job_due ON benchmark_jobs (environment, state, due_at, id);
+CREATE TABLE board_progress (
+	board TEXT NOT NULL,
+	activation_boundary BIGINT NOT NULL,
+	last_submission_id BIGINT,
+	last_submitted_at TIMESTAMP WITH TIME ZONE,
+	PRIMARY KEY (board),
+	FOREIGN KEY(last_submission_id) REFERENCES submissions (id)
+);
+CREATE TABLE evaluations (
+	id BIGSERIAL NOT NULL,
+	submission_id BIGINT NOT NULL,
+	board TEXT NOT NULL,
+	generation INTEGER NOT NULL,
+	config_hash TEXT NOT NULL,
+	reference_promotion_id BIGINT,
+	reference_hash TEXT NOT NULL,
+	plan JSONB NOT NULL,
+	state TEXT DEFAULT 'pending' NOT NULL,
+	decision JSONB,
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	completed_at TIMESTAMP WITH TIME ZONE,
+	PRIMARY KEY (id),
+	UNIQUE (submission_id, board, generation),
+	CONSTRAINT ck_evaluation_state CHECK (state IN ('pending','completed','superseded')),
+	FOREIGN KEY(submission_id) REFERENCES submissions (id),
+	FOREIGN KEY(reference_hash) REFERENCES sources (sha256)
+);
+CREATE INDEX ix_evaluation_pending ON evaluations (board, state, submission_id);
+CREATE UNIQUE INDEX uq_evaluation_board_pending ON evaluations (board) WHERE state = 'pending';
+CREATE TABLE evaluation_jobs (
+	evaluation_id BIGINT NOT NULL,
+	job_id BIGINT NOT NULL,
+	environment TEXT NOT NULL,
+	seed BIGINT NOT NULL,
+	PRIMARY KEY (evaluation_id, job_id),
+	UNIQUE (evaluation_id, environment, seed),
+	FOREIGN KEY(evaluation_id) REFERENCES evaluations (id),
+	FOREIGN KEY(job_id) REFERENCES benchmark_jobs (id)
+);
+CREATE TABLE promotions (
+	id BIGSERIAL NOT NULL,
+	board TEXT NOT NULL,
+	evaluation_id BIGINT NOT NULL,
+	promoted_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	disqualified_at TIMESTAMP WITH TIME ZONE,
+	disqualification_reason TEXT,
+	PRIMARY KEY (id),
+	UNIQUE (evaluation_id),
+	FOREIGN KEY(evaluation_id) REFERENCES evaluations (id)
+);
+CREATE INDEX ix_promotions_board ON promotions (board, id);
+ALTER TABLE evaluations ADD CONSTRAINT fk_evaluation_reference FOREIGN KEY(reference_promotion_id) REFERENCES promotions (id);
+INSERT INTO coordinator_state(id) VALUES (1);
 """
 
-from typing import Sequence, Union
 
-import sqlalchemy as sa
-from alembic import op
-from sqlalchemy.dialects import postgresql
-
-# revision identifiers, used by Alembic.
-revision: str = "0001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+def upgrade():
+    op.execute(SCHEMA)
+    op.execute(Path(__file__).with_name("0001_job_protocol.sql").read_text())
 
 
-def upgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-    op.create_table(
-        "rate_limit_windows",
-        sa.Column("subject", sa.Text(), nullable=False),
-        sa.Column("window_start", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("hits", sa.Integer(), server_default="0", nullable=False),
-        sa.PrimaryKeyConstraint("subject", "window_start"),
-    )
-    op.create_index(
-        "ix_rate_limit_windows_window_start", "rate_limit_windows", ["window_start"], unique=False
-    )
-    op.create_table(
+def downgrade():
+    for signature in (
+        "claim(text,text,text,text)",
+        "heartbeat(bigint,text,text)",
+        "complete(bigint,text,text,jsonb)",
+        "fail(bigint,text,text,jsonb)",
+        "sources(bigint)",
+        "immutable_measurement()",
+        "immutable_source()",
+    ):
+        op.execute("DROP FUNCTION public." + signature + " CASCADE")
+    op.execute("ALTER TABLE evaluations DROP CONSTRAINT fk_evaluation_reference")
+    for table in (
+        "evaluation_jobs",
+        "promotions",
+        "evaluations",
+        "benchmark_jobs",
+        "board_progress",
+        "submissions",
+        "sources",
         "registrations",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("uid", sa.Integer(), nullable=False),
-        sa.Column("ss58_hot", sa.Text(), nullable=False),
-        sa.Column("ss58_cold", sa.Text(), nullable=False),
-        sa.Column("block", sa.BigInteger(), nullable=False),
-        sa.Column("block_date", sa.DateTime(timezone=True), nullable=False),
-        sa.Column(
-            "inserted_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("uid", "block", name="uq_registrations_uid_block"),
-    )
-    op.create_index("ix_registrations_ss58_hot", "registrations", ["ss58_hot"], unique=False)
-    op.create_index("ix_registrations_uid", "registrations", ["uid"], unique=False)
-    op.create_table(
-        "submissions",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("hotkey", sa.Text(), nullable=False),
-        sa.Column("digest", sa.Text(), nullable=False),
-        sa.Column(
-            "submitted_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.Column("state", sa.Text(), server_default="queued", nullable=False),
-        sa.Column("exit_code", sa.Integer(), nullable=True),
-        sa.Column("stage", sa.Text(), nullable=True),
-        sa.Column("reason", sa.Text(), nullable=True),
-        sa.Column("ratio", sa.Float(), nullable=True),
-        sa.Column("classes", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("seed", sa.BigInteger(), nullable=True),
-        sa.Column("incumbent_sha256", sa.Text(), nullable=True),
-        sa.Column("gate_seconds", sa.Float(), nullable=True),
-        sa.Column("worker_id", sa.Text(), nullable=True),
-        sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("verification_attempt", sa.Text(), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint("digest ~ '^[0-9a-f]{64}$'", name="ck_submissions_digest"),
-        sa.CheckConstraint(
-            "incumbent_sha256 IS NULL OR incumbent_sha256 ~ '^[0-9a-f]{64}$'",
-            name="ck_submissions_incumbent_sha256",
-        ),
-        sa.CheckConstraint(
-            "state IN ('queued', 'verifying', 'accepted', 'rejected', 'error')",
-            name="ck_submissions_state",
-        ),
-        sa.CheckConstraint("ratio IS NULL OR ratio > 0", name="ck_submissions_ratio"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("hotkey", "digest", name="uq_submissions_hotkey_digest"),
-    )
-    op.create_index("ix_submissions_hotkey", "submissions", ["hotkey"], unique=False)
-    op.create_index(
-        "ix_submissions_state_submitted_at",
-        "submissions",
-        ["state", "submitted_at", "id"],
-        unique=False,
-    )
-    op.create_table(
+        "coordinator_state",
         "weight_sets",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("netuid", sa.Integer(), nullable=False),
-        sa.Column("block", sa.BigInteger(), nullable=False),
-        sa.Column("uids", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("weights", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("summary", sa.Text(), nullable=True),
-        sa.Column("accepted", sa.Boolean(), nullable=False),
-        sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("dry_run", sa.Boolean(), server_default="false", nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_weight_sets_created_at", "weight_sets", ["created_at"], unique=False)
-    op.create_table(
-        "entitlement_claims",
-        sa.Column("registration_id", sa.BigInteger(), nullable=False),
-        sa.Column("submission_id", sa.BigInteger(), nullable=False),
-        sa.Column(
-            "claimed_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(["registration_id"], ["registrations.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["submission_id"], ["submissions.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("registration_id"),
-        sa.UniqueConstraint("submission_id"),
-    )
-    op.create_table(
-        "score_snapshots",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("weight_set_id", sa.BigInteger(), nullable=False),
-        sa.Column("hotkey", sa.Text(), nullable=False),
-        sa.Column("submission_id", sa.BigInteger(), nullable=True),
-        sa.Column("ratio", sa.Float(), nullable=True),
-        sa.Column("weight", sa.Float(), server_default="0", nullable=False),
-        sa.ForeignKeyConstraint(["submission_id"], ["submissions.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["weight_set_id"], ["weight_sets.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_score_snapshots_hotkey", "score_snapshots", ["hotkey"], unique=False)
-    op.create_index(
-        "ix_score_snapshots_weight_set_id", "score_snapshots", ["weight_set_id"], unique=False
-    )
-    # ### end Alembic commands ###
-
-
-def downgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_index("ix_score_snapshots_weight_set_id", table_name="score_snapshots")
-    op.drop_index("ix_score_snapshots_hotkey", table_name="score_snapshots")
-    op.drop_table("score_snapshots")
-    op.drop_table("entitlement_claims")
-    op.drop_index("ix_weight_sets_created_at", table_name="weight_sets")
-    op.drop_table("weight_sets")
-    op.drop_index("ix_submissions_state_submitted_at", table_name="submissions")
-    op.drop_index("ix_submissions_hotkey", table_name="submissions")
-    op.drop_table("submissions")
-    op.drop_index("ix_registrations_uid", table_name="registrations")
-    op.drop_index("ix_registrations_ss58_hot", table_name="registrations")
-    op.drop_table("registrations")
-    op.drop_index("ix_rate_limit_windows_window_start", table_name="rate_limit_windows")
-    op.drop_table("rate_limit_windows")
-    # ### end Alembic commands ###
+    ):
+        op.drop_table(table)

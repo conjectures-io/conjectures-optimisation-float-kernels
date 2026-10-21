@@ -148,7 +148,7 @@ ignored by Git; a fresh clone must build the older revision separately to reprod
 
 ## Reproduce locally
 
-`./setup.sh --exact` builds the local exact-runtime targets, including their native dependencies.
+`./setup.sh --service` builds the local exact-runtime targets, including their native dependencies.
 On an already configured checkout, rebuild directly:
 
 ```bash
@@ -164,7 +164,7 @@ lean/.lake/build/bin/validateExact 42 20261019 20261020 \
 .venv/bin/python scripts/check-exact-proofs.py --replay
 
 BENCH_ROUNDS=5 BENCH_INNER=1 GATE_CELL_MS=10 BENCH_SEED=42 \
-  .venv/bin/python gate.py --slot exact kernels/exact/incumbent
+  PYTHONPATH=.:validator .venv/bin/python -m verification kernels/exact/incumbent --verdict results/incumbent-proof.json
 ```
 
 The reduced gate settings are a development smoke test, not statistical calibration.

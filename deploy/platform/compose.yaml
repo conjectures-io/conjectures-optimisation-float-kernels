@@ -1,5 +1,5 @@
 # Opt-in, for a host that also runs the conjectures platform's API stack: attach this database
-# to that stack's network, so its API container reaches it as conjectures_floatlib_db:5432
+# to that stack's network, so its API container reaches it as conjectures_tensor_db:5432
 # (README, "Serving through the conjectures platform"). Enable it in .env, which
 # `docker compose` reads:
 #
@@ -14,7 +14,7 @@
 services:
   db:
     ports: !override
-      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5435}:5432"
     networks:
       - default
       - platform

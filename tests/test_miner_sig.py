@@ -6,8 +6,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
 from service import sig as service_sig
 
 REPO = Path(__file__).resolve().parents[1]
@@ -39,21 +37,6 @@ def test_the_message_is_the_platforms_five_lines():
         "hotkey: 5Hot\n"
         "timestamp: 1700000000"
     )
-
-
-@pytest.mark.parametrize("slot", ["full", "add", "mul", "fma", "div", "sqrt", "sum", "bmm"])
-def test_both_copies_build_the_same_slug_and_message(slot):
-    kernel = b"import Contract\n"
-    assert miner_sig.slug_of(slot) == service_sig.slug_of(slot)
-    assert service_sig.slot_of(miner_sig.slug_of(slot)) == slot
-    assert miner_sig.digest_of(kernel) == service_sig.digest_of(kernel)
-    fields = dict(
-        competition=miner_sig.slug_of(slot),
-        digest=miner_sig.digest_of(kernel),
-        hotkey=ALICE.ss58_address,
-        timestamp=1700000000,
-    )
-    assert miner_sig.submit_message(**fields) == service_sig.submit_message(**fields)
 
 
 def test_a_miner_signature_verifies_at_the_validator_and_only_for_its_slug():
@@ -110,14 +93,6 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
     assert service_sig.verify(h["X-Conjectures-Hotkey"], message, h["X-Conjectures-Signature"])
 
 
-def test_the_full_entry_is_the_competition_itself():
-    # `floatlib` is the paid full entry; every practice board is `floatlib-<slot>`, and the full
-    # entry has no second slug.
-    assert miner_sig.slug_of("full") == "floatlib" and miner_sig.slug_of("add") == "floatlib-add"
-    assert service_sig.slot_of("floatlib") == "full"
-    assert service_sig.slot_of("floatlib-full") is None
-
-
 def test_client_url_defaults_to_central_api_and_can_be_overridden(monkeypatch):
     submit = load("miner_submit_defaults", REPO / "miner" / "submit.py")
     seen = []
@@ -127,3 +102,17 @@ def test_client_url_defaults_to_central_api_and_can_be_overridden(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["submit.py", "status", "49", "--url", "http://dev:8000"])
     submit.main()
     assert seen == ["https://conjectures.io", "http://dev:8000"]
+
+
+def test_wrong_hotkey_signature_is_rejected():
+    message = service_sig.submit_message(
+        competition="floatlib", digest="ab" * 32, hotkey=ALICE.ss58_address, timestamp=1700000000
+    )
+    bob = service_sig.load_keypair("//Bob")
+    signature = service_sig.sign(bob, message)
+    assert not service_sig.verify(ALICE.ss58_address, message, signature)
+
+
+def test_malformed_signature_and_hotkey_are_rejected():
+    assert not service_sig.verify(ALICE.ss58_address, "message", "not hex")
+    assert not service_sig.verify("not an address", "message", "00" * 64)

@@ -1,12 +1,4 @@
-"""The hotkey signature that authorises one submission: the conjectures platform's message.
-
-The same five lines the platform verifies for every competition, so a signature made for one
-competition, or for one of this competition's slots, cannot be replayed against another. Each
-slot is its own competition slug: `floatlib` is the full entry (the paid board, the one the
-platform serves), `floatlib-add`, `-mul`, `-fma`, `-div`, `-sqrt`, `-sum` and `-bmm` the practice
-boards. The miner keeps its own copy in miner/sig.py;
-tests/test_miner_sig.py holds the two to the same bytes.
-"""
+"""Canonical signed upload message; the competition slug is coordinated with central API."""
 
 from __future__ import annotations
 
@@ -22,26 +14,6 @@ COMPETITION_SUBMIT_PREFIX: Final = "conjectures-competition-submit-v1"
 SS58_FORMAT: Final = 42
 # sr25519 in bittensor_wallet's numbering, named so a default change can't switch curves.
 SR25519: Final = 1
-
-
-# The slot the competition's own slug names: the full entry, the one paid board.
-MAIN_SLOT: Final = "full"
-
-
-def slug_of(slot: str) -> str:
-    # The competition slug a slot is submitted under: the full entry is the competition itself,
-    # each single-kernel practice board `floatlib-<slot>`.
-    return COMPETITION if slot == MAIN_SLOT else f"{COMPETITION}-{slot}"
-
-
-def slot_of(slug: str) -> str | None:
-    # The slot a slug names, or None for a slug that is not this competition's.
-    if slug == COMPETITION:
-        return MAIN_SLOT
-    prefix = f"{COMPETITION}-"
-    slot = slug.removeprefix(prefix) if slug.startswith(prefix) else None
-    # One slug per slot: the full entry is `floatlib`, never `floatlib-full`.
-    return None if slot == MAIN_SLOT else slot
 
 
 def digest_of(kernel: bytes) -> str:

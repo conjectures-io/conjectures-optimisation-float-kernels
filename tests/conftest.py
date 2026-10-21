@@ -59,7 +59,20 @@ def database_url() -> Iterator[str]:
     url = _scratch_url(name)
     try:
         engine = sa.create_engine(url)
-        models.Base.metadata.create_all(engine)
+        from alembic import command
+        from alembic.config import Config
+
+        cfg = Config(str(REPO / "deploy/migrate/alembic.ini"))
+        cfg.set_main_option("script_location", str(REPO / "deploy/migrate/alembic"))
+        old_url = os.environ.get("DATABASE_URL")
+        os.environ["DATABASE_URL"] = url
+        try:
+            command.upgrade(cfg, "head")
+        finally:
+            if old_url is None:
+                os.environ.pop("DATABASE_URL", None)
+            else:
+                os.environ["DATABASE_URL"] = old_url
         engine.dispose()
         yield url
     finally:
@@ -99,11 +112,12 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
 @pytest.fixture
 def store(database_url, clock):
     # A clean store: every table truncated, so tests cannot leak into each other.
-    s = store_pkg.connect(database_url, rate_limit=10, rate_window_seconds=60)
+    s = store_pkg.connect(database_url)
     with s.engine.begin() as conn:
         names = [t.name for t in reversed(models.Base.metadata.sorted_tables)]
         tables = ", ".join(f'"{n}"' for n in names)
         conn.execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+        conn.execute(sa.text("INSERT INTO coordinator_state(id) VALUES (1)"))
     try:
         yield s
     finally:
@@ -126,143 +140,4 @@ def register(store, hotkey: str, *, uid: int = 0, block: int = 1000) -> int:
         return int(row.id)
 
 
-# ── The service under test ────────────────────────────────────────────────
-
-# Stands in for gate.py (same args, verdict JSON, exit codes); markers pick the outcome.
-STUB_GATE = """
-import hashlib, json, os, sys
-from pathlib import Path
-kernel = (Path(sys.argv[1]) / "Kernel.lean").read_text()
-verdict = Path(sys.argv[sys.argv.index("--verdict") + 1])
-if "MISCONFIGURED" in kernel:
-    print("pin failed"); sys.exit(2)
-# The champion it times against, as gate.py records it: the worker's promoted file, if any.
-slot = sys.argv[sys.argv.index("--slot") + 1] if "--slot" in sys.argv else "add"
-pointed = os.environ.get("GATE_INCUMBENT" if slot == "add" else "GATE_INCUMBENT_" + slot.upper())
-champion = (hashlib.sha256(Path(pointed).read_bytes()).hexdigest() if pointed
-            else "d" * 64 if "PROMOTED" in kernel else "c" * 64)
-base = {"submission": Path(sys.argv[1]).name, "mode": "gate", "seed": 7,
-        "incumbent_sha256": "a" * 64, "seconds": 1.5, "classes": {},
-        "champion_sha256": champion,
-        "verifier_fingerprint": "e" * 64 if "STALE" in kernel
-        else os.environ.get("GATE_REQUIRED_FINGERPRINT", "f" * 64)}
-if pointed and "BROKEN" in Path(pointed).read_text():
-    # The champion's own bench fails: the gate's fault line, as gate.py writes it.
-    verdict.write_text(json.dumps({**base, "stage": "score", "passed": False, "ratio": None,
-                                   "reason": "gate error: the incumbent's bench failed: killed",
-                                   "incumbent_failed": True}))
-    sys.exit(2)
-if "CRASH" in kernel:
-    verdict.write_text(json.dumps({**base, "stage": "policy", "passed": False,
-                                   "reason": "gate error: boom", "ratio": None}))
-    sys.exit(2)
-if "EXHAUSTED" in kernel:
-    verdict.write_text(json.dumps({**base, "stage": "statement", "passed": False, "ratio": None,
-                                   "reason": "over the entry's 600s time budget",
-                                   "exhausted": True}))
-    sys.exit(1)
-if "REJECT" in kernel:
-    verdict.write_text(json.dumps({**base, "stage": "statement", "passed": False,
-                                   "reason": "the obligation does not typecheck", "ratio": None}))
-    sys.exit(1)
-ratio = float(kernel.split("RATIO=")[1].split()[0]) if "RATIO=" in kernel else 0.9
-classes = {"near-one": {"incumbent_ns": 30.0, "submission_ns": 30.0 * ratio, "ratio": ratio}}
-jitter = [1 + ((i * 7919) % 11 - 5) / 1000 for i in range(25)]
-rounds = [[3e7 * j, 3e7 * ratio / j] for j in jitter]
-verdict.write_text(json.dumps({**base, "stage": "score", "passed": True, "reason": "",
-                               "ratio": ratio, "classes": classes, "rounds": rounds,
-                               "reference_complete": True}))
-sys.exit(0)
-"""
-
-
-@pytest.fixture
-def settings(tmp_path, monkeypatch):
-    # Files under the test's own directory; everything else at its default.
-    from service.settings import Settings
-
-    return Settings(files=tmp_path / "submissions", worker_id="test-worker")
-
-
-@pytest.fixture
-def stub_gate(tmp_path, monkeypatch):
-    # Point the worker at the stub instead of the real, toolchain-backed gate.py.
-    from service import worker as worker_mod
-
-    path = tmp_path / "gate.py"
-    path.write_text(STUB_GATE)
-    monkeypatch.setattr(worker_mod, "GATE", path)
-    monkeypatch.setattr(worker_mod, "GATE_LOCK", tmp_path / "gate.lock")
-    return path
-
-
-@pytest.fixture
-def client(store, settings, stub_gate):
-    # The API against the test store, with the stub gate behind its worker.
-    from fastapi.testclient import TestClient
-    from legacy_service.api import create_app
-
-    with TestClient(app=create_app(settings, store)) as c:
-        yield c
-
-
-@pytest.fixture
-def drain(store, settings, stub_gate):
-    # Run the gate worker over the queue once, as the standalone process would.
-    from service import worker as worker_mod
-
-    def run() -> int:
-        return worker_mod.drain(store, settings)
-
-    return run
-
-
-def kernel_file(tmp: Path, name: str, marker: str = "") -> Path:
-    # A copy of the incumbent's Kernel.lean, with a marker line the stub gate reads.
-    d = tmp / name
-    d.mkdir(parents=True)
-    text = (REPO / "kernels" / "add" / "incumbent" / "Kernel.lean").read_text()
-    (d / "Kernel.lean").write_text(text + (f"\n-- {marker}\n" if marker else ""))
-    return d
-
-
-def api(slot: str = "add") -> str:
-    # One slot's endpoints, under its competition slug.
-    from service import sig
-
-    return f"/v1/competitions/{sig.slug_of(slot)}"
-
-
-def post_submission(
-    client,
-    kp,
-    d: Path,
-    *,
-    signer=None,
-    timestamp: int | None = None,
-    data=None,
-    slot: str = "add",
-    signed_for: str | None = None,
-):
-    # Sign and post a submission; security tests bend `signer`, `timestamp`, `data` and
-    # `signed_for` (the slug signed, when it should differ from the one posted to).
-    from service import sig
-
-    lean = (d / "Kernel.lean").read_bytes()
-    stamp = int(datetime.now(timezone.utc).timestamp()) if timestamp is None else timestamp
-    digest = sig.digest_of(data if data is not None else lean)
-    message = sig.submit_message(
-        competition=signed_for or sig.slug_of(slot),
-        digest=digest,
-        hotkey=kp.ss58_address,
-        timestamp=stamp,
-    )
-    return client.post(
-        f"{api(slot)}/submissions",
-        headers={
-            "X-Conjectures-Hotkey": kp.ss58_address,
-            "X-Conjectures-Signature": sig.sign(signer or kp, message),
-            "X-Conjectures-Timestamp": str(stamp),
-        },
-        files={"Kernel.lean": ("Kernel.lean", lean)},
-    )
+pytest_plugins = ["test_exact_competition"]

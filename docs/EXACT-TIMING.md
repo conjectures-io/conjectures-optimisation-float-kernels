@@ -6,7 +6,7 @@ validator.
 
 ## Run
 
-After `./setup.sh --exact`, from the repository root:
+After `./setup.sh --service`, from the repository root:
 
 ```bash
 .venv/bin/python scripts/calibrate-exact-timing.py \

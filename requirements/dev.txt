@@ -1,0 +1,7 @@
+# All project Python dependencies, including optional chain workers and plotting.
+-r gate.txt
+-r test.txt
+-r chain.txt
+ruff==0.16.9
+matplotlib>=3.8,<4
+numpy>=1.26,<3

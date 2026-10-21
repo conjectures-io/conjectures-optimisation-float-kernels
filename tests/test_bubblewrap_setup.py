@@ -5,8 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-import gate
+import sandbox as gate
 
 
 def installer(tmp_path, version, flags):

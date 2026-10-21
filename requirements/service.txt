@@ -1,8 +1,5 @@
-# The gate worker and the store (./setup.sh --service).
-pydantic==2.13.5
-pydantic-settings==2.15.0
-SQLAlchemy==2.0.54
-psycopg[binary]==3.3.6
+# Coordinator, hardware worker and store (./setup.sh --service).
+-r benchmark-worker.txt
 alembic==1.20.0
 # The signing and HTTP libraries, shared with the miner client.
 -r miner.txt

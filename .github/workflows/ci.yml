@@ -1,6 +1,6 @@
 # The competition's own checks. `fast` on every push and pull request: lint and every test that
 # needs no Lean, against a Postgres service container. `gate` nightly and on demand: the whole
-# setup.sh from a bare runner, the one real-gate test, and the self-test's 28 expected verdicts.
+# setup.sh from a bare runner, the one real-gate test, and the tensor proof/attack fixtures.
 name: ci
 
 on:
@@ -74,11 +74,6 @@ jobs:
         env:
           GATE_BUILD_MEMORY_MB: "0"
           GATE_BENCH_MEMORY_MB: "0"
-      - run: .venv/bin/python selftest.py
-        env:
-          GATE_BUILD_MEMORY_MB: "0"
-          GATE_BENCH_MEMORY_MB: "0"
-          BENCH_CPU: ""
       - name: Audit exact-runtime edge cases and generated model shapes
         run: |
           cp kernels/exact/incumbent/Kernel.lean lean/work/Submission.lean

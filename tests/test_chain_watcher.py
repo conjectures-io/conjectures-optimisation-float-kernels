@@ -140,18 +140,18 @@ def test_a_re_registration_is_a_new_row_and_so_a_new_slot(store):
     chain = FakeChain(block=100, neurons=[neuron(0, "alice", block=10)])
     sink = sink_for(store)
     last = watcher.step(chain, sink, NETUID, None)
-    assert store.registrations.available_slots("alice") == 1
+    assert len(registrations(store)) == 1
 
     # uid 0 is taken over by a new hotkey at a later block.
     chain.block, chain.neurons = 200, (neuron(0, "carol", block=150),)
     last = watcher.step(chain, sink, NETUID, last)
     assert registrations(store) == [(0, "alice", 10), (0, "carol", 150)]
-    assert store.registrations.available_slots("carol") == 1
+    assert store.registrations.is_registered("carol")
 
     # And alice registering again on a different uid buys her a second.
     chain.block, chain.neurons = 300, (neuron(0, "carol", block=150), neuron(1, "alice", block=250))
     watcher.step(chain, sink, NETUID, last)
-    assert store.registrations.available_slots("alice") == 2
+    assert len(registrations(store)) == 3
 
 
 def test_the_same_block_is_never_recorded_twice(store):
