@@ -174,6 +174,15 @@ lean_exe exactShowcase where
   root := `Showcase
 
 -- The exact runtime's audit: each kernel of an entry against the specs, on edge-case inputs.
+lean_lib ExactAuditCore where
+  srcDir := "audit"
+  roots := #[`ExactAuditCore]
+
 lean_exe exactAudit where
   srcDir := "audit"
   root := `ExactAudit
+
+-- One candidate mutant from the autoresearch loop (`autoresearch/Candidate.lean`, not tracked).
+lean_exe auditCandidate where
+  srcDir := "autoresearch"
+  root := `Candidate
