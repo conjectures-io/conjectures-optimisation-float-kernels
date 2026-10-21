@@ -32,7 +32,7 @@ LAYER = HERE / ".sandbox" / "layer"
 # The throwaway layer a champion's bench is built in: a miner's file, so never in the shared tree.
 PIN_LAYER = HERE / ".sandbox" / "pin"
 # Build outputs a submission may write, by file stem: its module, the gates, the bench binaries.
-OWN_STEMS = {"Submission", "Verify", "Main", "bench"}
+OWN_STEMS = {"Submission", "Verify", "Main", "bench", "ExactAudit", "exactAudit"}
 for _op in ("Mul", "Fma", "Div", "Sqrt", "Sum", "Bmm", "Full", "Exact"):
     OWN_STEMS |= {f"Verify{_op}", f"Main{_op}", f"bench{_op}"}
 WORK = LIB / "work" / "Submission.lean"
@@ -469,7 +469,7 @@ def progress(phase: str, **fields) -> None:
         temporary.replace(target)
 
 
-def pin(slot: Slot, *, proof_only: bool = False) -> str:
+def pin(slot: Slot, *, proof_only: bool = False, audit: bool = False) -> str:
     # Refreshes the Lake config and the shared build tree, rebuilds the slot's pinned incumbent
     # when its inputs change.
     subprocess.run([LAKE, "env", "true"], cwd=LIB, check=True, capture_output=True)
@@ -479,11 +479,17 @@ def pin(slot: Slot, *, proof_only: bool = False) -> str:
     # run: Lake rebuilds whatever a contract, toolkit or bench change, or an interrupted build, left
     # stale, so an entry's build never has to write a shared module (which `statement` rejects).
     shutil.copy2(shipped, WORK)
-    targets = [slot.verify] if proof_only else [slot.verify, slot.bench]
+    targets = (
+        [slot.verify, "exactAudit"]
+        if audit
+        else [slot.verify]
+        if proof_only
+        else [slot.verify, slot.bench]
+    )
     code, out = run([LAKE, "build", *targets], _BUILD_TIMEOUT, build="trusted")
     if code != 0:
         raise RuntimeError(f"the {slot.name} shipped incumbent does not build: {errors(out)}")
-    if proof_only:
+    if proof_only or audit:
         return ""
     inputs = hashlib.sha256(b"".join(p.read_bytes() for p in slot.inputs)).hexdigest()
     stamp = slot.pinned.with_name("inputs.sha256")
@@ -794,6 +800,41 @@ def score_geomean(inc: list, sub: list, v: Verdict) -> str | None:
     return None
 
 
+def audit(src: Path, v: Verdict) -> str | None:
+    # The exact slot's audit of an accepted entry: `exactAudit` built against it in its own layer,
+    # then run sandboxed on GATE_AUDIT_CASES cases per kernel and input kind from GATE_AUDIT_SEED;
+    # it passes only if every output equals the spec's. Mismatches are recorded in `classes`.
+    WORK.parent.mkdir(exist_ok=True)
+    shutil.copy2(src, WORK)
+    code, out = own([LAKE, "build", "exactAudit"], _BUILD_TIMEOUT, build="write")
+    if code != 0:
+        return f"gate error: the audit does not build against the entry: {errors(out, code)}"
+    if bad := foreign(LAYER / "upper"):
+        return f"gate error: the audit build wrote outside the entry's modules: {bad[:5]}"
+    cases = os.environ.get("GATE_AUDIT_CASES", "50")
+    v.seed = int(os.environ.get("GATE_AUDIT_SEED", secrets.randbelow(2**32)))
+    code, out = own(
+        [str(BUILD / "bin" / "exactAudit"), "--json", cases, str(v.seed)],
+        _BENCH_TIMEOUT,
+        build="read",
+        memory_mb=_BENCH_MEMORY_MB,
+    )
+    lines = [ln for ln in out.splitlines() if ln.startswith('{"cases"')]
+    if code != 0 or not lines:
+        return f"gate error: the audit did not complete (exit {code}): {out[-300:]}"
+    report = json.loads(lines[-1])
+    v.classes["audit"] = report
+    if report["mismatches"]:
+        first = report["first"][0]
+        return (
+            f"audit: {report['mismatches']} of {report['cases']} cases differ from the spec; "
+            f"first: {first['kernel']} on {first['kind']} input ({first['shape']}): "
+            f"{first['detail']}"
+        )
+    logger.info(f"[audit] {report['cases']} cases, every output equal to the spec")
+    return None
+
+
 STAGES = [
     ("intake", intake),
     ("policy", policy),
@@ -804,6 +845,8 @@ STAGES = [
 ]
 # Measure before proving: builds and scores an unproved kernel; its verdict never counts.
 BENCH_STAGES = [("intake", intake), ("statement", statement), ("score", score)]
+# The exact slot's audit of an accepted entry (its proof was checked when it was accepted).
+AUDIT_STAGES = [("intake", intake), ("policy", policy), ("audit", audit)]
 
 
 # ── Entry point ──────────────────────────────────────────────
@@ -831,6 +874,8 @@ def gate(sub_dir: Path, digest: str, mode: str = "gate", slot: str = "add") -> V
             v,
             BENCH_STAGES
             if mode == "bench"
+            else AUDIT_STAGES
+            if mode == "audit"
             else [s for s in STAGES if s[0] != "score"]
             if mode == "proof"
             else STAGES,
@@ -888,9 +933,20 @@ def main() -> int:
             argv = argv[:i] + argv[i + 2 :]
     verdict_path = Path(opts["--verdict"]) if opts.get("--verdict") else None
     slot = opts.get("--slot", "full")
-    args = [a for a in argv if a not in ("--bench", "--proof-only")]
-    mode = "proof" if "--proof-only" in argv else "bench" if "--bench" in argv else "gate"
-    if mode == "proof" and slot in SLOTS:
+    args = [a for a in argv if a not in ("--bench", "--proof-only", "--audit")]
+    mode = (
+        "proof"
+        if "--proof-only" in argv
+        else "audit"
+        if "--audit" in argv
+        else "bench"
+        if "--bench" in argv
+        else "gate"
+    )
+    if mode == "audit" and slot != "exact":
+        print("gate.py: --audit is for the exact slot", file=sys.stderr)
+        return 2
+    if mode in ("proof", "audit") and slot in SLOTS:
         # Correctness is independent of a paid board's possibly broken reference.
         SLOTS[slot] = replace(SLOTS[slot], incumbent=KERNELS / slot / "incumbent" / "Kernel.lean")
     bad_verdict = "--verdict" in sys.argv and (verdict_path is None or len(args) != 1)
@@ -905,7 +961,7 @@ def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_to("gate", stamp)
     if pruned := prune(HERE / "logs", ("gate-*.log",)) + prune(
-        HERE / "results", ("*-gate-*.json", "*-bench-*.json", "*-proof-*.json")
+        HERE / "results", ("*-gate-*.json", "*-bench-*.json", "*-proof-*.json", "*-audit-*.json")
     ):
         logger.info(f"[gate] pruned {pruned} per-run file(s) older than {_KEEP_DAYS:g} days")
     results = HERE / "results"
@@ -922,7 +978,7 @@ def main() -> int:
             )
             progress("reference-build", champion_sha256=reference_hash, reference_complete=False)
             check_limits()
-            digest = pin(SLOTS[slot], proof_only=True) if mode == "proof" else pin(SLOTS[slot])
+            digest = pin(SLOTS[slot], proof_only=mode == "proof", audit=mode == "audit")
             progress("challenger")
         except Exception:  # noqa: BLE001 - no limits or no pinned incumbent: nothing can be scored
             logger.exception("[pin] failed")

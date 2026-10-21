@@ -9,11 +9,12 @@ suite never times: subnormals, huge values, huge exponent gaps, NaNs and infinit
 exact cancellation, and shapes at the edges (empty, mismatched and short arrays). A proved entry
 can only fail here through a gap in what the gate checks.
 
-    lake exe exactAudit [--malformed] [cases per kernel and kind] [seed]
+    lake exe exactAudit [--json] [--malformed] [cases per kernel and kind] [seed]
     lake exe exactAudit --selftest       the spec is clean against itself and every mutant is caught
     lake exe exactAudit --mutants [n]    the mutation score: plausible wrong kernels caught
     lake exe exactAudit --coverage [n]   output classes the inputs reach, per kernel
 
+`--json` prints one summary line (cases, mismatches, the first ten) for the gate's audit stage.
 `--malformed` adds short arrays (inputs shorter than their shape says); Lean then prints a panic
 message for each read past the end, which is expected.
 

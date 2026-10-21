@@ -41,7 +41,11 @@ def load() -> list[Case]:
 
 
 def run_case(case: Case, digest: str) -> gate.Verdict:
-    # Gates one submission; mode `nopolicy` skips the policy stage to test the stages behind it.
+    # Gates one submission; mode `nopolicy` skips the policy stage to test the stages behind it,
+    # mode `audit` runs the exact slot's audit of an accepted entry instead of the gate.
+    if case.mode == "audit":
+        gate.pin(gate.SLOTS[case.slot], audit=True)
+        return gate.gate(gate.KERNELS / case.name, digest, mode="audit", slot=case.slot)
     stages = gate.STAGES
     if case.mode == "nopolicy":
         gate.STAGES = [s for s in stages if s[0] != "policy"]
