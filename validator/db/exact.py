@@ -7,6 +7,7 @@ import hashlib
 import json
 import secrets
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import and_, exists, func, or_, select, update
@@ -45,6 +46,28 @@ def cancel(session, evaluation):
         )
         .values(state="cancelled", token=None, lease_until=None)
     )
+
+
+@dataclass(frozen=True)
+class AuditTask:
+    """One claimed audit: the source to check and how."""
+
+    id: int
+    source_hash: str
+    seed: int
+    cases: int
+    content: bytes | None
+
+
+def audit_state(session, source_hash):
+    """A source's audit state for the publication: its latest audit, or `pending`."""
+    row = session.scalar(
+        select(m.ExactAudit)
+        .where(m.ExactAudit.source_hash == source_hash)
+        .order_by(m.ExactAudit.id.desc())
+        .limit(1)
+    )
+    return "pending" if row is None or row.state in ("queued", "running", "error") else row.state
 
 
 class ExactDb:
@@ -163,6 +186,10 @@ class ExactDb:
             ):
                 if e.board not in config.boards or e.config_hash != config.identity(e.board):
                     cancel(s, e)
+            # Audits left running by a stopped coordinator run again.
+            s.execute(
+                update(m.ExactAudit).where(m.ExactAudit.state == "running").values(state="queued")
+            )
             details = config.public()
             state = s.get(m.ObservedState, "exact:config")
             old_boards = set(state.details["boards"]) if state else set()
@@ -595,14 +622,24 @@ class ExactDb:
 
     def _publish(self, s, config):
         boards = {}
+        hold = config.audit["policy"] == "hold"
         for board in config.boards:
-            rows = s.execute(
+            query = (
                 select(m.ExactPromotion, m.Submission.hotkey)
                 .join(m.Submission)
                 .where(m.ExactPromotion.board == board, m.ExactPromotion.disqualified_at.is_(None))
                 .order_by(m.ExactPromotion.id.desc())
                 .limit(2)
-            ).all()
+            )
+            if hold:
+                # A champion is paid once one of its audits is clean; until then the earlier ones.
+                query = query.where(
+                    exists().where(
+                        m.ExactAudit.source_hash == m.ExactPromotion.source_hash,
+                        m.ExactAudit.state == "clean",
+                    )
+                )
+            rows = s.execute(query).all()
             paused = bool(
                 s.scalar(
                     select(m.ExactJob.id)
@@ -619,7 +656,12 @@ class ExactDb:
             boards[board] = {
                 "paused": paused,
                 "kings": [
-                    {"promotion_id": p.id, "submission_id": p.submission_id, "hotkey": hotkey}
+                    {
+                        "promotion_id": p.id,
+                        "submission_id": p.submission_id,
+                        "hotkey": hotkey,
+                        "audit": audit_state(s, p.source_hash),
+                    }
                     for p, hotkey in rows
                 ],
             }
@@ -629,6 +671,96 @@ class ExactDb:
             s.add(m.ObservedState(key="exact:publication", details=publication))
         elif row.details != publication:
             row.details = publication
+
+    def ensure_audits(self, config, identity):
+        """Queue an audit of each board's current champions' sources by this audit version."""
+        with session_scope(self.sessions) as s:
+            self._lead(s)
+            queued = 0
+            for board in config.boards:
+                for p in s.scalars(
+                    select(m.ExactPromotion)
+                    .where(
+                        m.ExactPromotion.board == board, m.ExactPromotion.disqualified_at.is_(None)
+                    )
+                    .order_by(m.ExactPromotion.id.desc())
+                    .limit(2)
+                ):
+                    if s.scalar(
+                        select(m.ExactAudit.id).where(
+                            m.ExactAudit.source_hash == p.source_hash,
+                            m.ExactAudit.audit_identity == identity,
+                        )
+                    ):
+                        continue
+                    s.add(
+                        m.ExactAudit(
+                            source_hash=p.source_hash,
+                            submission_id=p.submission_id,
+                            audit_identity=identity,
+                            seed=secrets.randbelow(2**32),
+                            cases=config.audit["cases"],
+                        )
+                    )
+                    s.flush()
+                    queued += 1
+            if queued:
+                self._publish(s, config)
+            return queued
+
+    def claim_audit(self):
+        """The next due audit, marked running, with the source to audit; or None."""
+        with session_scope(self.sessions) as s:
+            self._lead(s)
+            row = s.scalar(
+                select(m.ExactAudit)
+                .where(
+                    m.ExactAudit.state.in_(("queued", "error")), m.ExactAudit.due_at <= db_now(s)
+                )
+                .order_by(m.ExactAudit.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )
+            if row is None:
+                return None
+            row.state, row.attempts = "running", row.attempts + 1
+            content = s.scalar(
+                select(m.SubmissionFile.content).where(
+                    m.SubmissionFile.submission_id == row.submission_id,
+                    m.SubmissionFile.name == "Kernel.lean",
+                )
+            )
+            return AuditTask(row.id, row.source_hash, row.seed, row.cases, content)
+
+    def finish_audit(self, aid, state, report, config):
+        """Record an audit's outcome. A failure under `disqualify` or `hold` disqualifies every
+        promotion of the source, so the next publication pays the earlier champions; an error
+        (infrastructure) never disqualifies and is retried with backoff."""
+        if state not in ("clean", "failed", "error"):
+            raise ValueError("unknown audit outcome")
+        with session_scope(self.sessions) as s:
+            self._lead(s)
+            row = s.get(m.ExactAudit, aid, with_for_update=True)
+            if row is None or row.state != "running":
+                return False
+            now = db_now(s)
+            row.state, row.report, row.finished_at = state, report, now
+            if state == "error":
+                row.due_at = now + dt.timedelta(
+                    seconds=min(86400, config.retry_seconds * 2 ** min(row.attempts - 1, 4))
+                )
+            if state == "failed" and config.audit["policy"] in ("disqualify", "hold"):
+                s.execute(
+                    update(m.ExactPromotion)
+                    .where(
+                        m.ExactPromotion.source_hash == row.source_hash,
+                        m.ExactPromotion.disqualified_at.is_(None),
+                    )
+                    .values(disqualified_at=now)
+                )
+            s.flush()
+            self._publish(s, config)
+            return True
 
     def publication(self):
         with session_scope(self.sessions) as s:

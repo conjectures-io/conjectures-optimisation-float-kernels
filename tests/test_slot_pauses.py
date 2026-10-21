@@ -160,7 +160,7 @@ def test_pin_failure_writes_structured_result(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "log_to", lambda *args: None)
     monkeypatch.setattr(gate, "check_limits", lambda: None)
 
-    def broken(slot):
+    def broken(slot, **_):
         raise RuntimeError("compiler unavailable")
 
     monkeypatch.setattr(gate, "pin", broken)
