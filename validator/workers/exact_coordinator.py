@@ -23,7 +23,7 @@ import db
 import fingerprint
 from db.exact import ExactDb
 from exact.config import Config
-from exact.process import ROOT, install_signals, supervised
+from exact.process import ROOT, BudgetExceeded, install_signals, supervised
 
 
 def verify(repo, sub, config, stop):
@@ -92,6 +92,10 @@ def verify(repo, sub, config, stop):
                 code = 2
                 verdict["reason"] = "proof identity changed or successful proof evidence missing"
             verdict["exit_code"] = code if code in (0, 1) else 2
+        except BudgetExceeded as exc:
+            # A proof check past its budget rejects the entry, as the gate worker always did;
+            # requeueing it would block every board behind it.
+            verdict = {"exit_code": 1, "stage": "timeout", "reason": f"proof check {exc}"}
         except Exception as exc:
             verdict = {"exit_code": 2, "stage": "infrastructure", "reason": str(exc)}
         if not stop.is_set():

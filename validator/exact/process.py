@@ -11,6 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class BudgetExceeded(TimeoutError):
+    """A supervised process ran past its time budget: a verdict on the run, unlike other errors."""
+
+
 def environment():
     return {**os.environ, "PYTHONPATH": os.pathsep.join((str(ROOT), str(ROOT / "validator")))}
 
@@ -52,7 +56,7 @@ def supervised(
                 if cancelled is not None and cancelled():
                     raise RuntimeError("supervisor stopping")
                 if time.monotonic() - start > timeout:
-                    raise TimeoutError("execution budget exhausted")
+                    raise BudgetExceeded(f"did not finish within {timeout:.0f}s")
                 if time.monotonic() >= next_heartbeat:
                     if not heartbeat():
                         raise RuntimeError("lease lost")

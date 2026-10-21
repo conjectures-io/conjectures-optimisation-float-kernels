@@ -14,7 +14,7 @@ from pathlib import Path
 from loguru import logger
 
 import db
-from exact.process import install_signals, supervised
+from exact.process import BudgetExceeded, install_signals, supervised
 from exact.runner import machine_identity
 from exact.worker_db import WorkerDb
 
@@ -54,6 +54,13 @@ def execute(repo, job, owner, lease, retry, host_lock_fd=None):
                 repo.fail(job.id, owner, job.token, result["error"], retry)
             else:
                 repo.complete(job.id, owner, job.token, result["result"])
+        except BudgetExceeded as exc:
+            # Too slow to compare within the job's budget: final for this candidate, so the
+            # evaluation ends and the board moves on instead of retrying the job forever.
+            logger.warning("exact job {} ran out of time: {}", job.id, exc)
+            repo.fail(
+                job.id, owner, job.token, {"kind": "candidate", "reason": f"benchmark {exc}"}, retry
+            )
         except Exception as exc:
             logger.warning("exact job {} failed: {}", job.id, exc)
             repo.fail(
