@@ -98,6 +98,9 @@ class Submission(Base):
     # The conjectures platform account the submission came through; NULL from this API.
     account_id: Mapped[str | None] = mapped_column(Text)
 
+    # Exact proof evidence is independent of per-board performance/admission.
+    exact_verification: Mapped[dict | None] = mapped_column(JSONB)
+
     # --- queue bookkeeping -------------------------------------------------------
     worker_id: Mapped[str | None] = mapped_column(Text)
     claimed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
@@ -275,7 +278,10 @@ class Promotion(Base):
     demoted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        CheckConstraint(f"slot IN ({_in_list(SLOTS)})", name="ck_promotions_slot"),
+        CheckConstraint(
+            f"slot IN ({_in_list(tuple(s for s in SLOTS if s != 'exact'))})",
+            name="ck_promotions_slot",
+        ),
         CheckConstraint("champion_sha256 ~ '^[0-9a-f]{64}$'", name="ck_promotions_champion_sha256"),
         Index("ix_promotions_slot_id", "slot", "id"),
     )
@@ -299,3 +305,84 @@ class SlotPause(Base):
     next_retry_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     phase: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ExactEvaluation(Base):
+    """An immutable board comparison plan; replacements retain their earlier evidence."""
+
+    __tablename__ = "exact_evaluations"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), nullable=False)
+    board: Mapped[str] = mapped_column(Text, nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    planning_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    reference_promotion_id: Mapped[int | None] = mapped_column(BigInteger)
+    reference_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    reference_source: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    plan: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    decision: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("submission_id", "board", "generation"),
+        CheckConstraint(
+            "state IN ('pending','completed','superseded')",
+            name="ck_exact_evaluation_state",
+        ),
+        Index("ix_exact_evaluation_pending", "board", "state", "submission_id"),
+    )
+
+
+class ExactJob(Base):
+    __tablename__ = "exact_jobs"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    evaluation_id: Mapped[int] = mapped_column(
+        ForeignKey("exact_evaluations.id", ondelete="CASCADE"), nullable=False
+    )
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    request: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    environment: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    due_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    owner: Mapped[str | None] = mapped_column(Text)
+    token: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[dict | None] = mapped_column(JSONB)
+    __table_args__ = (
+        UniqueConstraint("evaluation_id", "request_hash"),
+        CheckConstraint(
+            "state IN ('queued','running','completed','failed','cancelled')",
+            name="ck_exact_job_state",
+        ),
+        Index("ix_exact_job_due", "environment", "state", "due_at", "id"),
+        Index("ix_exact_job_expiry", "state", "lease_until"),
+    )
+
+
+class ExactPromotion(Base):
+    """Separate history keeps legacy one-slot promotion constraints and reads unchanged."""
+
+    __tablename__ = "exact_promotions"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    board: Mapped[str] = mapped_column(Text, nullable=False)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), nullable=False)
+    evaluation_id: Mapped[int] = mapped_column(
+        ForeignKey("exact_evaluations.id"), nullable=False, unique=True
+    )
+    source_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    promoted_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    disqualified_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (Index("ix_exact_promotions_board", "board", "id"),)

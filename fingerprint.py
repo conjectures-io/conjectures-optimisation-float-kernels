@@ -25,6 +25,9 @@ PINNED = sorted(
         "lean/lakefile.lean",
         "lean/lake-manifest.json",
         "lean/lean-toolchain",
+        "validator/exact/runner.py",
+        "validator/exact/config.py",
+        "validator/exact/scoring.py",
     ]
     + [
         str(p.relative_to(HERE))

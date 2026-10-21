@@ -25,4 +25,4 @@ PENDING = (SubmissionState.QUEUED, SubmissionState.VERIFYING)
 STATE_VALUES = tuple(s.value for s in SubmissionState)
 
 # The competition slots, as gate.py names them: `full` is the paid entry, the rest practice boards.
-SLOTS = ("full", "add", "mul", "fma", "div", "sqrt", "sum", "bmm")
+SLOTS = ("full", "add", "mul", "fma", "div", "sqrt", "sum", "bmm", "exact")

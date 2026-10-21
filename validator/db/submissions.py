@@ -148,7 +148,11 @@ class SubmissionsDb:
                 order.append(case(deadlines, value=models.Submission.slot, else_=0.0))
             row = session.scalar(
                 select(models.Submission)
-                .where(models.Submission.state == "queued", *(~e for e in excluded))
+                .where(
+                    models.Submission.state == "queued",
+                    models.Submission.slot != "exact",
+                    *(~e for e in excluded),
+                )
                 .order_by(
                     *order,
                     models.Submission.gate_errors,

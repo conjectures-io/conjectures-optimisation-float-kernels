@@ -20,4 +20,4 @@ markers = ["slow: runs the real Lean gate (minutes); deselect with -m 'not slow'
 
 [tool.ruff.lint.isort]
 # Imported by bare name via the pythonpath above, or by each worker's own path setup.
-known-first-party = ["gate", "fingerprint", "selftest", "conftest", "admission", "axiom", "log", "reward", "treasury", "chain", "db", "service", "workers"]
+known-first-party = ["gate", "fingerprint", "selftest", "conftest", "admission", "axiom", "log", "reward", "treasury", "chain", "db", "service", "workers", "exact"]

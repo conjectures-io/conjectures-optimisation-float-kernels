@@ -26,6 +26,10 @@ class Settings(BaseSettings):
         env_prefix="SERVICE_", extra="ignore"
     )
 
+    exact_competition_config: Path | None = Field(
+        default=None, validation_alias="EXACT_COMPETITION_CONFIG"
+    )
+
     host: str = "0.0.0.0"
     port: int = 9300
     # Where each submission's Kernel.lean is written; everything else is in Postgres.

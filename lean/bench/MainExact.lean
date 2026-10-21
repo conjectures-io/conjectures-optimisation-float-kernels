@@ -24,7 +24,16 @@ def main : IO UInt32 := do
   let inner ← env "BENCH_INNER" 3
   if inner == 0 then throw (IO.userError "BENCH_INNER must be positive")
   let reps := parseReps ((← IO.getEnv "BENCH_REPS").getD "")
-  for c in ExactSuite.cells do
+  let filter ← IO.getEnv "BENCH_CELLS"
+  let selected := match filter with
+    | none => ExactSuite.cells
+    | some text => ExactSuite.cells.filter fun c => (text.splitOn ",").contains c.name
+  if let some text := filter then
+    let names := text.splitOn ","
+    if names.isEmpty || names.any (fun n => !(ExactSuite.cells.any (fun c => c.name == n))) ||
+        names.length != names.eraseDups.length then
+      throw (IO.userError "BENCH_CELLS must contain unique known cell names")
+  for c in selected do
     let prepared := ExactSuite.prepareCell c seed
     let n := ((reps.find? (·.1 == c.name)).map (·.2)).getD 1
     if n == 0 then throw (IO.userError "BENCH_REPS must be positive")
