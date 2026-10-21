@@ -94,9 +94,10 @@ experiments and historical reads.
 ## Development checks
 
 ```bash
-.venv/bin/pip install -r requirements/test.txt ruff==0.16.9
+.venv/bin/pip install -r requirements/test.txt ruff==0.16.9 reuse==5.0.2
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
+.venv/bin/reuse lint
 .venv/bin/python -m pytest -q -m "not slow"
 ```
 
@@ -107,3 +108,11 @@ Timing assertions can fail on a busy host.
 
 CI runs lint and fast tests on pushes and pull requests. Scheduled and manually
 triggered gate jobs also run setup, real-gate tests, and the self-test.
+
+## Licence
+
+MIT; see [LICENSE](LICENSE). The contracts, the kernels and stage 2 restate or adapt
+[FloatLib](https://github.com/lean-dojo/FloatLib) and [TorchLean](https://github.com/lean-dojo/TorchLean)
+code, both MIT-licensed, and the migrations use Alembic's template: their notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and [REUSE.toml](REUSE.toml) says which files each
+covers. Submissions are made under the same licence; see the [miner guide](MANUAL.md#7-licence).

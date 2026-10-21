@@ -181,6 +181,18 @@ ranks. The shipped baseline currently has no selectable submission ID.
 See the [live competition](https://conjectures.io/competitions/floatlib) for current
 champions and measurements.
 
+## 7. Licence
+
+This repository is under the [MIT licence](LICENSE). The shipped kernels and the contracts also
+reproduce or restate code from FloatLib and TorchLean, both MIT-licensed, so their notices apply as
+well: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) has them, and [REUSE.toml](REUSE.toml) says
+which files each covers. If you start from a shipped kernel, as `cp -r kernels/full/incumbent`
+does, your entry contains that code, and those notices go with it.
+
+When you submit a `Kernel.lean`, you license it under the MIT licence, so that the competition can
+store, build, benchmark and publish it, and a promoted entry can become the reference later entries
+are timed against. Submit only code you have the right to license this way.
+
 ## Troubleshooting
 
 | Symptom | Next step |
