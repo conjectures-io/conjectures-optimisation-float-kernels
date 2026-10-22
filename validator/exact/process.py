@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
 import signal
 import subprocess
@@ -9,6 +11,24 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@contextlib.contextmanager
+def checkout(heartbeat, wait, timeout=None):
+    """Serialize a checkout's builds while maintaining the caller's lease."""
+    start = time.monotonic()
+    with open(ROOT / "gate.lock", "a") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not heartbeat():
+                    raise RuntimeError("lease lost while waiting for the build workspace")
+                if timeout is not None and time.monotonic() - start >= timeout:
+                    raise BudgetExceeded("audit checkout is busy")
+                time.sleep(wait)
+        yield lock
 
 
 class BudgetExceeded(TimeoutError):

@@ -1,4 +1,4 @@
-"""The champion audit: queueing, outcomes and the three failure policies (decision D8)."""
+"""Independent audit discovery, remote execution, fencing and operator eligibility decisions."""
 
 from __future__ import annotations
 
@@ -7,166 +7,439 @@ import datetime as dt
 import hashlib
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import test_exact_competition as competition
 from sqlalchemy import select
-from test_exact_competition import accepted, result
+from sqlalchemy.exc import IntegrityError
 
 import db
 from db import models as m
+from db.audits import AuditDb
 from db.exact import ExactDb
 from exact.config import Config
-from workers import exact_coordinator
+from workers import exact_auditor
 
-# The same two-board competition as the exact competition tests.
 config = competition.config
 
 
-def with_policy(config, policy):
-    # The same competition under another audit failure policy.
-    return dataclasses.replace(config, audit=config.audit | {"policy": policy})
-
-
-def promote(store, config, repo, hotkeys):
-    # Promote one source per hotkey, in order, on every board.
+def promote(store, config, repo, names):
     repo.reconcile(config)
-    for hotkey in hotkeys:
-        accepted(store, config, hotkey, f"source-{hotkey}".encode())
+    for name in names:
+        competition.accepted(store, config, name, f"source-{name}".encode())
         repo.plan(config)
         while job := repo.claim("local", "a" * 64, "worker", 30):
-            repo.complete(job.id, job.owner, job.token, result(job.request))
+            repo.complete(job.id, job.owner, job.token, competition.result(job.request))
         repo.aggregate(config)
 
 
 def paid(repo, board="mlp"):
-    return [(k["hotkey"], k["audit"]) for k in repo.publication()["boards"][board]["kings"]]
+    return [k["hotkey"] for k in repo.publication()["boards"][board]["kings"]]
 
 
-def audit_all(repo, config, outcomes):
-    # Claim every due audit and finish it with the outcome its source's hotkey maps to.
-    while task := repo.claim_audit():
-        assert hashlib.sha256(task.content).hexdigest() == task.source_hash
-        hotkey = task.content.decode().removeprefix("source-")
-        repo.finish_audit(task.id, outcomes[hotkey], {"reason": "test"}, config)
+@pytest.fixture
+def audit_setup(store, config):
+    coordinator = ExactDb(store.sessions)
+    promote(store, config, coordinator, ["a", "b", "c"])
+    profile = exact_auditor.audit_profile(2)
+    return coordinator, AuditDb(store.sessions), profile
 
 
-def test_audit_config_defaults_and_validation(config):
-    assert config.audit == {"policy": "alert", "cases": 50, "seconds": 900}
-    raw = json.loads(json.dumps(dataclasses.asdict(config)))
-    assert Config.parse(raw).audit == config.audit
-    for bad in ({"policy": "ignore"}, {"cases": 0}, {"seconds": 0}, {"budget": 1}):
-        with pytest.raises(ValueError):
-            Config.parse(raw | {"audit": bad})
-
-
-def test_champions_are_queued_once_per_audit_version(store, config):
+def test_competition_runs_with_no_auditor_or_audit_config(store, config):
     repo = ExactDb(store.sessions)
     promote(store, config, repo, ["a", "b", "c"])
-    # The two champions of both boards are the same two sources: two audits, not four.
-    assert repo.ensure_audits(config, "v1") == 2
-    assert repo.ensure_audits(config, "v1") == 0
-    assert paid(repo) == [("c", "pending"), ("b", "pending")]
-    audit_all(repo, config, {"b": "clean", "c": "clean"})
-    assert paid(repo) == [("c", "clean"), ("b", "clean")]
-    # A new audit version re-audits the champions.
-    assert repo.ensure_audits(config, "v2") == 2
-
-
-@pytest.mark.parametrize(
-    "policy, expected",
-    [
-        ("alert", [("c", "failed"), ("b", "clean")]),
-        ("disqualify", [("b", "clean"), ("a", "pending")]),
-        ("hold", [("b", "clean")]),
-    ],
-)
-def test_failure_policies(store, config, policy, expected):
-    config = with_policy(config, policy)
-    repo = ExactDb(store.sessions)
-    promote(store, config, repo, ["a", "b", "c"])
-    repo.ensure_audits(config, "v1")
-    if policy == "hold":
-        # Until an audit is clean, a held board pays nobody new.
-        assert paid(repo) == []
-    audit_all(repo, config, {"b": "clean", "c": "failed"})
-    assert paid(repo) == expected
-    assert paid(repo, "resnet") == expected
-
-
-def test_an_error_retries_with_backoff_and_never_disqualifies(store, config):
-    config = with_policy(config, "disqualify")
-    repo = ExactDb(store.sessions)
-    promote(store, config, repo, ["a"])
-    repo.ensure_audits(config, "v1")
-    task = repo.claim_audit()
-    assert repo.finish_audit(task.id, "error", {"reason": "sandbox"}, config)
-    assert not repo.finish_audit(task.id, "clean", {}, config)
-    assert repo.claim_audit() is None
-    assert paid(repo) == [("a", "pending")]
+    assert paid(repo) == ["c", "b"]
     with db.session_scope(store.sessions) as s:
-        s.get(m.ExactAudit, task.id).due_at = dt.datetime.now(dt.timezone.utc)
-    again = repo.claim_audit()
-    assert again.id == task.id
-    # A coordinator stopped mid-audit runs it again.
-    repo.reconcile(config)
+        assert list(s.scalars(select(m.ExactAudit))) == []
+    # Old hold/disqualify configuration must fail explicitly, never silently change payouts.
+    with pytest.raises(ValueError, match="unknown configuration"):
+        Config.parse(dataclasses.asdict(config) | {"audit": {"policy": "hold"}})
+
+
+def test_discovery_backfills_every_promotion_deduplicates_and_resumes(audit_setup, store):
+    repo, audits, profile = audit_setup
+    assert audits.discover(profile, batch=1) == 1
+    assert AuditDb(store.sessions).discover(profile) == 5
+    assert audits.discover(profile) == 0
+    with db.session_scope(store.sessions) as s:
+        rows = list(s.scalars(select(m.ExactAudit)))
+        assert len(rows) == 3  # Includes the old source a, despite two later kings on each board.
+        assert {r.source_hash for r in rows} == {
+            hashlib.sha256(f"source-{name}".encode()).hexdigest() for name in "abc"
+        }
+    assert paid(repo) == ["c", "b"]
+
+
+def test_discovery_and_cursor_commit_atomically(audit_setup, store):
+    _, audits, profile = audit_setup
+    with pytest.raises(IntegrityError):
+        audits.discover(profile | {"cases": None})
+    with db.session_scope(store.sessions) as s:
+        assert not list(s.scalars(select(m.ExactAuditCursor)))
+        assert not list(s.scalars(select(m.ExactAudit)))
+    assert audits.discover(profile) == 6
+
+
+def test_concurrent_discovery_does_not_duplicate_or_skip(audit_setup, store):
+    _, audits, profile = audit_setup
+    with ThreadPoolExecutor(2) as pool:
+        assert sum(pool.map(lambda _: audits.discover(profile, batch=1), range(2))) == 2
+    audits.discover(profile)
+    with db.session_scope(store.sessions) as s:
+        assert len(list(s.scalars(select(m.ExactAudit)))) == 3
+
+
+def test_coverage_change_backfills_again_and_worker_selects_matching_release(audit_setup, config):
+    _, audits, profile = audit_setup
+    audits.discover(profile)
+    assert audits.claim(profile, "wrong-release", "host", 30) is None
+    stronger = exact_auditor.audit_profile(1000)
+    assert stronger != profile
+    assert audits.discover(stronger) == 6
+    task = audits.claim(stronger, config.proof_identity, "host", 30)
+    assert task.cases == 1000
+    assert task.request["profile"] == stronger
+    assert task.request["proof_identity"] == config.proof_identity
+
+
+def test_audit_never_changes_rewards_or_references(audit_setup, config, store):
+    repo, audits, profile = audit_setup
+    audits.discover(profile)
+    before = repo.publication()
+    for state in ["failed", "clean", "error"]:
+        task = audits.claim(profile, config.proof_identity, "remote", 30)
+        assert hashlib.sha256(task.content).hexdigest() == task.source_hash
+        assert audits.finish(task, state, {"mismatches": 1}, 300)
+    assert repo.publication() == before
+    repo.publish(config)
+    assert repo.publication() == before
+    with db.session_scope(store.sessions) as s:
+        assert not list(s.scalars(select(m.ExactDisqualification)))
+        assert len(list(s.scalars(select(m.ExactPromotion)))) == 6
+
+
+def test_leases_expire_stale_tokens_are_rejected_and_attempts_survive(audit_setup, config, store):
+    repo, audits, profile = audit_setup
+    audits.discover(profile)
+    first = audits.claim(profile, config.proof_identity, "dead-host", 30)
+    assert audits.heartbeat(first, 30)
+    assert not audits.finish(dataclasses.replace(first, token="stale"), "clean", {}, 300)
+    repo.reconcile(config)  # Restarting a coordinator must not steal a running audit.
+    with db.session_scope(store.sessions) as s:
+        assert s.get(m.ExactAudit, first.id).state == "running"
+        s.get(m.ExactAudit, first.id).lease_until = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
+            seconds=1
+        )
+    again = audits.claim(profile, config.proof_identity, "replacement-host", 30)
+    assert again.id == first.id and again.token != first.token
+    assert not audits.heartbeat(first, 30)
+    assert not audits.finish(first, "clean", {}, 300)
+    assert audits.finish(again, "failed", {"mismatches": 2}, 300)
+    with db.session_scope(store.sessions) as s:
+        assert s.get(m.ExactAuditAttempt, first.token).state == "expired"
+        assert s.get(m.ExactAuditAttempt, again.token).report == {"mismatches": 2}
+
+
+def test_error_backoff_and_old_pending_alerts(audit_setup, config, store):
+    _, audits, profile = audit_setup
+    audits.discover(profile)
+    task = audits.claim(profile, config.proof_identity, "host", 30)
+    assert audits.finish(task, "error", {"reason": "sandbox unavailable"}, 300)
+    # Other tasks can proceed while this source cools down.
+    another = audits.claim(profile, config.proof_identity, "host", 30)
+    assert another.id != task.id
     with db.session_scope(store.sessions) as s:
         row = s.get(m.ExactAudit, task.id)
-        assert (row.state, row.attempts) == ("queued", 2)
-        assert s.scalar(select(m.ExactPromotion.disqualified_at)) is None
+        assert row.due_at > dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=290)
+        row.created_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
+        row.due_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=1)
+    assert audits.alerts(profile, 900)[0]["id"] == task.id
+    retry = audits.claim(profile, config.proof_identity, "host", 30)
+    assert retry.id == task.id and retry.attempts == 2
+    assert audits.finish(retry, "clean", {}, 300)
+    with db.session_scope(store.sessions) as s:
+        assert s.get(m.ExactAuditAttempt, task.token).report["reason"] == "sandbox unavailable"
 
 
-def fake_gate(code, verdict):
-    # A supervisor that writes `verdict` where the gate would, and exits with `code`.
-    def supervised(command, *args, **kwargs):
-        if verdict is not None:
-            path = command[command.index("--verdict") + 1]
-            with open(path, "w") as f:
-                json.dump(verdict, f)
-        return code
+def test_operator_disqualification_blocks_later_board_promotion_and_can_be_restored(store, config):
+    repo = ExactDb(store.sessions)
+    repo.reconcile(config)
+    sid = competition.accepted(store, config, "a", b"source-a")
+    repo.plan(config)
+    jobs = []
+    while job := repo.claim("local", "a" * 64, "worker", 30):
+        jobs.append(job)
+    first, later = jobs
+    repo.complete(first.id, first.owner, first.token, competition.result(first.request))
+    assert repo.aggregate(config) == 1
+    source = hashlib.sha256(b"source-a").hexdigest()
+    repo.set_disqualification(source, True, "investigated mismatch", "operator", config)
+    assert paid(repo) == []
+    repo.complete(later.id, later.owner, later.token, competition.result(later.request))
+    repo.aggregate(config)
+    assert paid(repo, "resnet") == []
+    assert repo.plan(config) == []
+    with db.session_scope(store.sessions) as s:
+        assert s.get(m.Submission, sid).state == "accepted"
+    repo.set_disqualification(source, False, "harness bug fixed", "operator", config)
+    assert paid(repo) == ["a"]
+    assert len(repo.plan(config)) == 1  # The uncompleted board can resume after restoration.
+    with db.session_scope(store.sessions) as s:
+        assert len(s.get(m.ExactDisqualification, source).history) == 2
 
-    return supervised
+
+def test_disqualification_fills_previous_reward_ranks(audit_setup, config):
+    repo, _, _ = audit_setup
+    repo.set_disqualification(hashlib.sha256(b"source-c").hexdigest(), True, "review", "op", config)
+    assert paid(repo) == ["b", "a"]
+    assert paid(repo, "resnet") == ["b", "a"]
 
 
-class FakeAuditRepo:
-    def __init__(self):
-        self.outcomes = []
+def test_profile_changes_with_coverage_and_audit_sources(monkeypatch, tmp_path):
+    assert exact_auditor.audit_profile(50) != exact_auditor.audit_profile(1000)
+    for name in exact_auditor.AUDIT_SOURCES:
+        p = tmp_path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("version one")
+    monkeypatch.setattr(exact_auditor, "ROOT", tmp_path)
+    profile = exact_auditor.audit_profile(50)
+    (tmp_path / exact_auditor.AUDIT_SOURCES[0]).write_text("version two")
+    assert profile != exact_auditor.audit_profile(50)
 
-    def finish_audit(self, aid, state, report, config):
-        self.outcomes.append((state, report.get("mismatches")))
+
+def test_missing_git_metadata_does_not_block_competition_proofs(monkeypatch):
+    from workers import exact_coordinator
+
+    def absent(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(exact_coordinator.subprocess, "check_output", absent)
+    environment = exact_coordinator.source_environment()
+    assert environment["commit"] is None
+    assert environment["toolchain"].startswith("leanprover/lean4:")
+    assert len(environment["manifest_sha256"]) == 64
+
+
+def verdict(code=0, mismatch=0):
+    return {
+        "mode": "audit",
+        "stage": "audit",
+        "passed": code == 0,
+        "verifier_fingerprint": "b" * 64,
+        "verifier_fingerprint_end": "b" * 64,
+        "reason": "audit mismatch" if mismatch else "",
+        "classes": {"audit": {"cases": 504, "mismatches": mismatch, "seed": 7}},
+    }
 
 
 @pytest.mark.parametrize(
-    "code, verdict, source, expected",
+    "code, data, expected",
     [
-        (0, {"stage": "audit", "classes": {"audit": {"mismatches": 0}}}, None, ("clean", 0)),
-        (1, {"stage": "audit", "classes": {"audit": {"mismatches": 3}}}, None, ("failed", 3)),
-        # Only the audit's own finding fails a champion; anything else is an error, retried.
-        (1, {"stage": "policy", "reason": "banned name"}, None, ("error", None)),
-        (2, None, None, ("error", None)),
-        (0, {}, b"other bytes", ("error", None)),
+        (0, verdict(), "clean"),
+        (1, verdict(1, 3), "failed"),
+        (2, verdict(1, 3), "error"),
+        (0, {}, "error"),
+        (0, verdict() | {"verifier_fingerprint_end": "different"}, "error"),
+        (1, {"stage": "audit", "reason": "gate error: build failed"}, "error"),
     ],
 )
-def test_run_audit_maps_the_gate_outcome(monkeypatch, code, verdict, source, expected):
-    content = b"Kernel.lean bytes"
-    monkeypatch.setattr(exact_coordinator, "supervised", fake_gate(code, verdict))
-    repo = FakeAuditRepo()
+def test_result_classification_requires_complete_matching_evidence(code, data, expected):
+    task = SimpleNamespace(request={"proof_identity": "b" * 64}, seed=7)
+    assert exact_auditor.classify(code, data, task) == expected
+
+
+@pytest.mark.parametrize(
+    "code, data, expected",
+    [(0, verdict(), "clean"), (1, verdict(1, 3), "failed"), (2, {}, "error")],
+)
+def test_remote_worker_fetches_source_and_keeps_artifacts(
+    monkeypatch, tmp_path, code, data, expected
+):
+    profile = exact_auditor.audit_profile(2)
     task = SimpleNamespace(
         id=1,
-        source_hash=hashlib.sha256(content).hexdigest(),
+        token="claim",
+        owner="remote-host",
+        cases=2,
         seed=7,
-        cases=5,
-        content=source or content,
+        content=b"source",
+        source_hash=hashlib.sha256(b"source").hexdigest(),
+        request={"proof_identity": "b" * 64, "profile": profile},
     )
-    config = SimpleNamespace(audit={"seconds": 900}, lease_seconds=120)
-    exact_coordinator.run_audit(repo, task, config, threading.Event())
-    assert repo.outcomes == [expected]
+    outcomes = []
+    repo = SimpleNamespace(
+        heartbeat=lambda *_: True,
+        finish=lambda t, state, report, retry: outcomes.append((state, report)) or True,
+    )
+    monkeypatch.setattr(exact_auditor.fingerprint, "current", lambda: "b" * 64)
+
+    def fake_gate(command, *args, **kwargs):
+        Path(command[command.index("--verdict") + 1]).write_text(json.dumps(data))
+        return code
+
+    monkeypatch.setattr(exact_auditor, "supervised", fake_gate)
+    settings = SimpleNamespace(output=tmp_path, lease=30, seconds=900, retry=300)
+    exact_auditor.run_audit(repo, task, settings, threading.Event())
+    assert outcomes[0][0] == expected
+    assert (tmp_path / "1-claim/Kernel.lean").read_bytes() == task.content
+    assert json.loads((tmp_path / "1-claim/report.json").read_text())["state"] == expected
 
 
-def test_audit_identity_follows_the_audit_sources_and_proof(config):
-    one = exact_coordinator.audit_identity(config)
-    assert one == exact_coordinator.audit_identity(config)
-    assert one != exact_coordinator.audit_identity(
-        dataclasses.replace(config, proof_identity="d" * 64)
+def test_promotion_preserves_environment_when_source_is_reverified(store, config):
+    repo = ExactDb(store.sessions)
+    repo.reconcile(config)
+    sid = competition.accepted(store, config, "a", b"source-a")
+    with db.session_scope(store.sessions) as s:
+        row = s.get(m.Submission, sid)
+        row.exact_verification = row.exact_verification | {
+            "verdict": {"source_environment": {"commit": "original-release"}}
+        }
+    repo.plan(config)
+    while job := repo.claim("local", "a" * 64, "worker", 30):
+        repo.complete(job.id, job.owner, job.token, competition.result(job.request))
+    repo.aggregate(config)
+    with db.session_scope(store.sessions) as s:
+        s.get(m.Submission, sid).exact_verification = {"identity": "new-release"}
+    audits = AuditDb(store.sessions)
+    profile = exact_auditor.audit_profile(2)
+    audits.discover(profile)
+    task = audits.claim(profile, config.proof_identity, "remote", 30)
+    assert task.request["source_environment"] == {"commit": "original-release"}
+
+
+def test_new_auditor_can_test_same_spec_without_using_original_proof_checker(
+    audit_setup, config, store
+):
+    _, audits, profile = audit_setup
+    from exact.provenance import specification_identity
+
+    spec = specification_identity()
+    with db.session_scope(store.sessions) as s:
+        for p in s.scalars(select(m.ExactPromotion)):
+            p.source_environment = {"specification_identity": spec}
+    audits.discover(profile)
+    assert audits.claim(profile, config.proof_identity, "wrong-spec", 30, "wrong") is None
+    task = audits.claim(profile, "new-audit-verifier", "remote", 30, spec)
+    assert task is not None
+    assert task.request["proof_identity"] == config.proof_identity
+    assert task.request["specification_identity"] == spec
+
+
+def test_audit_result_uses_actual_execution_identity_and_preserves_original_proof_identity():
+    task = SimpleNamespace(request={"proof_identity": "original"}, seed=7)
+    data = verdict()
+    assert exact_auditor.classify(0, data, task, "b" * 64) == "clean"
+    assert exact_auditor.classify(0, data, task) == "error"
+
+
+def test_operator_blocked_queued_source_does_not_stall_other_submissions(store, config):
+    repo = ExactDb(store.sessions)
+    repo.reconcile(config)
+    sid, _ = store.submissions.add(
+        "blocked", hashlib.sha256(b"blocked").hexdigest(), "exact", b"blocked"
     )
+    repo.set_disqualification(hashlib.sha256(b"blocked").hexdigest(), True, "review", "op", config)
+    other = competition.accepted(store, config, "good", b"good")
+    assert repo.claim_proof("worker", config.proof_identity, 30) is None
+    assert len(repo.plan(config)) == 2
+    with db.session_scope(store.sessions) as s:
+        assert {e.submission_id for e in s.scalars(select(m.ExactEvaluation))} == {other}
+        assert s.get(m.Submission, sid).state == "queued"
+
+
+def test_auditor_database_role_cannot_change_competition(audit_setup, config, store):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    _, _, profile = audit_setup
+    role = "exact_auditor_test"
+    root = Path(__file__).resolve().parents[1]
+    with store.engine.begin() as conn:
+        conn.exec_driver_sql(f"CREATE ROLE {role} NOLOGIN")
+        sql = (
+            (root / "deploy/platform/exact_auditor.sql").read_text().replace("exact_auditor", role)
+        )
+        conn.execute(text(sql))
+    engine = create_engine(store.engine.url, connect_args={"options": f"-c role={role}"})
+    try:
+        repo = AuditDb(sessionmaker(bind=engine))
+        assert repo.discover(profile) == 6
+        task = repo.claim(profile, config.proof_identity, "remote", 30)
+        assert task and task.content
+        assert repo.heartbeat(task, 30)
+        assert repo.finish(task, "failed", {"reason": "mismatch"}, 300)
+        for table in [
+            "exact_promotions",
+            "submissions",
+            "observed_states",
+            "exact_disqualifications",
+            "exact_jobs",
+        ]:
+            with engine.begin() as conn:
+                assert not conn.scalar(
+                    text("SELECT has_table_privilege(current_user,:t,'UPDATE')"), {"t": table}
+                )
+    finally:
+        engine.dispose()
+        with store.engine.begin() as conn:
+            conn.exec_driver_sql(f"DROP OWNED BY {role}")
+            conn.exec_driver_sql(f"DROP ROLE {role}")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fixture, expected", [("incumbent", "clean"), ("auditwrong", "failed")])
+def test_real_sandboxed_independent_auditor(store, config, tmp_path, fixture, expected):
+    import fingerprint
+    import gate
+    from exact.provenance import specification_identity
+
+    try:
+        gate.check_limits()
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
+    identity = fingerprint.current()
+    # The observer is a newer verifier release, but its pinned mathematical definitions match.
+    config = dataclasses.replace(config, proof_identity="d" * 64, benchmark_identity=identity)
+    root = Path(__file__).resolve().parents[1]
+    work = root / "lean/work/Submission.lean"
+    original = work.read_bytes() if work.exists() else None
+    repo = ExactDb(store.sessions)
+    repo.reconcile(config)
+    # Simulate a promotion at the audit boundary, including a deliberately wrong fixture
+    # standing for a defect that escaped the proof/build pipeline. No chain writes.
+    source = (root / f"kernels/exact/{fixture}/Kernel.lean").read_bytes()
+    sid = competition.accepted(store, config, fixture, source)
+    with db.session_scope(store.sessions) as s:
+        row = s.get(m.Submission, sid)
+        row.exact_verification = row.exact_verification | {
+            "verdict": {"source_environment": {"specification_identity": specification_identity()}}
+        }
+    repo.plan(config)
+    while job := repo.claim("local", "a" * 64, "worker", 120):
+        repo.complete(job.id, job.owner, job.token, competition.result(job.request))
+    repo.aggregate(config)
+    before = repo.publication()
+    audits = AuditDb(store.sessions)
+    profile = exact_auditor.audit_profile(2)
+    audits.discover(profile)
+    with db.session_scope(store.sessions) as s:
+        s.scalar(select(m.ExactAudit)).seed = 971
+    task = audits.claim(profile, identity, "sandbox-auditor", 120, specification_identity())
+    assert task.request["proof_identity"] != identity
+    settings = SimpleNamespace(output=tmp_path, lease=120, seconds=300, retry=300)
+    try:
+        exact_auditor.run_audit(audits, task, settings, threading.Event())
+        with db.session_scope(store.sessions) as s:
+            row = s.get(m.ExactAudit, task.id)
+            assert row.state == expected, row.report
+            assert row.report["verdict"]["classes"]["audit"]["cases"] == 504
+            assert row.report["audit_verifier_identity"] == identity
+        assert repo.publication() == before
+    finally:
+        if original is None:
+            work.unlink(missing_ok=True)
+        else:
+            work.write_bytes(original)

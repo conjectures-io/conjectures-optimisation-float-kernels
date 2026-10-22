@@ -11,9 +11,10 @@ because the code or migration is installed. No chain transaction is sent by the 
 
 | Component | Command/module | Responsibility |
 |---|---|---|
-| Coordinator | `workers.exact_coordinator` | Own config, verify sources, plan jobs, aggregate, promote and audit champions |
+| Coordinator | `workers.exact_coordinator` | Own config, verify sources, plan jobs, aggregate and promote |
 | Hardware worker | `workers.benchmark_worker` | Claim leased jobs, build locally, benchmark pairs, save observations |
 | Benchmark subprocess | `exact.runner` | Sandbox builds and timing; report actual execution provenance |
+| Champion auditor | `workers.exact_auditor` | Independently discover promotions and report correctness findings |
 | Weight setter | existing `workers.weight_setter` | Consume published reward policy when explicitly selected |
 
 Use the same worker code on every architecture. Each environment identifies an actual CPU,
@@ -32,7 +33,7 @@ Set `DATABASE_URL` to a **development** database using the SQLAlchemy psycopg fo
 (cd deploy/migrate && ../../.venv/bin/python -m alembic upgrade head)
 ```
 
-The new revision is `0018`. Legacy records and promotion semantics are preserved. Downgrade refuses
+The current revision is `0020`. Legacy records and promotion semantics are preserved. Downgrade refuses
 while exact submissions exist; archive/remove disposable entries explicitly before rolling it back.
 
 ## 2. Generate and review development settings
@@ -127,32 +128,90 @@ Unclaimed, expired and repeatedly failing jobs produce coordinator warnings. A m
 repair the machine/reference and let the same job retry. No extra miner upload or registration
 charge is introduced by recovery.
 
-## 6. Champion audit
+## 6. Independent champion auditor
 
-A proof shows an entry meets the specification; the audit checks the built entry against it as
-well, on random and edge-case inputs of every kernel (`gate.py --slot exact --audit`, which runs
-`exactAudit --json` in the sandbox). After each publication the coordinator queues an audit of
-every board's two current champions' sources, once per audit version: a digest of
-`lean/audit/ExactAudit*.lean` and the proof identity, so a stronger audit re-audits them. A queued
-audit runs when no proof check waits, with a fresh seed and the `[audit]` settings:
+Audits are optional, report-only, and run in `workers.exact_auditor`, not the coordinator.
+Leaving this worker stopped has no effect on proof checks, benchmarking, promotion or rewards.
+Use a **separate server and checkout**: another process on the benchmark host still competes for
+CPU, memory and thermal resources. No LLM is involved.
 
-```toml
-[audit]
-policy = 'alert'   # what a failure does: alert, disqualify or hold
-cases = 50         # cases per kernel and input kind
-seconds = 900      # the audit's time budget
+On the audit server, prepare the matching pinned release and dependencies:
+
+```bash
+./setup.sh --exact
+.venv/bin/pip install -r requirements/service.txt
+export PYTHONPATH=.:validator
+export DATABASE_URL='postgresql+psycopg://exact_auditor:PASSWORD@DB_HOST:5432/floatlib?sslmode=require'
+.venv/bin/python -m workers.exact_auditor --cases 50 --output /var/lib/floatlib-audits
 ```
 
-| Policy | A failed audit | An unaudited champion |
-|---|---|---|
-| `alert` | logs an error; the champion stays paid | paid |
-| `disqualify` | disqualifies every promotion of the source; the earlier champions are paid | paid |
-| `hold` | as `disqualify` | not paid until one of its audits is clean; the earlier clean champions are |
+Create the `exact_auditor` login/password as an administrator and apply
+`deploy/platform/exact_auditor.sql` on the competition database. The role reads promotion,
+evaluation and submission data and writes only audit tasks, cursors and attempt records. It has
+no promotion, registration, submission-update, operator-disqualification or reward permissions.
+Use a private database connection with appropriate TLS/network access. URL-encode passwords.
+There is no local competition database requirement on the audit server.
 
-Only a mismatch the audit reports fails a champion. Any other outcome (a sandbox or build error, a
-timeout) is an error, retried with backoff, and never disqualifies. Each king in the publication
-carries its source's audit state: `pending`, `clean` or `failed`. A coordinator stopped mid-audit
-runs it again. Every outcome, with its seed and first mismatches, is in `exact_audits`.
+The auditor polls **every promotion in order**, including kings superseded while it was offline.
+Its durable cursor and task inserts commit atomically. Initial startup backfills all history;
+`--discover-only` advances one batch without executing tests. Repeating it resumes the backfill.
+Identical sources promoted on multiple boards share one task per proof version/audit profile.
+The coordinator is the single serialized promotion writer; promotion IDs are its commit order.
+
+Tasks capture the source hash, original verification/benchmark identities and immutable promotion
+metadata. New promotions record the verification checkout commit, Lean toolchain, dependency
+manifest hash, verifier settings and a separate mathematical specification/dependency identity. Legacy promotions may lack this extra provenance. Workers
+fetch `Kernel.lean` from the remote database and verify its hash. New tasks run only when the worker has matching pinned mathematical definitions, Lean
+toolchain and dependency manifests. The audit harness/proof-checker release may differ: reports
+retain both the original proof identity and actual audit verifier identity. This permits independent
+auditor upgrades without changing the specification under test. Legacy tasks missing a specification
+identity require a checkout matching the original full proof fingerprint. Incompatible tasks remain
+pending and produce age warnings. Use a separate matching checkout for older specifications. The auditor does not
+check out arbitrary commits or install code automatically. Dirty/uncommitted verification changes
+may require the operator to recover the exact source tree, not just its recorded commit.
+
+Each task is claimed with an owner, random attempt token and expiring lease. Heartbeats continue
+through builds and execution. Expired attempts can be reclaimed; old tokens cannot report results.
+Infrastructure failures retry with backoff. Per-attempt source, request, gate log, verdict and report
+persist beneath `--output`; `exact_audit_attempts` preserves retry/expiry history. Reports include
+host architecture, toolchain, source hash and requested versions. Budgets and intervals:
+
+```text
+--cases 50 --seconds 900 --lease 120 --retry 300 --poll 10 --alert-seconds 900
+```
+
+The audit profile includes coverage count and hashes of the Lean audit and Python harness.
+Changing coverage or implementation starts a new cursor and re-audits historical sources.
+An active worker stops on checkout/profile drift. `--once` discovers one batch and executes at
+most one compatible task. Logs emit mismatch/error alerts and warnings for old pending tasks;
+route the process logs to your monitoring system.
+
+A clean result means sampled outputs matched the specification; a mismatch is a pipeline finding,
+not an automatic judgment against the miner. **Neither findings nor audit outages change rewards
+or champions.** The old `[audit]` competition configuration and automatic `hold`/`disqualify`
+policies were removed; old configuration files must be regenerated/reviewed before restart.
+Migration preserves historical audit reports and previous disqualification timestamps.
+
+A remote rebuild tests a newly compiled copy, not the exact executable previously benchmarked.
+Testing that original artifact on compatible hardware remains separate work. The audit also shares
+FloatLib/Lean with the reference, so it is not a fully independent specification oracle.
+
+### Explicit operator decisions
+
+After investigation, an operator with competition-write credentials can exclude a source across
+all boards. This action is independent of audits, publishes the reward change atomically, and is
+checked when selecting references, planning work and finalizing later-finishing evaluations:
+
+```bash
+PYTHONPATH=.:validator .venv/bin/python -m tools.exact_sources disqualify SOURCE_SHA256 \
+  --config /path/to/active.toml --actor operator-name --reason 'investigated finding'
+PYTHONPATH=.:validator .venv/bin/python -m tools.exact_sources restore SOURCE_SHA256 \
+  --config /path/to/active.toml --actor operator-name --reason 'root cause resolved'
+```
+
+The configuration must match the active coordinator. Decisions and their reasons are retained in
+`exact_disqualifications.history`. Restoration clears this operator restriction; existing completed
+board decisions are not reranked, and older historical demotion timestamps are not rewritten.
 
 ## 7. Rewards: opt in only after review
 
@@ -186,8 +245,8 @@ PYTHONPATH=.:validator .venv/bin/python scripts/test-exact-workflow.py \
 ```
 
 The command creates and migrates a uniquely named scratch database, queues a copy of the complete
-incumbent, runs real proof checks and six board comparisons, audits any new champion, and computes a test
-reward vector.
+incumbent, runs real proof checks and six board comparisons, and computes a test reward vector.
+It intentionally runs without an auditor, demonstrating competition independence.
 It saves source/config, logs and raw results, terminates its workers, restores the previous shared
 submission source, and drops the scratch database. It never sends chain weights. Use `--candidate`
 for another complete entry and `--minutes` for an overall deadline.

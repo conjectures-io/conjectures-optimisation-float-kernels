@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import contextlib
-import fcntl
 import hashlib
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -24,91 +23,29 @@ import db
 import fingerprint
 from db.exact import ExactDb
 from exact.config import Config
-from exact.process import ROOT, BudgetExceeded, install_signals, supervised
+from exact.process import ROOT, BudgetExceeded, checkout, install_signals, supervised
+from exact.provenance import specification_identity
 
-AUDIT_SOURCES = ("lean/audit/ExactAuditCore.lean", "lean/audit/ExactAudit.lean")
 
-
-def audit_identity(config):
-    """The audit version: its sources and the proof identity; a change re-audits every champion."""
-    sources = {
-        name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in AUDIT_SOURCES
+def source_environment():
+    # Audit provenance is useful even in packaged deployments without Git metadata.
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = None
+    return {
+        "commit": commit,
+        "specification_identity": specification_identity(),
+        "toolchain": (ROOT / "lean/lean-toolchain").read_text().strip(),
+        "manifest_sha256": hashlib.sha256(
+            (ROOT / "lean/lake-manifest.json").read_bytes()
+        ).hexdigest(),
+        "verifier_settings": {
+            key: os.environ.get(key, default) for key, default in fingerprint.KNOBS.items()
+        },
     }
-    return hashlib.sha256(
-        json.dumps({"sources": sources, "proof": config.proof_identity}, sort_keys=True).encode()
-    ).hexdigest()
-
-
-@contextlib.contextmanager
-def checkout(heartbeat, wait):
-    """The build checkout's lock, waiting while `heartbeat` keeps the claim alive."""
-    with open(ROOT / "gate.lock", "a") as lock:
-        while True:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if not heartbeat():
-                    raise RuntimeError("lease lost while waiting for the build workspace")
-                time.sleep(wait)
-        yield lock
-
-
-def run_audit(repo, task, config, stop):
-    """Audit one champion's source in the sandbox (`gate.py --audit`) and record the outcome."""
-    with tempfile.TemporaryDirectory(prefix="exact-audit-") as tmp:
-        path = Path(tmp)
-        try:
-            if task.content is None or hashlib.sha256(task.content).hexdigest() != task.source_hash:
-                raise RuntimeError("champion source missing or hash mismatch")
-            (path / "Kernel.lean").write_bytes(task.content)
-            verdict_path = path / "verdict.json"
-            with checkout(lambda: not stop.is_set(), 1) as lock:
-                code = supervised(
-                    [
-                        sys.executable,
-                        str(ROOT / "gate.py"),
-                        str(path),
-                        "--slot",
-                        "exact",
-                        "--audit",
-                        "--verdict",
-                        str(verdict_path),
-                    ],
-                    lambda: not stop.is_set(),
-                    config.audit["seconds"],
-                    config.lease_seconds / 3,
-                    path / "audit.log",
-                    env_extra={
-                        "GATE_LOCK_HELD": "1",
-                        "GATE_AUDIT_CASES": str(task.cases),
-                        "GATE_AUDIT_SEED": str(task.seed),
-                        "GATE_BUDGET_SECONDS": str(config.audit["seconds"]),
-                    },
-                    pass_fds=(lock.fileno(),),
-                    cancelled=stop.is_set,
-                )
-            verdict = json.loads(verdict_path.read_text()) if verdict_path.exists() else {}
-            report = {
-                "reason": verdict.get("reason", ""),
-                **verdict.get("classes", {}).get("audit", {}),
-            }
-            # Only the audit's own finding fails a champion; anything else is retried.
-            state = (
-                "clean"
-                if code == 0
-                else "failed"
-                if code == 1 and verdict.get("stage") == "audit"
-                else "error"
-            )
-        except Exception as exc:
-            state, report = "error", {"reason": str(exc)}
-        if state == "failed":
-            logger.error(
-                "exact champion audit FAILED for {}: {}", task.source_hash[:12], report["reason"]
-            )
-        if not stop.is_set():
-            repo.finish_audit(task.id, state, report, config)
 
 
 def verify(repo, sub, config, stop):
@@ -168,6 +105,14 @@ def verify(repo, sub, config, stop):
             ):
                 code = 2
                 verdict["reason"] = "proof identity changed or successful proof evidence missing"
+            if code == 0:
+                # Immutable references for a remote auditor to select the matching release.
+                verdict["source_environment"] = source_environment()
+                if fingerprint.current() != config.proof_identity:
+                    code = 2
+                    verdict["reason"] = (
+                        "verification environment changed while recording provenance"
+                    )
             verdict["exit_code"] = code if code in (0, 1) else 2
         except BudgetExceeded as exc:
             # A proof check past its budget rejects the entry, as the gate worker always did;
@@ -215,7 +160,6 @@ def main():
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = None
     owner = f"{socket.gethostname()}:{os.getpid()}"
-    identity = audit_identity(config)
     try:
         with store.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as leader:
             if not leader.scalar(
@@ -235,7 +179,6 @@ def main():
                     repo.plan(config)
                     repo.aggregate(config)
                     repo.publish(config)
-                    repo.ensure_audits(config, identity)
                     if args.once:
                         break
                     if future is not None and future.done():
@@ -245,9 +188,6 @@ def main():
                         sub = repo.claim_proof(owner, config.proof_identity, config.lease_seconds)
                         if sub:
                             future = pool.submit(verify, repo, sub, config, stop)
-                        elif task := repo.claim_audit():
-                            # Proof checks come first; a champion audit runs when none waits.
-                            future = pool.submit(run_audit, repo, task, config, stop)
                     if time.monotonic() >= next_alert:
                         for alert in repo.alerts(config.alert_seconds):
                             logger.warning("exact benchmark waiting: {}", alert)

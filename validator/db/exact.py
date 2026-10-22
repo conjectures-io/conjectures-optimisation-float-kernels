@@ -7,7 +7,6 @@ import hashlib
 import json
 import secrets
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import and_, exists, func, or_, select, update
@@ -27,10 +26,26 @@ def lock_board(session, board):
     session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended("exact:" + board, 0))))
 
 
+def source_blocked(source):
+    return exists().where(
+        m.ExactDisqualification.source_hash == source, m.ExactDisqualification.active.is_(True)
+    )
+
+
+def lock_source(session, source):
+    session.execute(
+        select(func.pg_advisory_xact_lock(func.hashtextextended("source:" + source, 0)))
+    )
+
+
 def champion(session, board):
     return session.scalar(
         select(m.ExactPromotion)
-        .where(m.ExactPromotion.board == board, m.ExactPromotion.disqualified_at.is_(None))
+        .where(
+            m.ExactPromotion.board == board,
+            m.ExactPromotion.disqualified_at.is_(None),
+            ~source_blocked(m.ExactPromotion.source_hash),
+        )
         .order_by(m.ExactPromotion.id.desc())
         .limit(1)
     )
@@ -46,28 +61,6 @@ def cancel(session, evaluation):
         )
         .values(state="cancelled", token=None, lease_until=None)
     )
-
-
-@dataclass(frozen=True)
-class AuditTask:
-    """One claimed audit: the source to check and how."""
-
-    id: int
-    source_hash: str
-    seed: int
-    cases: int
-    content: bytes | None
-
-
-def audit_state(session, source_hash):
-    """A source's audit state for the publication: its latest audit, or `pending`."""
-    row = session.scalar(
-        select(m.ExactAudit)
-        .where(m.ExactAudit.source_hash == source_hash)
-        .order_by(m.ExactAudit.id.desc())
-        .limit(1)
-    )
-    return "pending" if row is None or row.state in ("queued", "running", "error") else row.state
 
 
 class ExactDb:
@@ -98,6 +91,7 @@ class ExactDb:
                 select(m.Submission)
                 .where(
                     m.Submission.slot == "exact",
+                    ~source_blocked(m.Submission.digest),
                     or_(
                         and_(
                             m.Submission.state == "queued",
@@ -186,10 +180,6 @@ class ExactDb:
             ):
                 if e.board not in config.boards or e.config_hash != config.identity(e.board):
                     cancel(s, e)
-            # Audits left running by a stopped coordinator run again.
-            s.execute(
-                update(m.ExactAudit).where(m.ExactAudit.state == "running").values(state="queued")
-            )
             details = config.public()
             state = s.get(m.ObservedState, "exact:config")
             old_boards = set(state.details["boards"]) if state else set()
@@ -230,7 +220,12 @@ class ExactDb:
                 )
                 if pending:
                     current = champion(s, board)
-                    if pending.reference_promotion_id == (current.id if current else None):
+                    blocked = s.scalar(
+                        select(source_blocked(s.get(m.Submission, pending.submission_id).digest))
+                    )
+                    if not blocked and pending.reference_promotion_id == (
+                        current.id if current else None
+                    ):
                         continue
                     cancel(s, pending)
                     s.flush()
@@ -246,6 +241,7 @@ class ExactDb:
                     .where(
                         m.Submission.slot == "exact",
                         m.Submission.state == "accepted",
+                        ~source_blocked(m.Submission.digest),
                         m.Submission.exact_verification["identity"].astext == config.proof_identity,
                         ~exists(
                             select(m.ExactEvaluation.id).where(
@@ -273,6 +269,7 @@ class ExactDb:
                         .where(
                             m.Submission.slot == "exact",
                             m.Submission.state.in_(("queued", "verifying")),
+                            ~source_blocked(m.Submission.digest),
                             or_(
                                 m.Submission.submitted_at < sub.submitted_at,
                                 and_(
@@ -535,11 +532,13 @@ class ExactDb:
                 return False
             current = champion(s, e.board)
             sub = s.get(m.Submission, e.submission_id)
+            lock_source(s, sub.digest)
             if (
                 e.board not in config.boards
                 or e.config_hash != config.identity(e.board)
                 or e.reference_promotion_id != (current.id if current else None)
                 or sub.state != "accepted"
+                or s.scalar(select(source_blocked(sub.digest)))
                 or not sub.exact_verification
                 or sub.exact_verification.get("identity") != config.proof_identity
             ):
@@ -560,6 +559,9 @@ class ExactDb:
                         submission_id=e.submission_id,
                         evaluation_id=e.id,
                         source_hash=sub.digest,
+                        source_environment=sub.exact_verification.get("verdict", {}).get(
+                            "source_environment", {}
+                        ),
                     )
                 )
             s.flush()
@@ -622,23 +624,18 @@ class ExactDb:
 
     def _publish(self, s, config):
         boards = {}
-        hold = config.audit["policy"] == "hold"
         for board in config.boards:
             query = (
                 select(m.ExactPromotion, m.Submission.hotkey)
                 .join(m.Submission)
-                .where(m.ExactPromotion.board == board, m.ExactPromotion.disqualified_at.is_(None))
+                .where(
+                    m.ExactPromotion.board == board,
+                    m.ExactPromotion.disqualified_at.is_(None),
+                    ~source_blocked(m.ExactPromotion.source_hash),
+                )
                 .order_by(m.ExactPromotion.id.desc())
                 .limit(2)
             )
-            if hold:
-                # A champion is paid once one of its audits is clean; until then the earlier ones.
-                query = query.where(
-                    exists().where(
-                        m.ExactAudit.source_hash == m.ExactPromotion.source_hash,
-                        m.ExactAudit.state == "clean",
-                    )
-                )
             rows = s.execute(query).all()
             paused = bool(
                 s.scalar(
@@ -660,7 +657,6 @@ class ExactDb:
                         "promotion_id": p.id,
                         "submission_id": p.submission_id,
                         "hotkey": hotkey,
-                        "audit": audit_state(s, p.source_hash),
                     }
                     for p, hotkey in rows
                 ],
@@ -672,102 +668,39 @@ class ExactDb:
         elif row.details != publication:
             row.details = publication
 
-    def ensure_audits(self, config, identity):
-        """Queue an audit of each board's current champions' sources by this audit version."""
-        with session_scope(self.sessions) as s:
-            self._lead(s)
-            queued = 0
-            for board in config.boards:
-                for p in s.scalars(
-                    select(m.ExactPromotion)
-                    .where(
-                        m.ExactPromotion.board == board, m.ExactPromotion.disqualified_at.is_(None)
-                    )
-                    .order_by(m.ExactPromotion.id.desc())
-                    .limit(2)
-                ):
-                    if s.scalar(
-                        select(m.ExactAudit.id).where(
-                            m.ExactAudit.source_hash == p.source_hash,
-                            m.ExactAudit.audit_identity == identity,
-                        )
-                    ):
-                        continue
-                    s.add(
-                        m.ExactAudit(
-                            source_hash=p.source_hash,
-                            submission_id=p.submission_id,
-                            audit_identity=identity,
-                            seed=secrets.randbelow(2**32),
-                            cases=config.audit["cases"],
-                        )
-                    )
-                    s.flush()
-                    queued += 1
-            if queued:
-                self._publish(s, config)
-            return queued
-
-    def claim_audit(self):
-        """The next due audit, marked running, with the source to audit; or None."""
-        with session_scope(self.sessions) as s:
-            self._lead(s)
-            row = s.scalar(
-                select(m.ExactAudit)
-                .where(
-                    m.ExactAudit.state.in_(("queued", "error")), m.ExactAudit.due_at <= db_now(s)
-                )
-                .order_by(m.ExactAudit.id)
-                .limit(1)
-                .with_for_update(skip_locked=True)
-            )
-            if row is None:
-                return None
-            row.state, row.attempts = "running", row.attempts + 1
-            content = s.scalar(
-                select(m.SubmissionFile.content).where(
-                    m.SubmissionFile.submission_id == row.submission_id,
-                    m.SubmissionFile.name == "Kernel.lean",
-                )
-            )
-            return AuditTask(row.id, row.source_hash, row.seed, row.cases, content)
-
-    def finish_audit(self, aid, state, report, config):
-        """Record an audit's outcome. A failure under `disqualify` or `hold` disqualifies every
-        promotion of the source, so the next publication pays the earlier champions; an error
-        (infrastructure) never disqualifies and is retried with backoff."""
-        if state not in ("clean", "failed", "error"):
-            raise ValueError("unknown audit outcome")
-        with session_scope(self.sessions) as s:
-            self._lead(s)
-            row = s.get(m.ExactAudit, aid, with_for_update=True)
-            if row is None or row.state != "running":
-                return False
-            now = db_now(s)
-            row.state, row.report, row.finished_at = state, report, now
-            if state == "error":
-                row.due_at = now + dt.timedelta(
-                    seconds=min(86400, config.retry_seconds * 2 ** min(row.attempts - 1, 4))
-                )
-            if state == "failed" and config.audit["policy"] in ("disqualify", "hold"):
-                s.execute(
-                    update(m.ExactPromotion)
-                    .where(
-                        m.ExactPromotion.source_hash == row.source_hash,
-                        m.ExactPromotion.disqualified_at.is_(None),
-                    )
-                    .values(disqualified_at=now)
-                )
-            s.flush()
-            self._publish(s, config)
-            return True
-
     def publication(self):
         with session_scope(self.sessions) as s:
             row = s.get(m.ObservedState, "exact:publication")
             if row is None:
                 raise RuntimeError("exact coordinator has not published reward policy")
             return row.details
+
+    def set_disqualification(self, source_hash, active, reason, actor, config):
+        """An explicit operator action, serialized with promotion and published atomically."""
+        from exact.config import sha
+
+        sha(source_hash)
+        if not reason.strip() or not actor.strip():
+            raise ValueError("operator and reason are required")
+        with session_scope(self.sessions) as s:
+            # Coordinate publication/config changes with the active leader, without adopting
+            # its fencing token or requiring the audit service to own leadership.
+            s.get(m.ObservedState, "exact:leader", with_for_update=True)
+            observed = s.get(m.ObservedState, "exact:config")
+            if observed is None or digest(observed.details) != digest(config.public()):
+                raise ValueError("operator configuration must match the active coordinator")
+            lock_source(s, source_hash)
+            row = s.get(m.ExactDisqualification, source_hash)
+            if row is None:
+                row = m.ExactDisqualification(source_hash=source_hash)
+                s.add(row)
+            row.active, row.reason, row.actor, row.updated_at = active, reason, actor, db_now(s)
+            row.history = [
+                *(row.history or []),
+                dict(active=active, reason=reason, actor=actor, at=row.updated_at.isoformat()),
+            ]
+            s.flush()
+            self._publish(s, config)
 
     def alerts(self, age):
         with session_scope(self.sessions) as s:

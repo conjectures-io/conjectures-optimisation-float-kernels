@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rehearse proof -> leased jobs -> board decisions -> champion audit -> rewards, in a scratch DB.
+"""Rehearse proof -> leased jobs -> board decisions -> rewards, in a scratch DB.
 
 Requires CREATE DATABASE on --admin-url, the Lean build environment and working sandbox limits.
 Does not use the API or submit chain weights. Short timings exercise plumbing, not admission noise.
@@ -97,12 +97,7 @@ def main():
                 )
                 if submission.state == "rejected":
                     raise RuntimeError(f"proof rejected: {submission.reason}")
-                # A promotion is finished once the coordinator has audited the new champion.
-                promoted = s.scalar(sa.select(sa.func.count()).select_from(models.ExactPromotion))
-                audits = list(s.scalars(sa.select(models.ExactAudit.state)))
-            if done == 6 and (
-                not promoted or (audits and all(a not in ("queued", "running") for a in audits))
-            ):
+            if done == 6:
                 break
             with (out / "worker.log").open("a") as log:
                 worker = subprocess.Popen(
