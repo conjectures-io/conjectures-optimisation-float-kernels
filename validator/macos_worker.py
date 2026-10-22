@@ -9,7 +9,7 @@ UNSUPPORTED = (
     "native macOS benchmark workers are unsupported: Seatbelt alone has no verified "
     "per-job aggregate memory/swap cap or parent-death/process-tree containment; "
     "RLIMIT_RSS is advisory and RLIMIT_NPROC is per user. "
-    "No candidate was launched. See docs/MACOS-WORKER-SANDBOX.md"
+    "No candidate was launched. See docs/WORKER-DATABASE-ACCESS.md"
 )
 
 

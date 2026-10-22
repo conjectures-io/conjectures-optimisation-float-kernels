@@ -10,7 +10,7 @@ usage() {
 Usage: ./setup-macos.sh [--check] [--dev] [--source PATH] [--benchmark-worker]
 
 Build the exact-runtime proofs, native model benchmark and audit executables.
-  --benchmark-worker  Refuse unsafe worker setup; see docs/MACOS-WORKER-SANDBOX.md.
+  --benchmark-worker  Refuse unsafe worker setup; see docs/WORKER-DATABASE-ACCESS.md.
   --check        Report prerequisites without installing or building anything.
   --dev          Also install Python test, database-client and plotting dependencies.
   --source PATH  Build this Kernel.lean (or directory containing it).
@@ -40,7 +40,7 @@ done
 [ "$(uname -s)" = Darwin ] || { log "macOS only; use ./setup.sh on Linux"; exit 1; }
 if [ "$worker" = 1 ]; then
   log "Native macOS benchmark workers are unsupported: no verified aggregate memory/swap cap or process-tree containment."
-  log "No dependencies installed or candidate launched. See docs/MACOS-WORKER-SANDBOX.md."
+  log "No dependencies installed or candidate launched. See docs/WORKER-DATABASE-ACCESS.md."
   exit 1
 fi
 missing=0
