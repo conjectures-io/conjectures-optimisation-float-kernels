@@ -19,6 +19,7 @@ from pathlib import Path
 
 from loguru import logger
 
+import benchmark_suite
 import fingerprint as verifier
 
 HERE = Path(__file__).resolve().parent
@@ -121,6 +122,7 @@ SLOTS = {
             "bench/BenchTensor.lean",
             "bench/BenchBmm.lean",
             "bench/BenchFull.lean",
+            "bench/BenchSuite.lean",
             "contract/ContractTensor.lean",
         ),
         contract="ContractTensor",
@@ -223,8 +225,10 @@ class Verdict:
     ratio: float | None = None
     classes: dict[str, dict[str, float]] = field(default_factory=dict)
     # Per round, [incumbent ns, submission ns] summed over the timed classes: the paired evidence
-    # statistical admission resamples (validator/admission.py).
+    # statistical admission resamples (validator/admission.py). Under a suite the same, summed
+    # over its timed cases; `suite` names the suite (version and file hash), never its contents.
     rounds: list[list[int]] = field(default_factory=list)
+    suite: dict = field(default_factory=dict)
     incumbent_sha256: str = ""
     # The champion's Kernel.lean, hashed: a promotion changes it and starts a fresh board, while a
     # bench or gate hotfix (a new incumbent binary, a new fingerprint) does not.
@@ -573,11 +577,17 @@ def axioms(src: Path, v: Verdict) -> str | None:
     return f"extra axioms {sorted(found - AXIOMS)}" if found - AXIOMS else None
 
 
-def bench(binary: Path, seed: int, build: str) -> dict[str, tuple[int, int]] | str:
+def bench(
+    binary: Path, seed: int, build: str, plan: str | None = None
+) -> dict[str, tuple[int, int]] | str:
     # One bench process: class -> (best ns, checksum), or the failure text; the submission's own
     # (built in its layer) count against its time budget, the pinned incumbent's do not.
     # A panic aborts the process, so a kernel cannot print into the output the gate parses.
+    # `plan` is a suite plan's JSON (the full entry under GATE_FULL_SUITE); its cases replace the
+    # legacy classes.
     env_extra = {"BENCH_SEED": str(seed), "BENCH_PAIRS": str(_PAIRS), "LEAN_ABORT_ON_PANIC": "1"}
+    if plan is not None:
+        env_extra["BENCH_PLAN"] = plan
     pin_cpu = ["taskset", "-c", _BENCH_CPU] if _BENCH_CPU and shutil.which("taskset") else []
     code, out = (own if build else run)(
         pin_cpu + [str(binary)],
@@ -608,13 +618,20 @@ def score(src: Path, v: Verdict) -> str | None:
     v.seed = int(os.environ.get("BENCH_SEED", secrets.randbelow(2**32)))
     logger.info(f"[score] seed={v.seed} pairs={_PAIRS} rounds={_ROUNDS} cpu={_BENCH_CPU or 'any'}")
     slot = SLOTS[v.slot]
+    # The full entry under a suite: a fresh plan of cases from the seed, kept out of the verdict.
+    spec = benchmark_suite.load() if v.slot == "full" else None
+    plan = benchmark_suite.make_plan(spec, v.seed, _PAIRS) if spec else None
+    extra = {"plan": json.dumps(plan, separators=(",", ":"))} if plan else {}
+    expected = {c["name"] for c in plan["cases"]} if plan else set()
+    if spec:
+        logger.info(f"[score] suite {spec['version']} ({len(expected)} cases)")
     runs: dict[str, list[dict[str, tuple[int, int]]]] = {"inc": [], "sub": []}
     for r in range(_ROUNDS):
         order = [("inc", slot.pinned, ""), ("sub", BUILD / "bin" / slot.bench, "read")]
         for who, binary, build in order if r % 2 == 0 else order[::-1]:
             progress("reference-benchmark" if who == "inc" else "challenger")
             try:
-                res = bench(binary, v.seed, build)
+                res = bench(binary, v.seed, build, **extra)
             except Exception as exc:
                 if who != "inc":
                     raise
@@ -635,6 +652,15 @@ def score(src: Path, v: Verdict) -> str | None:
                 v.incumbent_failed = True
                 v.reference_failure_phase = "reference-benchmark"
                 return "gate error: the incumbent's benchmark output is incomplete"
+            if plan and (
+                res.keys() != expected
+                or any(ns <= 0 for c in plan["cases"] if c["timed"] for ns in [res[c["name"]][0]])
+            ):
+                if who != "inc":
+                    return "the entry's bench did not time every case of the suite"
+                v.incumbent_failed = True
+                v.reference_failure_phase = "reference-benchmark"
+                return "gate error: the incumbent's suite output is incomplete"
             runs[who].append(res)
             if who == "inc" and len(runs[who]) == _ROUNDS:
                 v.reference_complete = True
@@ -643,6 +669,17 @@ def score(src: Path, v: Verdict) -> str | None:
     for name, (_, want) in inc[0].items():
         if any(s.get(name, (0, None))[1] != want for s in sub):
             return f"checksum mismatch on class {name}: the submission disagrees with the incumbent"
+    if plan:
+        v.ratio, v.classes, v.rounds = benchmark_suite.summarise(spec, plan, inc, sub)
+        v.suite = {"version": spec["version"], "sha256": spec["sha256"]}
+        for name, c in v.classes.items():
+            logger.info(
+                f"[score] {name:16} inc {c['incumbent_ns']:.2f} ns  "
+                f"sub {c['submission_ns']:.2f} ns  "
+                f"ratio {c['ratio']:.3f}  spread {c['spread_inc']:.3f}/{c['spread_sub']:.3f}"
+            )
+        logger.info(f"[score] ratio {v.ratio:.3f} of the incumbent over all timed cases")
+        return None
     total_inc = total_sub = 0
     for name in inc[0]:
         best_i, best_s = min(x[name][0] for x in inc), min(x[name][0] for x in sub)

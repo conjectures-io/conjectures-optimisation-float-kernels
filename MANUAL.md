@@ -86,6 +86,18 @@ BENCH_SEED=42 python gate.py --slot full --bench my-entry
 
 Inspect all class timings, not only the headline ratio. See
 [Benchmarking](docs/BENCHMARKING.md) for aggregation and statistical admission.
+
+The paid board is scored on a private suite of inputs: ML-like magnitudes,
+zeros, subnormals, NaN and infinities, paired operands and many vector lengths and
+matrix shapes. Tune on the public suite with the same groups:
+
+```bash
+GATE_FULL_SUITE=suites/public-v2.json BENCH_SEED=42 python gate.py --slot full --bench my-entry
+```
+
+The ratio and promotion rules are the same as on the legacy classes; only the
+inputs differ, so a fast path with a slow fallback pays for every case that hits
+the fallback. See [Suite scoring](docs/BENCHMARKING.md#suite-scoring).
 Logs are under `logs/`; verdicts and paired timings are under `results/`.
 
 ## 4. Submit
