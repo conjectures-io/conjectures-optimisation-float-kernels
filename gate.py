@@ -296,6 +296,15 @@ def overfile(code: int) -> bool:
 OVER_DISK = 253
 
 
+def suite_masks(hidden: tuple[Path, ...]) -> list[Path]:
+    # GATE_FULL_SUITE as named and as resolved, unless a tmpfs in `hidden` already covers it.
+    name = os.environ.get("GATE_FULL_SUITE")
+    if not name:
+        return []
+    paths = {Path(name).absolute(), Path(name).resolve()}
+    return sorted(p for p in paths if p.is_file() and not any(p.is_relative_to(h) for h in hidden))
+
+
 def run(
     cmd: list[str],
     timeout: float,
@@ -312,6 +321,10 @@ def run(
     box += ["--tmpfs", str(home), "--ro-bind", str(ELAN), str(ELAN)]
     box += ["--tmpfs", str(HERE), "--ro-bind", str(LIB), str(LIB)]
     box += ["--ro-bind-try", str(pinned), str(pinned)]
+    # The private suite is the gate's alone: its plan reaches a bench through BENCH_PLAN, so no
+    # build or bench needs the file, wherever the operator keeps it.
+    for path in suite_masks((home, HERE, Path("/tmp"))):
+        box += ["--ro-bind", "/dev/null", str(path)]
     # The user's runtime dir holds its D-Bus and systemd sockets.
     if (runtime := os.environ.get("XDG_RUNTIME_DIR")) and Path(runtime).is_dir():
         box += ["--tmpfs", runtime]
