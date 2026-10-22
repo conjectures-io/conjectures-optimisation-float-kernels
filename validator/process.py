@@ -59,6 +59,9 @@ def install_signals():
 def supervised(
     command, heartbeat, timeout, interval, log_path, env_extra=None, pass_fds=(), cancelled=None
 ):
+    from sandbox import require_backend
+
+    require_backend()
     with open(log_path, "wb") as log:
         proc = subprocess.Popen(
             ["setpriv", "--pdeathsig", "KILL", "--", *command],

@@ -57,6 +57,9 @@ def main():
     parser.add_argument("--environment")
     parser.add_argument("--expected-identity")
     args = parser.parse_args()
+    from sandbox import require_backend
+
+    require_backend()
     load(args.credentials)
     store = db.connect()
     try:

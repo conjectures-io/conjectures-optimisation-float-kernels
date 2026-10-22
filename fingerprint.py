@@ -10,6 +10,7 @@ HERE = Path(__file__).resolve().parent
 COMMON = [
     "fingerprint.py",
     "validator/sandbox.py",
+    "validator/macos_worker.py",
     "lean/lakefile.lean",
     "lean/lake-manifest.json",
     "lean/lean-toolchain",

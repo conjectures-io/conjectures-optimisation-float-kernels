@@ -36,6 +36,10 @@ class MeasurementFailure(Exception):
 
 def machine_identity():
     """Stable execution identity, computed on the worker, not asserted by the coordinator."""
+    if sandbox.backend() == "macos-seatbelt":
+        from macos_worker import identity
+
+        return digest(identity() | {"toolchain": (sandbox.LIB / "lean-toolchain").read_text()})
     fields = {}
     for line in Path("/proc/cpuinfo").read_text().splitlines():
         if ":" in line:

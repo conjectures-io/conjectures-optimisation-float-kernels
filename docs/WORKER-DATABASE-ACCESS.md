@@ -47,6 +47,13 @@ results are trusted worker assertions, not hardware-attested measurements.
 
 ## Prepare and check the worker
 
+Native macOS benchmark workers currently fail closed. `./setup-macos.sh --benchmark-worker`,
+preflight, worker startup and subprocess execution refuse before running candidate code.
+`GATE_SANDBOX=0` cannot override this. Seatbelt benchmark execution was tested, but
+per-job aggregate memory/swap limits and cleanup of detached child processes remain
+unverified. Process-group cleanup alone does not contain children that call `setsid()`.
+The setup and launch instructions below apply to Linux.
+
 Keep PostgreSQL bound to loopback as provided by Compose. Use a private connection or a tunnel
 such as `ssh -N -L 15435:127.0.0.1:5435 DATABASE_HOST`; restrict and manage SSH access separately.
 
