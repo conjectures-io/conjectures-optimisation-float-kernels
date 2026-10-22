@@ -158,8 +158,11 @@ def run_audit(repo, task, settings, stop):
 
 
 def main():
+    from worker_credentials import load
+
     install_signals()
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--credentials", type=Path)
     parser.add_argument("--cases", type=int, default=50)
     parser.add_argument("--seconds", type=float, default=900)
     parser.add_argument("--lease", type=float, default=120)
@@ -174,6 +177,7 @@ def main():
         "--discover-only", action="store_true", help="discover one batch without building"
     )
     args = parser.parse_args()
+    load(args.credentials)
     try:
         profile = audit_profile(args.cases)
     except ValueError as exc:

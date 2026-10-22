@@ -30,6 +30,22 @@ def timestamp():
     return mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class WorkerLogin(Base):
+    __tablename__ = "worker_logins"
+    login: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    created_at: Mapped[dt.datetime] = timestamp()
+    updated_at: Mapped[dt.datetime] = timestamp()
+    __table_args__ = (CheckConstraint("kind IN ('benchmark','auditor')", name="ck_worker_kind"),)
+
+
+class WorkerEnvironment(Base):
+    __tablename__ = "worker_environments"
+    login: Mapped[str] = mapped_column(ForeignKey("worker_logins.login"), primary_key=True)
+    environment: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
 class Registration(Base):
     __tablename__ = "registrations"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -138,6 +154,7 @@ class BenchmarkJob(Base):
     state: Mapped[str] = mapped_column(Text, server_default="queued")
     due_at: Mapped[dt.datetime] = timestamp()
     attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    claimant: Mapped[str | None] = mapped_column(Text)
     owner: Mapped[str | None] = mapped_column(Text)
     token: Mapped[str | None] = mapped_column(Text)
     lease_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
@@ -157,7 +174,7 @@ class BenchmarkJob(Base):
         ),
         CheckConstraint(
             "(state = 'running') = (owner IS NOT NULL AND token IS NOT NULL "
-            "AND lease_until IS NOT NULL)",
+            "AND lease_until IS NOT NULL AND claimant IS NOT NULL)",
             name="ck_job_lease",
         ),
         Index("ix_job_due", "environment", "state", "due_at", "id"),

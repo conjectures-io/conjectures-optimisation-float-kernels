@@ -16,6 +16,7 @@ class WorkerDb:
     def __init__(self, sessions):
         self.sessions = sessions
         self.requests = {}
+        self.claims = {}
 
     def claim(self, environment, identity, owner):
         with session_scope(self.sessions) as s:
@@ -36,6 +37,7 @@ class WorkerDb:
                 return None
             job = SimpleNamespace(**row)
             self.requests = {job.id: job.request}
+            self.claims = {job.id: (job.owner, job.token)}
             return job
 
     def heartbeat(self, jid, owner, token):
@@ -72,5 +74,13 @@ class WorkerDb:
 
     def sources(self, jid):
         with session_scope(self.sessions) as s:
-            row = s.execute(text("SELECT * FROM public.sources(:id)"), {"id": jid}).one()
+            owner, token = self.claims[jid]
+            row = s.execute(
+                text("SELECT * FROM public.sources(:id,:owner,:token)"),
+                {"id": jid, "owner": owner, "token": token},
+            ).one()
             return bytes(row.candidate), bytes(row.reference)
+
+    def access(self):
+        with session_scope(self.sessions) as s:
+            return s.scalar(text("SELECT public.worker_access()"))

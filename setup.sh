@@ -5,6 +5,7 @@
 #   ./setup.sh --service   also the gate worker, store client and .env
 #   ./setup.sh --chain     also the bittensor SDK the chain watcher and weight setter need
 #   ./setup.sh --benchmark-worker  only local builds, timing and remote DB access
+#   ./setup.sh --audit-worker      only proof/audit builds and remote DB access
 #   ./setup.sh --dev       full build and all Python development dependencies
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -14,19 +15,20 @@ log() { echo "[setup] $(date -u +%H:%M:%S) $*"; }
 missing=0
 have() { if command -v "$1" >/dev/null 2>&1; then log "ok       $1"; else log "MISSING  $1 - $2"; missing=1; fi; }
 
-check=0; service=0; chain=0; benchmark_worker=0; dev=0
+check=0; service=0; chain=0; benchmark_worker=0; audit_worker=0; dev=0
 for arg in "$@"; do
   case "$arg" in
     --check) check=1 ;;
     --service) service=1 ;;
     --chain) service=1; chain=1 ;;
     --benchmark-worker) benchmark_worker=1 ;;
+    --audit-worker) audit_worker=1 ;;
     --dev) dev=1 ;;
     *) log "unknown option $arg"; exit 2 ;;
   esac
 done
-if [ "$benchmark_worker" = 1 ] && { [ "$service" = 1 ] || [ "$dev" = 1 ]; }; then
-  log "--benchmark-worker is a minimal mode; use it without --service, --chain or --dev"
+if { [ "$benchmark_worker" = 1 ] || [ "$audit_worker" = 1 ]; } && { [ "$service" = 1 ] || [ "$dev" = 1 ] || { [ "$benchmark_worker" = 1 ] && [ "$audit_worker" = 1 ]; }; }; then
+  log "worker setup is a minimal mode; choose one worker profile without --service, --chain or --dev"
   exit 2
 fi
 
@@ -68,6 +70,8 @@ mkdir -p work
 cp "$here/kernels/exact/incumbent/Kernel.lean" work/Submission.lean
 if [ "$benchmark_worker" = 1 ]; then
   lake build VerifyExact benchExact 2>&1 | tail -3
+elif [ "$audit_worker" = 1 ]; then
+  lake build VerifyExact exactAudit 2>&1 | tail -3
 else
   lake build ExactSuiteProofs VerifyExact benchExact exactDev validateExact exactSpecProbe auditExactShapes auditExactWorkloads exactAudit 2>&1 | tail -3
 fi
@@ -76,6 +80,8 @@ fi
 cd "$here"
 [ -x .venv/bin/python ] || python3 -m venv .venv
 if [ "$benchmark_worker" = 1 ]; then
+  .venv/bin/pip install -q -r requirements/benchmark-worker.txt
+elif [ "$audit_worker" = 1 ]; then
   .venv/bin/pip install -q -r requirements/benchmark-worker.txt
 elif [ "$dev" = 1 ]; then
   log "installing all Python development dependencies into .venv"
@@ -94,6 +100,8 @@ if [ "$chain" = 1 ]; then
 fi
 if [ "$benchmark_worker" = 1 ]; then
   log "done - configure remote DB access; run with PYTHONPATH=.:validator .venv/bin/python -m workers.benchmark_worker --environment NAME"
+elif [ "$audit_worker" = 1 ]; then
+  log "done - run PYTHONPATH=.:validator .venv/bin/python -m workers.exact_auditor --credentials FILE"
 elif [ "$dev" = 1 ]; then
   log "done - select $here/.venv/bin/python as your IDE interpreter; test with .venv/bin/python -m pytest -m 'not slow'"
 else

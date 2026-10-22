@@ -39,7 +39,7 @@ def cancel(session, evaluation):
         )
         if consumers is None and job.state in ("queued", "running", "failed"):
             job.state = "cancelled"
-            job.owner = job.token = job.lease_until = None
+            job.claimant = job.owner = job.token = job.lease_until = None
 
 
 class EvaluationsDb:
@@ -256,7 +256,7 @@ class EvaluationsDb:
             for job in s.scalars(job_query(e.id)):
                 if job.state in ("queued", "running"):
                     job.state = "cancelled"
-                    job.owner = job.token = job.lease_until = None
+                    job.claimant = job.owner = job.token = job.lease_until = None
             if decision["outcome"] == "qualifies":
                 s.add(
                     m.Promotion(

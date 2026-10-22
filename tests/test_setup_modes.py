@@ -26,7 +26,9 @@ def setup_project(tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize("mode", ["--benchmark-worker", "--dev", "--service", "--chain"])
+@pytest.mark.parametrize(
+    "mode", ["--benchmark-worker", "--audit-worker", "--dev", "--service", "--chain"]
+)
 def test_setup_installs_matching_dependencies_and_builds(setup_project, mode):
     log = setup_project / "calls.log"
     result = subprocess.run(
@@ -41,6 +43,11 @@ def test_setup_installs_matching_dependencies_and_builds(setup_project, mode):
         assert "lake build VerifyExact benchExact\n" in calls
         assert "requirements/benchmark-worker.txt" in calls
         assert "exactAudit" not in calls
+        assert "requirements/miner.txt" not in calls
+        assert "requirements/service.txt" not in calls
+    elif mode == "--audit-worker":
+        assert "lake build VerifyExact exactAudit" in calls
+        assert "requirements/benchmark-worker.txt" in calls
         assert "requirements/miner.txt" not in calls
         assert "requirements/service.txt" not in calls
     else:

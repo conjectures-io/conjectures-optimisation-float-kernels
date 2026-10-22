@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import socket
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from pathlib import Path
 from benchmark import machine_identity
 from loguru import logger
 from process import ROOT, BudgetExceeded, install_signals, supervised
+from worker_credentials import load
 
 import db
 from db.jobs import WorkerDb
@@ -65,12 +67,17 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
 def main():
     install_signals()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--environment", required=True)
+    parser.add_argument("--environment")
+    parser.add_argument("--credentials", type=Path)
     parser.add_argument(
         "--host-lock", type=Path, default=Path("/tmp/floatlib-exact-benchmark.lock")
     )
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+    load(args.credentials)
+    args.environment = args.environment or os.environ.get("BENCHMARK_ENVIRONMENT")
+    if not args.environment:
+        parser.error("--environment or BENCHMARK_ENVIRONMENT is required")
     owner = f"{socket.gethostname()}:{__import__('os').getpid()}"
     store = db.connect()
     repo = WorkerDb(store.sessions)

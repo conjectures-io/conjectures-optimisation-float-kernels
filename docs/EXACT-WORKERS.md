@@ -17,11 +17,10 @@ the miner CLI, chain SDK, migrations or audit executables. System packages repor
 missing must be installed separately. A working user systemd session and permitted
 unprivileged user namespaces are still required; setup checks tool presence, not those
 runtime permissions. Use `./setup.sh --benchmark-worker --check` to check installed tools.
-Load the remote database credentials for the execute-only role from
-`deploy/platform/benchmark_worker.sql`, then run:
+Provision an individual login using [the worker access guide](WORKER-DATABASE-ACCESS.md), then run:
 
 ```bash
-PYTHONPATH=.:validator .venv/bin/python -m workers.benchmark_worker --environment NAME
+PYTHONPATH=.:validator .venv/bin/python -m workers.benchmark_worker --credentials /secure/benchmark.json --environment NAME
 ```
 
 The only job mutation implementation is the frozen SQL protocol installed by tensor_0001.
@@ -44,14 +43,13 @@ promotions, fetches immutable sources from the competition database, and tests t
 against the pinned specification in a sandbox. Stopping it or finding a mismatch does not change
 champions, submission processing or rewards. Findings require operator investigation.
 
-Prepare the full toolchain with `./setup.sh --service`. Create a separate database login and apply
-`deploy/platform/exact_auditor.sql`; that role can read competition sources and history, and write
-only `audits`, `audit_cursors` and `audit_attempts`. Then run:
+Prepare the toolchain with `./setup.sh --audit-worker`. Provision an auditor login as described
+in [the worker access guide](WORKER-DATABASE-ACCESS.md). Its permission role can read sources
+and history and write only `audits`, `audit_cursors` and `audit_attempts`. Then run:
 
 ```bash
 export PYTHONPATH=.:validator
-export DATABASE_URL='postgresql+psycopg://exact_auditor:PASSWORD@DB_HOST:5432/floatlib?sslmode=require'
-.venv/bin/python -m workers.exact_auditor --cases 50 --output /var/lib/tensor-audits
+.venv/bin/python -m workers.exact_auditor --credentials /secure/auditor.json --cases 50 --output /var/lib/tensor-audits
 ```
 
 Use a private database connection, URL-encoded credentials and appropriate TLS settings.
