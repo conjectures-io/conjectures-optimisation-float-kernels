@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rehearse exact proof -> leased local jobs -> board decisions -> reward vector, in a scratch DB.
+"""Rehearse proof -> leased jobs -> board decisions -> champion audit -> rewards, in a scratch DB.
 
 Requires CREATE DATABASE on --admin-url, the Lean build environment and working sandbox limits.
 Does not use the API or submit chain weights. Short timings exercise plumbing, not admission noise.
@@ -97,7 +97,12 @@ def main():
                 )
                 if submission.state == "rejected":
                     raise RuntimeError(f"proof rejected: {submission.reason}")
-            if done == 6:
+                # A promotion is finished once the coordinator has audited the new champion.
+                promoted = s.scalar(sa.select(sa.func.count()).select_from(models.ExactPromotion))
+                audits = list(s.scalars(sa.select(models.ExactAudit.state)))
+            if done == 6 and (
+                not promoted or (audits and all(a not in ("queued", "running") for a in audits))
+            ):
                 break
             with (out / "worker.log").open("a") as log:
                 worker = subprocess.Popen(
@@ -128,6 +133,10 @@ def main():
             )
             jobs = list(s.scalars(sa.select(models.ExactJob).order_by(models.ExactJob.id)))
             submission = s.get(models.Submission, sid)
+            audits = [
+                {"source_hash": a.source_hash, "state": a.state, "report": a.report}
+                for a in s.scalars(sa.select(models.ExactAudit).order_by(models.ExactAudit.id))
+            ]
             data = {
                 "proof": submission.exact_verification,
                 "evaluations": [
@@ -144,6 +153,7 @@ def main():
                     }
                     for j in jobs
                 ],
+                "audits": audits,
             }
         setter = WeightSetterConfig(
             scoring_source="exact", netuid=2, treasury_override=0, competition_share_override=0.2
@@ -163,7 +173,8 @@ def main():
         (out / "results.json").write_text(json.dumps(data, indent=2))
         print(
             f"Proof accepted; {len(evaluations)} board decisions; {len(jobs)} jobs; "
-            f"vector {plan.weights}; {data['seconds']:.1f}s"
+            f"audits {[a['state'] for a in audits]}; vector {plan.weights}; "
+            f"{data['seconds']:.1f}s"
         )
     except Exception as exc:
         failure = {"reason": str(exc), "seconds": time.monotonic() - started}

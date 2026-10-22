@@ -8,7 +8,7 @@ import json
 import math
 import re
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 MODELS = {
@@ -21,6 +21,10 @@ MODELS = {
 BATCHES = {"mlp": (1, 8), "cnn": (1, 4), "mnet": (1, 4), "nmlp": (1, 8), "mixer": (1, 4)}
 KINDS = ("normal", "wide", "sparse")
 VERSION = "exact-boards-v1"
+# The champion audit (`gate.py --audit`): what a failure does (decision D8), the cases per kernel
+# and input kind, and the time limit. `alert` changes no payout.
+AUDIT_POLICIES = ("alert", "disqualify", "hold")
+AUDIT_DEFAULTS = {"policy": "alert", "cases": 50, "seconds": 900}
 
 
 def digest(value: object) -> str:
@@ -72,6 +76,7 @@ class Config:
     proof_identity: str = ""
     benchmark_identity: str = ""
     seed_mode: str = "fixed"
+    audit: dict = field(default_factory=lambda: dict(AUDIT_DEFAULTS))
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
@@ -99,6 +104,7 @@ class Config:
             "proof_identity",
             "benchmark_identity",
             "seed_mode",
+            "audit",
         }
         if set(raw) - allowed:
             raise ValueError(f"unknown configuration keys: {set(raw) - allowed}")
@@ -166,6 +172,16 @@ class Config:
             raise ValueError("draws and min_rounds must be positive integers")
         if timing["rounds"] < admission["min_rounds"]:
             raise ValueError("not enough configured rounds")
+        audit = AUDIT_DEFAULTS | data.get("audit", {})
+        if set(audit) != set(AUDIT_DEFAULTS):
+            raise ValueError("audit takes policy, cases and seconds only")
+        if audit["policy"] not in AUDIT_POLICIES:
+            raise ValueError(f"audit policy must be one of {AUDIT_POLICIES}")
+        if type(audit["cases"]) is not int or not 1 <= audit["cases"] <= 1000:
+            raise ValueError("audit cases must be an integer from 1 to 1000")
+        if not math.isfinite(audit["seconds"]) or audit["seconds"] <= 0:
+            raise ValueError("audit seconds must be finite and positive")
+        data["audit"] = audit
         rewards = data["rewards"]
         if set(rewards) != {"board_weights", "rank_shares", "paused_policy"}:
             raise ValueError("incomplete reward settings")

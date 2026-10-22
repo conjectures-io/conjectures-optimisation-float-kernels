@@ -11,7 +11,7 @@ because the code or migration is installed. No chain transaction is sent by the 
 
 | Component | Command/module | Responsibility |
 |---|---|---|
-| Coordinator | `workers.exact_coordinator` | Own config, verify sources, plan jobs, aggregate and promote |
+| Coordinator | `workers.exact_coordinator` | Own config, verify sources, plan jobs, aggregate, promote and audit champions |
 | Hardware worker | `workers.benchmark_worker` | Claim leased jobs, build locally, benchmark pairs, save observations |
 | Benchmark subprocess | `exact.runner` | Sandbox builds and timing; report actual execution provenance |
 | Weight setter | existing `workers.weight_setter` | Consume published reward policy when explicitly selected |
@@ -127,7 +127,34 @@ Unclaimed, expired and repeatedly failing jobs produce coordinator warnings. A m
 repair the machine/reference and let the same job retry. No extra miner upload or registration
 charge is introduced by recovery.
 
-## 6. Rewards: opt in only after review
+## 6. Champion audit
+
+A proof shows an entry meets the specification; the audit checks the built entry against it as
+well, on random and edge-case inputs of every kernel (`gate.py --slot exact --audit`, which runs
+`exactAudit --json` in the sandbox). After each publication the coordinator queues an audit of
+every board's two current champions' sources, once per audit version: a digest of
+`lean/audit/ExactAudit*.lean` and the proof identity, so a stronger audit re-audits them. A queued
+audit runs when no proof check waits, with a fresh seed and the `[audit]` settings:
+
+```toml
+[audit]
+policy = 'alert'   # what a failure does: alert, disqualify or hold
+cases = 50         # cases per kernel and input kind
+seconds = 900      # the audit's time budget
+```
+
+| Policy | A failed audit | An unaudited champion |
+|---|---|---|
+| `alert` | logs an error; the champion stays paid | paid |
+| `disqualify` | disqualifies every promotion of the source; the earlier champions are paid | paid |
+| `hold` | as `disqualify` | not paid until one of its audits is clean; the earlier clean champions are |
+
+Only a mismatch the audit reports fails a champion. Any other outcome (a sandbox or build error, a
+timeout) is an error, retried with backoff, and never disqualifies. Each king in the publication
+carries its source's audit state: `pending`, `clean` or `failed`. A coordinator stopped mid-audit
+runs it again. Every outcome, with its seed and first mismatches, is in `exact_audits`.
+
+## 7. Rewards: opt in only after review
 
 The coordinator publishes compact board/rank/pause metadata atomically with promotions. The
 weight setter reads that publication, without bootstrapping statistics or scanning raw timings.
@@ -148,7 +175,7 @@ vacancies and chain-ineligible hotkeys route to treasury without reallocating th
 `paused_policy = 'treasury'` withholds the whole affected board allocation; `preserve` retains it.
 Disqualification is `exact_promotions.disqualified_at`, separate from ordinary supersession.
 
-## 7. Reproduce a real local rehearsal
+## 8. Reproduce a real local rehearsal
 
 Use a database administrator URL with `CREATE DATABASE` permission on a development server:
 
@@ -159,7 +186,8 @@ PYTHONPATH=.:validator .venv/bin/python scripts/test-exact-workflow.py \
 ```
 
 The command creates and migrates a uniquely named scratch database, queues a copy of the complete
-incumbent, runs real proof checks and six board comparisons, and computes a test reward vector.
+incumbent, runs real proof checks and six board comparisons, audits any new champion, and computes a test
+reward vector.
 It saves source/config, logs and raw results, terminates its workers, restores the previous shared
 submission source, and drops the scratch database. It never sends chain weights. Use `--candidate`
 for another complete entry and `--minutes` for an overall deadline.
@@ -172,7 +200,7 @@ For PostgreSQL protocol/statistics/reward tests:
 
 ```bash
 POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=<dev-port> POSTGRES_PASSWORD=<dev-password> \
-  .venv/bin/pytest -q tests/test_exact_competition.py tests/test_db_schema.py
+  .venv/bin/pytest -q tests/test_exact_competition.py tests/test_exact_audit.py tests/test_db_schema.py
 ```
 
 Tests create/drop scratch databases. They cover claims, stale tokens, restricted worker grants,

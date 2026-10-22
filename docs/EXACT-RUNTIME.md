@@ -114,6 +114,7 @@ Run from `lean/` with an entry in `work/Submission.lean` (the gate leaves its la
 | `lake exe exactDev profile cnn` | one sample of a model, layer by layer (`mlp`, `cnn`, `mnet`, `nmlp`, `mixer`) |
 | `lake exe exactDev models` | every cell against FloatLib's kernels (slow) |
 | `lake exe exactAudit [--malformed] [cases] [seed]` | every kernel against the specs on random and edge-case inputs (subnormals, overflow, exponent gaps, NaN and infinities, zeros, ties, cancellation); `--malformed` adds inputs shorter than their shape |
+| `lake exe exactAudit --json [cases] [seed]` | the same audit, printing one JSON summary line (cases, mismatches, seed, the first mismatches); what `gate.py --slot exact --audit` runs on a champion |
 | `lake exe exactAudit --mutants [cases]` | the mutation score: 37 plausible wrong kernels (wrong rounding mode, ties away from zero, canonical NaN, lost −0, saturation, an off-by-one, a transposed index, clamped padding, no `fma`, blocked or tiled accumulation and outputs, ties at every final rounding (normal, subnormal, square root, overflow), a variance around the rounded mean, the old normalisation, …), each of which the audit must catch |
 | `lake exe exactAudit --coverage [cases]` | per kernel, how many outputs are +0, −0, subnormal, normal, ∞ and NaN: a 0 marks a case the inputs never reach |
 | `lake exe exactAudit --selftest` | the spec against itself is clean and every mutant is caught |

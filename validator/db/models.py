@@ -370,6 +370,34 @@ class ExactJob(Base):
     )
 
 
+class ExactAudit(Base):
+    """The champion audit of one promoted source by one audit version: its state and findings."""
+
+    __tablename__ = "exact_audits"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), nullable=False)
+    audit_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    seed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cases: Mapped[int] = mapped_column(Integer, nullable=False)
+    report: Mapped[dict | None] = mapped_column(JSONB)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    due_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("source_hash", "audit_identity"),
+        CheckConstraint(
+            "state IN ('queued','running','clean','failed','error')",
+            name="ck_exact_audit_state",
+        ),
+        Index("ix_exact_audits_due", "state", "due_at"),
+    )
+
+
 class ExactPromotion(Base):
     """Separate history keeps legacy one-slot promotion constraints and reads unchanged."""
 
