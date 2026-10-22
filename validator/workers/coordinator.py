@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import fcntl
 import hashlib
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -16,14 +16,42 @@ import time
 import uuid
 from pathlib import Path
 
+import sandbox
 from config import Config
 from loguru import logger
-from process import ROOT, install_signals, supervised
+from process import ROOT, BudgetExceeded, checkout, install_signals, supervised
+from provenance import specification_identity
 from sqlalchemy import text
 
 import db
 import fingerprint
 from db.evaluations import EvaluationsDb
+
+
+def source_environment():
+    # Audit provenance is useful even in packaged deployments without Git metadata.
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = None
+    return {
+        "commit": commit,
+        "specification_identity": specification_identity(),
+        "toolchain": (ROOT / "lean/lean-toolchain").read_text().strip(),
+        "manifest_sha256": hashlib.sha256(
+            (ROOT / "lean/lake-manifest.json").read_bytes()
+        ).hexdigest(),
+        "verifier_settings": {
+            "sandbox": sandbox._SANDBOX,
+            "build_memory_mb": sandbox._BUILD_MEMORY_MB,
+            "benchmark_memory_mb": sandbox._BENCH_MEMORY_MB,
+            "file_mb": sandbox._FILE_MB,
+            "build_disk_mb": sandbox._BUILD_DISK_MB,
+            "tasks_max": sandbox._TASKS_MAX,
+        },
+    }
 
 
 def verify(repo, sub, config, stop):
@@ -43,15 +71,7 @@ def verify(repo, sub, config, stop):
                     sub.id, sub.token, config.lease_seconds
                 )
 
-            with open(ROOT / "gate.lock", "a") as checkout_lock:
-                while True:
-                    try:
-                        fcntl.flock(checkout_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError:
-                        if not heartbeat():
-                            raise RuntimeError("proof lease lost while waiting for build workspace")
-                        time.sleep(min(config.lease_seconds / 3, 1))
+            with checkout(heartbeat, min(config.lease_seconds / 3, 1)) as checkout_lock:
                 code = supervised(
                     [
                         sys.executable,
@@ -87,7 +107,16 @@ def verify(repo, sub, config, stop):
             ):
                 code = 2
                 verdict["reason"] = "proof identity changed or successful proof evidence missing"
+            if code == 0:
+                verdict["source_environment"] = source_environment()
+                if fingerprint.proof() != config.proof_identity:
+                    code = 2
+                    verdict["reason"] = (
+                        "verification environment changed while recording provenance"
+                    )
             verdict["exit_code"] = code if code in (0, 1) else 2
+        except BudgetExceeded as exc:
+            verdict = {"exit_code": 1, "stage": "timeout", "reason": f"proof check {exc}"}
         except Exception as exc:
             verdict = {"exit_code": 2, "stage": "infrastructure", "reason": str(exc)}
         if not stop.is_set():

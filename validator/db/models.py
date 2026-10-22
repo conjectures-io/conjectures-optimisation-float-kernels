@@ -179,6 +179,7 @@ class Promotion(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     board: Mapped[str] = mapped_column(Text)
     evaluation_id: Mapped[int] = mapped_column(ForeignKey("evaluations.id"), unique=True)
+    source_environment: Mapped[dict] = mapped_column(JSONB, server_default="{}")
     promoted_at: Mapped[dt.datetime] = timestamp()
     disqualified_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     disqualification_reason: Mapped[str | None] = mapped_column(Text)
@@ -211,3 +212,77 @@ class WeightSet(Base):
     publication: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[dt.datetime] = timestamp()
     __table_args__ = (Index("ix_weight_sets_netuid_id", "netuid", "id"),)
+
+
+class Audit(Base):
+    """The champion audit of one promoted source by one audit version: its state and findings."""
+
+    __tablename__ = "audits"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_hash: Mapped[str] = mapped_column(ForeignKey("sources.sha256"), nullable=False)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), nullable=False)
+    audit_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    seed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cases: Mapped[int] = mapped_column(Integer, nullable=False)
+    report: Mapped[dict | None] = mapped_column(JSONB)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    due_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    request: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    owner: Mapped[str | None] = mapped_column(Text)
+    token: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("source_hash", "audit_identity"),
+        CheckConstraint(
+            "state IN ('queued','running','clean','failed','error')",
+            name="ck_exact_audit_state",
+        ),
+        CheckConstraint(
+            "(state = 'running') = (owner IS NOT NULL AND token IS NOT NULL "
+            "AND lease_until IS NOT NULL)",
+            name="ck_audit_lease",
+        ),
+        Index("ix_audits_due", "state", "due_at"),
+    )
+
+
+class AuditCursor(Base):
+    """A durable promotion-discovery cursor for each independently versioned audit profile."""
+
+    __tablename__ = "audit_cursors"
+    profile_identity: Mapped[str] = mapped_column(Text, primary_key=True)
+    promotion_id: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+
+
+class AuditAttempt(Base):
+    """Attempt history survives retries, expired claims, and worker restarts."""
+
+    __tablename__ = "audit_attempts"
+    token: Mapped[str] = mapped_column(Text, primary_key=True)
+    audit_id: Mapped[int] = mapped_column(ForeignKey("audits.id"), nullable=False)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
+    report: Mapped[dict | None] = mapped_column(JSONB)
+    started_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SourceDisqualification(Base):
+    """Explicit operator eligibility decision; audit findings never write this table."""
+
+    __tablename__ = "source_disqualifications"
+    source_hash: Mapped[str] = mapped_column(ForeignKey("sources.sha256"), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    history: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

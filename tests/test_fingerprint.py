@@ -21,3 +21,10 @@ def test_benchmark_excludes_reward_and_scoring_code():
     )
     assert fingerprint.proof() != fingerprint.benchmark()
     assert all((Path(fingerprint.HERE) / name).is_file() for name in fingerprint.PINNED)
+
+
+def test_host_limits_do_not_invalidate_distributed_source_identities(monkeypatch):
+    proof, benchmark = fingerprint.proof(), fingerprint.benchmark()
+    monkeypatch.setenv("GATE_BUILD_MEMORY_MB", "8192")
+    assert fingerprint.proof() == proof
+    assert fingerprint.benchmark() == benchmark

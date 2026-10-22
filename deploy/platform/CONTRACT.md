@@ -25,10 +25,14 @@ submission_files or competition-side rate-limit table exists. The central API ow
 - Submission proof: submissions.state = queued/running/proved/rejected and proof_report JSON.
 - Evaluation outcomes: evaluations per submission/board/generation; raw jobs via evaluation_jobs.
 - History: promotions -> evaluations -> submissions -> sources. A baseline is a source,
-  not a fabricated miner submission. Current champion is the latest non-disqualified promotion.
+  not a fabricated miner submission. Current champion is the latest eligible promotion: exclude both promotion-level disqualification
+  and an active `source_disqualifications` row for its source hash.
 - A board's challengers: evaluations filtered by board and reference_promotion_id.
 - Rewards: SELECT publication,publication_hash FROM coordinator_state WHERE id=1.
 - Chain audit: weight_sets contains actual attempts and compact policy inputs only.
+- Champion audits: `audits`, `audit_attempts` and `audit_cursors` are independent, report-only
+  records. `promotions.source_environment` freezes verification/specification provenance.
+  Audit results do not change eligibility or publication; explicit operator source restrictions do.
 
 Board names are text; standard config generates overall/mlp/resnet/mobilenet/normalized_mlp/mixer.
 Published board/rank allocations are configurable. Missing ranks and unregistered recipients route

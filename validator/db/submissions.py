@@ -9,6 +9,7 @@ import uuid
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from .champions import source_blocked
 from .engine import session_scope
 from .models import CoordinatorState, Registration, Source, Submission
 from .registrations import NoSlot
@@ -78,10 +79,11 @@ class SubmissionsDb:
             row = s.scalar(
                 select(Submission)
                 .where(
+                    ~source_blocked(Submission.source_sha256),
                     or_(
                         and_(Submission.state == "queued", Submission.next_attempt_at <= now),
                         and_(Submission.state == "running", Submission.lease_until <= now),
-                    )
+                    ),
                 )
                 .order_by(Submission.submitted_at, Submission.id)
                 .limit(1)

@@ -20,7 +20,7 @@ BUILD = LIB / ".lake" / "build"
 CONFIG = LIB / ".lake" / "config"
 SCRATCH = HERE / ".sandbox" / "config"
 LAYER = HERE / ".sandbox" / "layer"
-OWN_STEMS = {"Submission", "VerifyExact", "MainExact", "benchExact"}
+OWN_STEMS = {"Submission", "VerifyExact", "MainExact", "benchExact", "ExactAudit", "exactAudit"}
 WORK = LIB / "work" / "Submission.lean"
 SHIPPED = HERE / "kernels/exact/incumbent/Kernel.lean"
 ELAN = Path.home() / ".elan"
@@ -310,12 +310,14 @@ def progress(phase: str, **fields) -> None:
         temporary.replace(target)
 
 
-def prepare_shared(*, native=False):
+def prepare_shared(*, native=False, audit=False):
     """Only operator code writes shared modules; entries build into an overlay."""
     subprocess.run([LAKE, "env", "true"], cwd=LIB, check=True, capture_output=True)
     WORK.parent.mkdir(exist_ok=True)
     shutil.copy2(SHIPPED, WORK)
     targets = ["VerifyExact", "benchExact"] if native else ["VerifyExact"]
+    if audit:
+        targets += ["ExactAuditCore", "exactAudit"]
     code, out = run([LAKE, "build", *targets], _BUILD_TIMEOUT, build="trusted")
     if code:
         raise RuntimeError(f"shared build preparation failed: {errors(out, code)}")

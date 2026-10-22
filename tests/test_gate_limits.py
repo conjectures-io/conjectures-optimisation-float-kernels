@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -17,6 +18,12 @@ PROOF = (
     "theorem add_spec : ∀ x y : Binary32, add x y = ExecFloat.Spec.add x y :=\n"
     "  fun x y => ExecFloat.Proof.add_eq_spec x y\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_sandbox_config(monkeypatch, tmp_path):
+    # These direct sandbox probes never own the worker's checkout lock.
+    monkeypatch.setattr(gate, "SCRATCH", tmp_path / "sandbox-config")
 
 
 def policy_of(tmp_path: Path, body: str) -> str | None:
@@ -109,7 +116,13 @@ def _sandbox_works() -> bool:
         gate.check_limits()
     except Exception:  # noqa: BLE001 - any missing piece means this host cannot run the check
         return False
-    return gate.run(["true"], 30)[0] == 0
+    with tempfile.TemporaryDirectory(prefix="sandbox-probe-") as directory:
+        original = gate.SCRATCH
+        gate.SCRATCH = Path(directory) / "config"
+        try:
+            return gate.run(["true"], 30)[0] == 0
+        finally:
+            gate.SCRATCH = original
 
 
 @pytest.mark.skipif(not _sandbox_works(), reason="no working sandbox on this host")

@@ -36,6 +36,14 @@ Select `.venv/bin/python` as your IDE's Python interpreter (in VS Code:
 language server's import paths; for VS Code/Pylance, set `python.analysis.extraPaths`
 to `["./validator"]`. Development setup does not start services or create a database.
 
+## Native macOS research
+
+Run `./setup-macos.sh --dev` to build proofs, benchmark and audit executables with test/plotting
+dependencies. It raises the process open-file limit for Mathlib extraction and preserves the
+existing submission. Use `--source kernels/exact/cached-conv/Kernel.lean` to select another source.
+The comparison runner works natively without CPU affinity and records that limitation.
+Sandboxed competition workers require Linux.
+
 ## Run
 
 ```bash

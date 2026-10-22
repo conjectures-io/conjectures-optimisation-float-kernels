@@ -1,5 +1,6 @@
 # submission	slot	mode	passed	stage	ratio_min	ratio_max
-# mode: gate = all stages; nopolicy = policy skipped, to test the stages behind it
+# mode: gate = all stages; nopolicy = policy skipped, to test the stages behind it;
+# audit = the exact slot's audit of an accepted entry
 add/cheat	add	gate	false	policy	-	-
 add/direct	add	gate	true	score	0.70	0.90
 exploits/csimp	add	gate	false	policy	-	-
@@ -56,3 +57,6 @@ exact/forge	exact	gate	false	policy	-	-
 exact/tamper	exact	gate	false	policy	-	-
 exact/forge	exact	nopolicy	false	kernel	-	-
 exact/tamper	exact	nopolicy	false	statement	-	-
+exact/auditwrong	exact	gate	false	statement	-	-
+exact/incumbent	exact	audit	true	audit	-	-
+exact/auditwrong	exact	audit	false	audit	-	-

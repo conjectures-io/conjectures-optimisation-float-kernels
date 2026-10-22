@@ -12,7 +12,7 @@ from scoring import assess
 from sqlalchemy import exists, func, or_, select
 
 from . import models as m
-from .champions import champion, history
+from .champions import champion, history, source_blocked
 from .engine import session_scope
 from .submissions import SubmissionsDb, db_now, lead, put_source
 
@@ -105,7 +105,12 @@ class EvaluationsDb:
                 )
                 ref = champion(s, board)
                 if pending:
-                    if pending.reference_promotion_id == (ref.id if ref else None):
+                    blocked = s.scalar(
+                        select(source_blocked(m.Submission.source_sha256)).where(
+                            m.Submission.id == pending.submission_id
+                        )
+                    )
+                    if not blocked and pending.reference_promotion_id == (ref.id if ref else None):
                         continue
                     cancel(s, pending)
                     s.flush()
@@ -122,6 +127,7 @@ class EvaluationsDb:
                     .where(
                         m.Submission.id > progress.activation_boundary,
                         m.Submission.state != "rejected",
+                        ~source_blocked(m.Submission.source_sha256),
                         ~done,
                     )
                     .order_by(m.Submission.submitted_at, m.Submission.id)
@@ -240,6 +246,7 @@ class EvaluationsDb:
                 e.board not in config.boards
                 or e.config_hash != config.identity(e.board)
                 or e.reference_promotion_id != (current.id if current else None)
+                or s.scalar(select(source_blocked(sub.source_sha256)))
                 or sub.state != "proved"
                 or sub.verification_identity != config.proof_identity
             ):
@@ -251,7 +258,13 @@ class EvaluationsDb:
                     job.state = "cancelled"
                     job.owner = job.token = job.lease_until = None
             if decision["outcome"] == "qualifies":
-                s.add(m.Promotion(board=e.board, evaluation_id=e.id))
+                s.add(
+                    m.Promotion(
+                        board=e.board,
+                        evaluation_id=e.id,
+                        source_environment=(sub.proof_report or {}).get("source_environment", {}),
+                    )
+                )
             progress = s.get(m.BoardProgress, e.board)
             progress.last_submission_id, progress.last_submitted_at = sub.id, sub.submitted_at
             s.flush()
@@ -323,6 +336,46 @@ class EvaluationsDb:
                 )
             ):
                 cancel(s, pending)
+            s.flush()
+            self._publish(s, config)
+
+    def set_disqualification(self, source_hash, active, reason, actor, config):
+        """Operator decision serialized with all coordinator writes, across every board."""
+        from config import sha
+
+        sha(source_hash)
+        if not reason.strip() or not actor.strip():
+            raise ValueError("operator and reason are required")
+        with session_scope(self.sessions) as s:
+            state = s.get(m.CoordinatorState, 1, with_for_update=True)
+            if state is None or state.config_hash != digest(config.public()):
+                raise ValueError("configuration must match the active coordinator")
+            if s.get(m.Source, source_hash) is None:
+                raise ValueError("unknown source")
+            row = s.get(m.SourceDisqualification, source_hash)
+            record = {
+                "active": active,
+                "reason": reason,
+                "actor": actor,
+                "at": db_now(s).isoformat(),
+            }
+            if row is None:
+                row = m.SourceDisqualification(source_hash=source_hash, history=[])
+                s.add(row)
+            row.active, row.reason, row.actor = active, reason, actor
+            row.history = row.history + [record]
+            row.updated_at = db_now(s)
+            s.flush()
+            if active:
+                for evaluation in s.scalars(
+                    select(m.Evaluation)
+                    .join(m.Submission)
+                    .where(
+                        m.Evaluation.state == "pending",
+                        m.Submission.source_sha256 == source_hash,
+                    )
+                ):
+                    cancel(s, evaluation)
             s.flush()
             self._publish(s, config)
 

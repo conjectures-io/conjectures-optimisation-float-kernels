@@ -157,7 +157,12 @@ def measure(request, candidate, reference):
         )
     sandbox.check_limits()
     # sandbox.run uses shared Lake/overlay scratch paths; hold this checkout lock throughout.
-    with open(sandbox.HERE / "sandbox.lock", "w") as lock:
+    with (
+        open(sandbox.HERE / "gate.lock", "a") as build_lock,
+        open(sandbox.HERE / "sandbox.lock", "a") as lock,
+    ):
+        if os.environ.get("GATE_LOCK_HELD") != "1":
+            fcntl.flock(build_lock, fcntl.LOCK_EX)
         fcntl.flock(lock, fcntl.LOCK_EX)
         original = sandbox.WORK.read_bytes() if sandbox.WORK.exists() else None
         try:

@@ -89,3 +89,47 @@ and kernels were unchanged by this refactor.
 
 Deployment requires a **fresh competition DB** and coordinated central API/frontend changes.
 See [the schema contract](../deploy/platform/CONTRACT.md). No production systems were modified.
+
+## Branch merge validation — 2026-10-22
+
+Merged `feat/alternative-kernels` into `chore/exact-model-family-refactor` using the
+simplified tensor workflow as the foundation.
+
+- Folded independent audits, attempt/cursor history and source restrictions into the frozen
+  initial migration `tensor_0001` (14 tables). No legacy upgrade revisions are reintroduced.
+- Ported the report-only auditor to the new source/evaluation/promotion repositories and a
+  standalone sandbox audit command. The coordinator does not schedule or await audits.
+- Preserved proof/benchmark budget handling, provenance, source restrictions across boards,
+  expanded Lean audits, candidate implementations, Mac setup and experiment tooling.
+- Unified the checkout lock for proofs, audits and native benchmarks. Hardware workers acquire
+  it before claiming a job, so waiting does not spend a benchmark lease or execution budget.
+- Isolated mocked subprocess tests and direct sandbox probes from active workers' workspaces.
+- Updated archived replay for both module layouts and measurement formats; 12 saved decisions
+  reproduced exactly without collecting new timings.
+
+Verification:
+
+- **215 fast tests passed**, including fresh migration/ORM parity, downgrade/re-upgrade,
+  restricted roles, stale leases, cross-board restrictions, timeout outcomes and worker fairness.
+- **Two real sandbox differential audits passed**: incumbent clean, deliberately wrong entry
+  detected; both checked 504 cases and left the competition publication unchanged.
+- **Five real proof/attack controls passed**: wrong statement, forge and tamper with policy,
+  plus forge and tamper with policy bypassed (kernel and statement rejection respectively).
+- **18 isolated sandbox tests passed**, including while an audit ran.
+- Ruff lint/format and Git whitespace/conflict checks passed.
+
+| Real worker rehearsal | Duration | Result |
+|---|---:|---|
+| Copy across six boards | 411.4s | proof accepted; six jobs and six decisions; no auditor required |
+| MobileNet takeover against slower proved depthwise reference | 267.1s | score 0.1617, promoted; miner 16%, treasury 84% |
+
+The copy rehearsal preceded the final shared-lock fix. The takeover used the final production
+source files: all 35 files in its source manifest still matched at validation completion.
+
+**Timing limitation:** these runs used five rounds and 2 ms target cells. The copy qualified on
+ResNet (0.9457) in the first run, so the short settings must not be treated as calibrated production
+admission. This merge preserves the existing scoring rule; a production timing study remains needed.
+
+Evidence, frozen sources, raw observations and reports are under
+`data/merge-validation/20261022/` (ignored by Git). Rehearsals created and dropped disposable local
+PostgreSQL databases. No central API deployment, real chain registration or weight submission ran.
