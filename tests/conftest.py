@@ -218,11 +218,13 @@ def drain(store, settings, stub_gate):
 
 
 def kernel_file(tmp: Path, name: str, marker: str = "") -> Path:
-    # A copy of the incumbent's Kernel.lean, with a marker line the stub gate reads.
+    # A copy of the incumbent's Kernel.lean, with a marker the stub gate reads. The marker is code,
+    # not a comment, so files with different markers are different entries, not copies.
     d = tmp / name
     d.mkdir(parents=True)
     text = (REPO / "kernels" / "add" / "incumbent" / "Kernel.lean").read_text()
-    (d / "Kernel.lean").write_text(text + (f"\n-- {marker}\n" if marker else ""))
+    line = f'\ndef stubMarker : String := "{marker} "\n'
+    (d / "Kernel.lean").write_text(text + (line if marker else ""))
     return d
 
 

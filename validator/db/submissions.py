@@ -257,6 +257,20 @@ class SubmissionsDb:
             )
             return row.state
 
+    def accepted_before(self, slot: str, sub_id: int) -> list[tuple[int, str]]:
+        # The slot's accepted submissions older than `sub_id`, oldest first: (id, digest).
+        with session_scope(self._sessions) as session:
+            rows = session.execute(
+                select(models.Submission.id, models.Submission.digest)
+                .where(
+                    models.Submission.slot == slot,
+                    models.Submission.state == SubmissionState.ACCEPTED.value,
+                    models.Submission.id < sub_id,
+                )
+                .order_by(models.Submission.id)
+            ).all()
+            return [(int(i), str(d)) for i, d in rows]
+
     def kernel(self, sub_id: int) -> bytes | None:
         # The submission's Kernel.lean from the store; None for one queued before it kept files.
         with session_scope(self._sessions) as session:

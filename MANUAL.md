@@ -178,6 +178,10 @@ most the promotion bar (default `0.97`, meaning at least 3% faster), and a
 statistical test of the paired benchmark rounds confirms a speed advantage.
 The test reduces the chance that timing noise causes a promotion; it does not eliminate measurement uncertainty.
 
+A `Kernel.lean` identical to an earlier accepted submission in the same slot,
+ignoring comments and whitespace, is rejected at intake without being timed: a
+copy cannot win on noise. It spends the registration like any other rejection.
+
 The latest three champions receive 60%, 30%, and 10% of the competition
 budget, excluding any explicitly removed by an operator. Empty ranks and unpaid
 shares go to treasury. One hotkey holding several ranks receives their combined
