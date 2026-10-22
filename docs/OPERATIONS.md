@@ -184,6 +184,38 @@ the current champion's exact ID. The next attempt uses the remaining champion
 or shipped reference. Run gate workers on one host per shared queue; the host
 lock is not a distributed lock.
 
+## Scoring the full board on a private suite
+
+`GATE_FULL_SUITE` switches the full entry's inputs from the legacy classes to a
+suite's cases ([Benchmarking](BENCHMARKING.md#suite-scoring)). The ratio, the
+verdict's fields and admission stay the legacy ones, so the validator and the
+boards need no change. Unset, nothing changes.
+
+1. Keep the private suite file outside the checkout, readable only by the gate's
+   account (for example `/etc/floatlib/suites/scoring.json`, mode 0600). Never commit
+   it to this repository. Its hash enters the verifier fingerprint; its contents
+   reach only the bench processes, through `BENCH_PLAN`.
+2. Check that it loads and draws:
+   `python -c "import benchmark_suite as b; b.make_plan(b.load('<path>'), 1, 500000)"`.
+3. Raise the time limits. A suite run times about 200 cases, and a bench process
+   takes about 1.5–2× a legacy one. Use `GATE_BUDGET_SECONDS=900` and
+   `VERIFY_TOTAL_TIMEOUT=2700`, then re-check them against a real gate run on the
+   validator.
+4. Re-time the paid kings on the suite before switching, to check that the current
+   champion builds and benchmarks on it (or its slot would pause) and to know their
+   ratios on it. `validator/tools/kings.py --out <empty dir>` writes each king's file
+   and the one it beat, and prints one gate command per king. Run them with
+   `GATE_FULL_SUITE` set in that shell only. They wait for the gate lock and write
+   verdicts, never the store. The kings, their ranks and their pay do not change.
+   Do not use `reverify.py` for this: it would requeue every accepted entry.
+5. Set `GATE_FULL_SUITE` in the worker's environment and restart the gate worker.
+   The formula is the same, but on harder inputs the same entry gets a different
+   ratio, so ratios from before and after the switch should not be ranked against
+   each other. The champion stays; later entries are timed against it on the suite.
+
+To retire a private suite's draws, change its `version`; old verdicts keep the hash
+they were scored under.
+
 ## Provenance and explicit reverification
 
 Verifier fingerprints and incumbent binary hashes record provenance. Changes are

@@ -44,7 +44,7 @@ lean_lib BenchCore where
   srcDir := "bench"
   -- BenchDivSqrt and BenchTensor are separate so the add, mul and fma binaries compile exactly as
   -- calibrated.
-  roots := #[`Bench, `BenchDivSqrt, `BenchTensor, `BenchBmm, `BenchFull]
+  roots := #[`Bench, `BenchDivSqrt, `BenchTensor, `BenchBmm, `BenchFull, `BenchSuite]
 
 lean_exe bench where
   srcDir := "bench"
