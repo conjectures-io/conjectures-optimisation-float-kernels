@@ -165,3 +165,14 @@ def test_low_hard_file_limit_fails_before_installing(project):
     assert result.returncode == 1
     assert "Open-file limit is too low" in result.stdout
     assert not Path(env["RUN_LOG"]).exists()
+
+
+@pytest.mark.parametrize("extra", [[], ["--check"], ["--dev"]])
+def test_worker_setup_fails_before_install_or_source_changes(project, extra):
+    repo, _, env = project
+    result = run(project, "--benchmark-worker", *extra)
+    assert result.returncode == 1
+    assert "unsupported" in result.stdout
+    assert "process-tree containment" in result.stdout
+    assert not Path(env["RUN_LOG"]).exists()
+    assert not (repo / "lean/work").exists()

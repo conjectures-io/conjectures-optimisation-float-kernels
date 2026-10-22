@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -55,7 +56,7 @@ _ROUNDS = int(os.environ.get("BENCH_ROUNDS", "25"))
 # 0 runs builds and benches without bwrap, for hosts that cannot create user namespaces.
 _SANDBOX = os.environ.get("GATE_SANDBOX", "1") != "0"
 # The core both benches run on, which halves timing noise; empty runs them unpinned.
-_BENCH_CPU = os.environ.get("BENCH_CPU", "3")
+_BENCH_CPU = os.environ.get("BENCH_CPU", "" if platform.system() == "Darwin" else "3")
 _BUILD_TIMEOUT = 1800
 _BENCH_TIMEOUT = 300
 # The time an entry's own builds, kernel replays and bench runs may take in all; a full entry uses
@@ -120,7 +121,24 @@ def limits(memory_mb: int) -> list[str]:
     return ["systemd-run", "--user", "--scope", "--quiet"] + [a for p in props for a in ("-p", p)]
 
 
+def backend() -> str:
+    """Explicit selection without cross-platform or unsandboxed fallback."""
+    native = "macos-seatbelt" if platform.system() == "Darwin" else "linux-bwrap"
+    selected = os.environ.get("GATE_SANDBOX_BACKEND", native)
+    if selected != native or platform.system() not in {"Linux", "Darwin"}:
+        raise RuntimeError(f"unsupported sandbox backend {selected!r} on {platform.system()}")
+    return selected
+
+
+def require_backend() -> None:
+    if backend() == "macos-seatbelt":
+        from macos_worker import require_supported
+
+        require_supported()
+
+
 def check_limits() -> None:
+    require_backend()
     # Refuses to gate when the caps are asked for but the host cannot apply them: without this, a
     # missing user systemd would surface as every submission's build failing.
     if not shutil.which("setpriv"):
@@ -173,6 +191,7 @@ def run(
     # Runs `cmd` in bwrap with no network, a minimal environment and a `memory_mb` scope, HOME and
     # the repo root hidden behind tmpfs and only the toolchain, the Lean workspace and `pinned`
     # (absent before the first pin, hence -try) put back read-only, so no build can read a secret.
+    require_backend()
     home, pinned = Path.home(), HERE / "pinned"
     box = [BWRAP, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     box += ["--tmpfs", str(home), "--ro-bind", str(ELAN), str(ELAN)]

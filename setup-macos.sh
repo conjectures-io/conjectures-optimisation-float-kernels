@@ -7,9 +7,10 @@ export PATH="$HOME/.elan/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 log() { echo "[setup-macos] $*"; }
 usage() {
   cat <<'EOF'
-Usage: ./setup-macos.sh [--check] [--dev] [--source PATH]
+Usage: ./setup-macos.sh [--check] [--dev] [--source PATH] [--benchmark-worker]
 
 Build the exact-runtime proofs, native model benchmark and audit executables.
+  --benchmark-worker  Refuse unsafe worker setup; see docs/MACOS-WORKER-SANDBOX.md.
   --check        Report prerequisites without installing or building anything.
   --dev          Also install Python test, database-client and plotting dependencies.
   --source PATH  Build this Kernel.lean (or directory containing it).
@@ -22,9 +23,10 @@ The Linux sandbox, gate workers and comparison runner are separate from this set
 EOF
 }
 
-check=0; dev=0; source=""
+check=0; dev=0; worker=0; source=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --benchmark-worker) worker=1; shift ;;
     --check) check=1; shift ;;
     --dev) dev=1; shift ;;
     --source)
@@ -36,6 +38,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(uname -s)" = Darwin ] || { log "macOS only; use ./setup.sh on Linux"; exit 1; }
+if [ "$worker" = 1 ]; then
+  log "Native macOS benchmark workers are unsupported: no verified aggregate memory/swap cap or process-tree containment."
+  log "No dependencies installed or candidate launched. See docs/MACOS-WORKER-SANDBOX.md."
+  exit 1
+fi
 missing=0
 for tool in curl git; do
   if command -v "$tool" >/dev/null 2>&1; then log "ok $tool";

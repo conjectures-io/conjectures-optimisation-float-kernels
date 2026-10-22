@@ -74,6 +74,9 @@ def main():
     )
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+    from sandbox import require_backend
+
+    require_backend()
     load(args.credentials)
     args.environment = args.environment or os.environ.get("BENCHMARK_ENVIRONMENT")
     if not args.environment:

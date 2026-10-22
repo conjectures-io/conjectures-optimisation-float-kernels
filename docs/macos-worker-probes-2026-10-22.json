@@ -1,0 +1,88 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "worker_supported": false,
+  "checks": {
+    "canary_read_control": {
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": ""
+    },
+    "private_read_denied": {
+      "exit": 10,
+      "expected": 10,
+      "passed": true,
+      "stdout": ""
+    },
+    "symlink_read_denied": {
+      "exit": 10,
+      "expected": 10,
+      "passed": true,
+      "stdout": ""
+    },
+    "private_write_denied": {
+      "exit": 10,
+      "expected": 10,
+      "passed": true,
+      "stdout": ""
+    },
+    "outside_create_denied": {
+      "exit": 10,
+      "expected": 10,
+      "passed": true,
+      "stdout": ""
+    },
+    "task_write_allowed": {
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": ""
+    },
+    "network_control": {
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": ""
+    },
+    "network_denied": {
+      "exit": 10,
+      "expected": 10,
+      "passed": true,
+      "stdout": ""
+    },
+    "child_exec_inherits_denial": {
+      "exit": 10,
+      "expected": 10,
+      "passed": true,
+      "stdout": ""
+    },
+    "child_can_escape_process_group": {
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": ""
+    },
+    "rss_control": {
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": "setrlimit_RSS_unavailable_errno=22"
+    },
+    "rss_cap_not_established": {
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": "setrlimit_RSS_unavailable_errno=22"
+    },
+    "timeout_process_group_cleanup": {
+      "passed": true,
+      "escaped_child_wrote_marker": false,
+      "seconds": 1.31
+    },
+    "detached-timeout_process_group_cleanup": {
+      "passed": true,
+      "escaped_child_wrote_marker": true,
+      "seconds": 1.32
+    }
+  }
+}
