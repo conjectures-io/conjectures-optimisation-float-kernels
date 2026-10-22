@@ -16,6 +16,35 @@ experiment = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(experiment)
 
 
+def test_native_mac_command_does_not_use_taskset(monkeypatch):
+    monkeypatch.setattr(experiment.platform, "system", lambda: "Darwin")
+    assert experiment.benchmark_command(Path("/tmp/bench"), 3) == ["/tmp/bench"]
+
+
+def test_linux_command_keeps_cpu_affinity(monkeypatch):
+    monkeypatch.setattr(experiment.platform, "system", lambda: "Linux")
+    assert experiment.benchmark_command(Path("/tmp/bench"), 3) == [
+        "taskset",
+        "-c",
+        "3",
+        "/tmp/bench",
+    ]
+
+
+def test_mac_identity_uses_native_metadata(monkeypatch):
+    monkeypatch.setattr(experiment.platform, "system", lambda: "Darwin")
+    calls = []
+
+    def output(command, **kwargs):
+        calls.append(command)
+        return "Apple test CPU\n"
+
+    monkeypatch.setattr(experiment.subprocess, "check_output", output)
+    assert len(experiment.machine_identity()) == 64
+    assert ["sysctl", "-n", "machdep.cpu.brand_string"] in calls
+    assert ["cc", "--version"] in calls
+
+
 def test_replay_keeps_family_gain_separate_from_other_families(tmp_path):
     pytest.importorskip("matplotlib")
     manifest = {

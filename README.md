@@ -67,6 +67,34 @@ The CLI defaults to `https://conjectures.io`; `--url` selects another API origin
 Only entries containing all four kernels can be uploaded. Single-kernel slots remain available for local
 experiments and historical reads.
 
+## Native macOS development
+
+For the exact-runtime kernels, proofs, audits and model benchmark:
+
+```bash
+./setup-macos.sh --check
+./setup-macos.sh --dev
+```
+
+Install Xcode Command Line Tools (`xcode-select --install`) and Python 3.11+ first.
+For example, `brew install python@3.12`; `PYTHON` selects a particular interpreter.
+If an existing `.venv` uses Apple's Python 3.9, preserve it with
+`mv .venv .venv-python39-backup` before rerunning setup.
+
+The default setup builds the native Lean tools and installs their basic Python
+dependencies; `--dev` adds test and plotting dependencies. Existing
+`lean/work/Submission.lean` is preserved. To select another package explicitly:
+
+```bash
+./setup-macos.sh --source kernels/exact/cached-conv/Kernel.lean
+lean/.lake/build/bin/exactAudit 8 971
+BENCH_INNER=1 BENCH_SEED=42 lean/.lake/build/bin/benchExact
+```
+
+The sandboxed gate and workers require Linux. The research comparison runner
+also runs natively on macOS, without CPU affinity; it records that limitation
+in the experiment manifest. Keep each machine's results in a separate directory.
+
 ## Documentation
 
 | Guide | Contents |

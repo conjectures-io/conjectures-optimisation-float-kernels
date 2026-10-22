@@ -396,8 +396,9 @@ def summarize(directories, output):
     text += [
         "## Measurement limits",
         "",
-        "Timing is direct, single-CPU execution on this machine, not the production "
-        "sandbox. The inner best-of statistic can hide variability. Adjacent rounds can "
+        "Timing is sequential native execution, not the production sandbox; CPU affinity "
+        "is recorded in each raw manifest and is not enforced on macOS. "
+        "The inner best-of statistic can hide variability. Adjacent rounds can "
         "be correlated; the ordinary bootstrap assumes independent rounds. Selection "
         "over many candidates/families increases the chance of a lucky result. Use fresh "
         "seeds, repeated sessions and identical-binary controls before trusting marginal "

@@ -24,7 +24,6 @@ sys.path[:0] = [str(ROOT), str(ROOT / "validator")]
 
 import fingerprint  # noqa: E402
 from exact.config import BATCHES, KINDS, MODELS, measurement_hash  # noqa: E402
-from exact.runner import machine_identity  # noqa: E402
 from exact.scoring import assess  # noqa: E402
 
 LEAN_MODELS = MODELS
@@ -45,6 +44,30 @@ PAIRS = [
     ("spec-dense", "incumbent"),
 ]
 CELLS = [f"{m}:b{b}:{k}" for m in MODELS for b in BATCHES[MODELS[m]] for k in KINDS]
+
+
+def machine_identity():
+    if platform.system() != "Darwin":
+        from exact.runner import machine_identity as linux_identity
+
+        return linux_identity()
+    details = {
+        key: subprocess.check_output(["sysctl", "-n", key], text=True).strip()
+        for key in ("machdep.cpu.brand_string", "hw.ncpu", "hw.memsize")
+    }
+    details.update(
+        host=platform.uname()._asdict(),
+        compiler=subprocess.check_output(["cc", "--version"], text=True),
+        affinity="not enforced; native macOS research",
+    )
+    return sha(json.dumps(details, sort_keys=True).encode())
+
+
+def benchmark_command(binary, cpu):
+    # macOS has no taskset equivalent providing strict per-process CPU affinity.
+    if platform.system() == "Darwin":
+        return [str(binary)]
+    return ["taskset", "-c", str(cpu), str(binary)]
 
 
 def save(path, value):
@@ -84,7 +107,12 @@ def build(output, name, source, deadline, audit=False):
     directory = output / "raw/packages" / name
     directory.mkdir(parents=True, exist_ok=True)
     binary = directory / "benchExact"
-    identity = {"source": sha(source), "benchmark": fingerprint.current(), "audit": audit}
+    identity = {
+        "source": sha(source),
+        "benchmark": fingerprint.current(),
+        "audit": audit,
+        "platform": [platform.system(), platform.machine()],
+    }
     stamp = directory / "build.json"
     if binary.exists() and stamp.exists():
         previous = json.loads(stamp.read_text())
@@ -160,7 +188,7 @@ def execute(binary, seed, inner, reps, cpu, directory, index, deadline):
     )
     start = time.monotonic()
     process = subprocess.run(
-        ["taskset", "-c", str(cpu), str(binary)],
+        benchmark_command(binary, cpu),
         env=env,
         capture_output=True,
         text=True,
@@ -213,13 +241,17 @@ def collect(args):
     for key in ("rounds", "inner", "cell_ms"):
         if getattr(args, key) is not None:
             settings[key] = getattr(args, key)
-    if args.cpu not in os.sched_getaffinity(0):
+    native_mac = platform.system() == "Darwin"
+    if not native_mac and args.cpu not in os.sched_getaffinity(0):
         raise ValueError("CPU is outside process affinity")
+    if native_mac:
+        print("Native macOS: CPU affinity is not enforced; --cpu is ignored.", flush=True)
     manifest = dict(
         stage=args.stage,
         settings=settings,
         pairs=pairs,
-        cpu=args.cpu,
+        cpu=None if native_mac else args.cpu,
+        affinity="not enforced" if native_mac else "taskset",
         machine=machine_identity(),
         host=platform.uname()._asdict(),
         benchmark=fingerprint.current(),
