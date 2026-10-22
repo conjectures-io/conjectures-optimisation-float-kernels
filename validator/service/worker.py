@@ -24,7 +24,7 @@ from axiom import config_error, get_events, init
 from db import SubmissionState, models
 from db.drift import observe
 
-from . import storage
+from . import duplicates, storage
 from .settings import PROMOTION_BAR, Settings, load
 
 VALIDATOR = Path(__file__).resolve().parent.parent
@@ -182,6 +182,27 @@ def score_one(store: db.Store, settings: Settings, sub: models.Submission) -> st
     events = get_events()
     who = {"submission_id": sub.id, "hotkey": sub.hotkey, "slot": sub.slot}
     pause = store.pauses.all().get(sub.slot)
+    # A copy of an accepted entry is refused before its first gate run. A re-verification (it has
+    # finished before, e.g. a champion requeued by reverify.py) and a paused challenger are not.
+    first_run = sub.finished_at is None and not (pause and pause.challenger_id == sub.id)
+    twin = duplicates.identical_to(store, sub) if first_run else None
+    if twin is not None:
+        reason = (
+            f"identical to accepted submission {twin}: the same Kernel.lean up to comments and "
+            "whitespace"
+        )
+        report = {"submission": str(sub.id), "stage": "intake", "passed": False, "reason": reason}
+        final = store.submissions.finish(
+            sub.id,
+            SubmissionState.REJECTED,
+            expected_attempt=sub.verification_attempt,
+            stage="intake",
+            reason=reason,
+            report=json.dumps(report),
+        )
+        events.emit("warning", "gate_verdict", **who, state=final, stage="intake", reason=reason)
+        logger.info(f"[worker] submission {sub.id} {final}: {reason}")
+        return final
     reference = store.submissions.champion(sub.slot, before=sub.id)
     with tempfile.TemporaryDirectory(prefix=f"gate-{sub.id}-") as tmp:
         verdict = Path(tmp) / "verdict.json"
