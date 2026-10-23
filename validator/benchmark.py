@@ -16,6 +16,7 @@ from pathlib import Path
 
 import sandbox
 from config import digest, measurement_hash
+from timing import validate_timing
 
 import fingerprint
 
@@ -32,6 +33,28 @@ class MeasurementFailure(Exception):
     def __init__(self, kind, reason):
         self.kind = kind
         super().__init__(reason)
+
+
+class Deadline:
+    """One absolute wall-clock deadline shared by every command in a phase."""
+
+    def __init__(self, phase, seconds):
+        self.phase, self.seconds = phase, seconds
+        self.started = time.monotonic()
+        self.end = self.started + seconds
+
+    def fail(self, side, detail=None):
+        detail = detail or f"exceeded {self.seconds:g}s {self.phase} budget"
+        raise MeasurementFailure(side, f"{self.phase}-timeout: {detail}")
+
+    def remaining(self, side):
+        left = self.end - time.monotonic()
+        if left <= 0:
+            self.fail(side)
+        return left
+
+    def elapsed(self):
+        return time.monotonic() - self.started
 
 
 def machine_identity():
@@ -73,7 +96,8 @@ def machine_identity():
     )
 
 
-def build(source, expected, side):
+def build(source, expected, side, deadline):
+    deadline.remaining(side)
     if hashlib.sha256(source).hexdigest() != expected:
         raise MeasurementFailure("infrastructure", "immutable source hash mismatch")
     cache = (
@@ -84,6 +108,7 @@ def build(source, expected, side):
     )
     binary = cache / "bench"
     if binary.is_file():
+        deadline.remaining(side)
         return binary
     cache.mkdir(parents=True, exist_ok=True)
     src = cache / "Kernel.lean"
@@ -92,14 +117,21 @@ def build(source, expected, side):
     sandbox.wipe(sandbox.LAYER)
     (sandbox.LAYER / "upper").mkdir(parents=True)
     (sandbox.LAYER / "work").mkdir()
-    sandbox._budget.reset()
+    sandbox._budget.reset(deadline.seconds, deadline=deadline.end)
     try:
         for stage in (sandbox.intake, sandbox.policy, sandbox.statement):
             if reason := stage(src, verdict):
+                if sandbox._budget.timed_out:
+                    deadline.fail(side, "build command exceeded its time allowance")
+                deadline.remaining(side)
                 raise MeasurementFailure(side, reason)
+            deadline.remaining(side)
         code, output = sandbox.own(
             [sandbox.LAKE, "build", "benchExact"], sandbox._BUILD_TIMEOUT, build="write"
         )
+        if code == 124:
+            deadline.fail(side, "native build command exceeded its time allowance")
+        deadline.remaining(side)
         if code or sandbox.foreign(sandbox.LAYER / "upper"):
             raise MeasurementFailure(side, f"native build failed: {sandbox.errors(output, code)}")
         built = sandbox.LAYER / "upper" / "bin" / "benchExact"
@@ -107,13 +139,16 @@ def build(source, expected, side):
             built = sandbox.BUILD / "bin" / "benchExact"
         tmp = binary.with_suffix(".tmp")
         shutil.copy2(built, tmp)
+        deadline.remaining(side)
         tmp.replace(binary)
     finally:
         sandbox.wipe(sandbox.LAYER)
+    deadline.remaining(side)
     return binary
 
 
-def run_binary(binary, request, reps, inner, side):
+def run_binary(binary, request, reps, inner, side, deadline):
+    timeout = min(request["timing"]["run_seconds"], deadline.remaining(side))
     extra = {
         "BENCH_CELLS": ",".join(lean_cell(c) for c in request["cells"]),
         "BENCH_REPS": ",".join(f"{lean_cell(c)}={n}" for c, n in reps.items()),
@@ -126,10 +161,13 @@ def run_binary(binary, request, reps, inner, side):
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
     code, output = sandbox.run(
         command,
-        request["timing"]["run_seconds"],
+        timeout,
         env_extra=extra,
         memory_mb=sandbox._BENCH_MEMORY_MB,
     )
+    if code == 124:
+        deadline.fail(side, f"{side} invocation exceeded its {timeout:g}s time allowance")
+    deadline.remaining(side)
     if code:
         raise MeasurementFailure(side, f"bench exit {code}: {output[-1000:]}")
     rows = {}
@@ -149,10 +187,12 @@ def run_binary(binary, request, reps, inner, side):
         rows[public[fields[0]]] = (ns, checksum)
     if set(rows) != set(request["cells"]):
         raise MeasurementFailure("infrastructure", "missing or extra benchmark cells")
+    deadline.remaining(side)
     return rows
 
 
 def measure(request, candidate, reference):
+    validate_timing(request["timing"])
     if request["identity"] != machine_identity():
         raise MeasurementFailure("infrastructure", "hardware/execution identity mismatch")
     if request["benchmark_identity"] != fingerprint.benchmark():
@@ -170,15 +210,27 @@ def measure(request, candidate, reference):
         fcntl.flock(lock, fcntl.LOCK_EX)
         original = sandbox.WORK.read_bytes() if sandbox.WORK.exists() else None
         try:
+            build_clock = Deadline("build", request["timing"]["build_seconds"])
+            sandbox._budget.reset(build_clock.seconds, deadline=build_clock.end)
             try:
-                sandbox.prepare_shared(native=True)
+                sandbox.prepare_shared(native=True, deadline=build_clock.end)
+                build_clock.remaining("infrastructure")
+            except TimeoutError:
+                build_clock.fail(
+                    "infrastructure", "shared build preparation exceeded its time allowance"
+                )
+            except MeasurementFailure:
+                raise
             except Exception as exc:
                 raise MeasurementFailure(
                     "infrastructure", f"shared build preparation: {exc}"
                 ) from exc
-            ref = build(reference, request["reference_hash"], "reference")
-            sub = build(candidate, request["candidate_hash"], "candidate")
-            initial = run_binary(ref, request, {}, 1, "reference")
+            ref = build(reference, request["reference_hash"], "reference", build_clock)
+            sub = build(candidate, request["candidate_hash"], "candidate", build_clock)
+            build_clock.remaining("candidate")
+            build_seconds = build_clock.elapsed()
+            benchmark_clock = Deadline("benchmark", request["timing"]["benchmark_seconds"])
+            initial = run_binary(ref, request, {}, 1, "reference", benchmark_clock)
             reps = {
                 c: max(1, min(1000000, int(request["timing"]["cell_ms"] * 1e6 / ns)))
                 for c, (ns, _) in initial.items()
@@ -190,7 +242,9 @@ def measure(request, candidate, reference):
                 if i % 2:
                     sides.reverse()
                 observed = {
-                    side: run_binary(binary, request, reps, request["timing"]["inner"], side)
+                    side: run_binary(
+                        binary, request, reps, request["timing"]["inner"], side, benchmark_clock
+                    )
                     for side, binary in sides
                 }
                 cells = {}
@@ -205,6 +259,8 @@ def measure(request, candidate, reference):
                         "candidate_checksum": b[1],
                     }
                 rounds.append({"reference_first": i % 2 == 0, "cells": cells})
+            round_seconds = time.monotonic() - t0
+            benchmark_clock.remaining("candidate")
             if fingerprint.benchmark() != request["benchmark_identity"]:
                 raise MeasurementFailure("infrastructure", "checkout changed during benchmark")
             return {
@@ -221,7 +277,13 @@ def measure(request, candidate, reference):
                 "calibration": {c: ns for c, (ns, _) in initial.items()},
                 "repetitions": reps,
                 "rounds": rounds,
-                "timing_seconds": time.monotonic() - t0,
+                "timing_seconds": round_seconds,
+                "stage_seconds": {
+                    "build": build_seconds,
+                    "calibration": t0 - benchmark_clock.started,
+                    "rounds": round_seconds,
+                    "benchmark": benchmark_clock.elapsed(),
+                },
             }
         finally:
             if original is not None:

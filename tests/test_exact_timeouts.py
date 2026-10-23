@@ -1,4 +1,4 @@
-"""A run past its time budget is a final verdict, not an infrastructure retry."""
+"""Phase timeouts reject/pause the responsible side; a supervisor overrun is infrastructure."""
 
 from __future__ import annotations
 
@@ -43,19 +43,37 @@ def raising(exc):
 @pytest.mark.parametrize(
     "exc, kind",
     [
-        (process.BudgetExceeded("did not finish within 900s"), "candidate"),
+        (process.BudgetExceeded("did not finish within 1440s"), "infrastructure"),
         (RuntimeError("lease lost"), "infrastructure"),
     ],
 )
-def test_a_benchmark_past_its_budget_fails_the_candidate(monkeypatch, exc, kind):
-    # Only the budget is the candidate's fault; any other error is retried as infrastructure.
-    monkeypatch.setattr(benchmark_worker, "supervised", raising(exc))
+def test_supervisor_failure_is_infrastructure(monkeypatch, exc, kind):
+    # The subprocess owns phase attribution. The outer safety net cannot blame a candidate.
+    def supervise(*args, **kwargs):
+        assert args[2] == 1440
+        raise exc
+
+    monkeypatch.setattr(benchmark_worker, "supervised", supervise)
     repo = FakeWorkerRepo()
     job = SimpleNamespace(
-        id=1, token="t", lease_seconds=120, request={"timing": {"job_seconds": 900}}
+        id=1,
+        token="t",
+        lease_seconds=120,
+        request={
+            "timing": {
+                "rounds": 25,
+                "inner": 3,
+                "cell_ms": 100,
+                "run_seconds": 300,
+                "build_seconds": 480,
+                "benchmark_seconds": 900,
+            }
+        },
     )
     benchmark_worker.execute(repo, job, "owner")
     assert [f["kind"] for f in repo.failures] == [kind]
+    if isinstance(exc, process.BudgetExceeded):
+        assert repo.failures[0]["reason"].startswith("supervisor-timeout:")
 
 
 class FakeCoordinatorRepo:

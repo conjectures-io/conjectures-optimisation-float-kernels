@@ -255,9 +255,12 @@ class Budget:
     def __init__(self) -> None:
         self.reset()
 
-    def reset(self) -> None:
-        # A fresh budget for the next entry.
-        self.left, self.exhausted = _BUDGET_SECONDS, False
+    def reset(self, seconds: float | None = None, *, deadline: float | None = None) -> None:
+        # Proof checks retain their configured budget; distributed builds supply a phase deadline.
+        self.seconds = _BUDGET_SECONDS if seconds is None else seconds
+        self.deadline = deadline
+        self.left = self.seconds if deadline is None else max(0, deadline - time.monotonic())
+        self.exhausted = self.timed_out = False
 
 
 _budget = Budget()
@@ -266,11 +269,21 @@ _budget = Budget()
 def own(cmd: list[str], cap: float, **kw) -> tuple[int, str]:
     # A command the entry controls: capped at what its budget has left, and charged against it.
     t0 = time.monotonic()
-    code, out = run(cmd, max(min(cap, _budget.left), 1.0), **kw)
+    remaining = min(cap, _budget.left)
+    if _budget.deadline is not None:
+        remaining = min(remaining, _budget.deadline - time.monotonic())
+        if remaining <= 0:
+            _budget.exhausted = _budget.timed_out = True
+            return 124, ""
+    else:
+        remaining = max(remaining, 1.0)
+    code, out = run(cmd, remaining, **kw)
     _budget.left -= time.monotonic() - t0
     if kw.get("build") == "write" and _BUILD_DISK_MB > 0 and code == 0:
         if disk_mb(LAYER / "upper") > _BUILD_DISK_MB:
             code = OVER_DISK
+    if code == 124:
+        _budget.timed_out = True
     if code in (124, OVER_DISK) or killed(code) or overfile(code):
         _budget.exhausted = True
     return code, out
@@ -311,7 +324,7 @@ def errors(out: str, code: int = 1) -> str:
     if killed(code):
         return f"killed: over the {_BUILD_MEMORY_MB} MB build memory cap"
     if code == 124:
-        return f"over the entry's {_BUDGET_SECONDS:.0f}s time budget"
+        return f"over the entry's {_budget.seconds:.0f}s time budget"
     if overfile(code):
         return f"a file over the {_FILE_MB} MB disk cap"
     if code == OVER_DISK:
@@ -329,15 +342,28 @@ def progress(phase: str, **fields) -> None:
         temporary.replace(target)
 
 
-def prepare_shared(*, native=False, audit=False):
+def prepare_shared(*, native=False, audit=False, deadline=None):
     """Only operator code writes shared modules; entries build into an overlay."""
-    subprocess.run([LAKE, "env", "true"], cwd=LIB, check=True, capture_output=True)
+
+    def remaining():
+        if deadline is None:
+            return _BUILD_TIMEOUT
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("shared build deadline exhausted")
+        return min(_BUILD_TIMEOUT, left)
+
+    subprocess.run(
+        [LAKE, "env", "true"], cwd=LIB, check=True, capture_output=True, timeout=remaining()
+    )
     WORK.parent.mkdir(exist_ok=True)
     shutil.copy2(SHIPPED, WORK)
     targets = ["VerifyExact", "benchExact"] if native else ["VerifyExact"]
     if audit:
         targets += ["ExactAuditCore", "exactAudit"]
-    code, out = run([LAKE, "build", *targets], _BUILD_TIMEOUT, build="trusted")
+    code, out = run([LAKE, "build", *targets], remaining(), build="trusted")
+    if code == 124:
+        raise TimeoutError("shared build timed out")
     if code:
         raise RuntimeError(f"shared build preparation failed: {errors(out, code)}")
 

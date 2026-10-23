@@ -22,7 +22,12 @@ PROOF_FILES = COMMON + CONTRACT + ["validator/verification.py", "lean/verify/Ver
 BENCHMARK_FILES = (
     COMMON
     + CONTRACT
-    + ["validator/benchmark.py", "lean/bench/ExactSuite.lean", "lean/bench/MainExact.lean"]
+    + [
+        "validator/benchmark.py",
+        "validator/timing.py",
+        "lean/bench/ExactSuite.lean",
+        "lean/bench/MainExact.lean",
+    ]
 )
 PINNED = sorted(set(PROOF_FILES + BENCHMARK_FILES))
 

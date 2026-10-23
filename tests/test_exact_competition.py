@@ -33,7 +33,8 @@ def config(tmp_path):
                 "inner": 1,
                 "cell_ms": 1,
                 "run_seconds": 30,
-                "job_seconds": 120,
+                "build_seconds": 60,
+                "benchmark_seconds": 120,
             },
             "admission": {
                 "bar": 0.97,

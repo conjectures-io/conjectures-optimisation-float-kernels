@@ -15,6 +15,7 @@ from pathlib import Path
 from benchmark import machine_identity
 from loguru import logger
 from process import ROOT, BudgetExceeded, install_signals, supervised
+from timing import supervisor_seconds
 from worker_credentials import load
 
 import db
@@ -45,7 +46,7 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
                     str(path / "result.json"),
                 ],
                 lambda: repo.heartbeat(job.id, owner, job.token),
-                job.request["timing"]["job_seconds"],
+                supervisor_seconds(job.request["timing"]),
                 lease / 3,
                 path / "process.log",
                 pass_fds=tuple(fd for fd in (host_lock_fd, checkout_lock_fd) if fd is not None),
@@ -58,7 +59,12 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
                 repo.complete(job.id, owner, job.token, result["result"])
         except BudgetExceeded as exc:
             logger.warning("benchmark job {} ran out of time: {}", job.id, exc)
-            repo.fail(job.id, owner, job.token, {"kind": "candidate", "reason": f"benchmark {exc}"})
+            repo.fail(
+                job.id,
+                owner,
+                job.token,
+                {"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"},
+            )
         except Exception as exc:
             logger.warning("exact job {} failed: {}", job.id, exc)
             repo.fail(job.id, owner, job.token, {"kind": "infrastructure", "reason": str(exc)})

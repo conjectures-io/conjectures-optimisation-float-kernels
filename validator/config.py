@@ -11,10 +11,12 @@ import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from timing import validate_timing
+
 MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
 KINDS = ("normal", "wide", "sparse")
-VERSION = "exact-boards-v1"
+VERSION = "exact-boards-v2"
 
 
 def digest(value: object) -> str:
@@ -165,13 +167,7 @@ class Config:
                 raise ValueError("initial reference requires path and sha256")
             sha(ref["sha256"])
         timing = data["timing"]
-        if set(timing) != {"rounds", "inner", "cell_ms", "run_seconds", "job_seconds"}:
-            raise ValueError("timing requires rounds, inner, cell_ms, run_seconds, job_seconds")
-        for key, val in timing.items():
-            if not math.isfinite(val) or val <= 0:
-                raise ValueError(f"timing {key} must be positive")
-        if any(type(timing[k]) is not int for k in ("rounds", "inner")):
-            raise ValueError("rounds and inner must be integers")
+        validate_timing(timing)
         admission = data["admission"]
         if set(admission) != {"bar", "guard", "draws", "quantile", "min_rounds"}:
             raise ValueError("incomplete admission settings")

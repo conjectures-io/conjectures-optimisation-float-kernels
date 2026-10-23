@@ -99,3 +99,26 @@ queue planning, reference selection, finalization and payout. A blocked source c
 queued entries or become champion on a later-finishing board. Actions are recorded in
 `source_disqualifications.history`. Restoration clears the source restriction; it does not rewrite
 completed evaluations or promotion-level disqualification history.
+
+## Independent build and measurement budgets
+
+`[timing]` now requires `build_seconds` and `benchmark_seconds`, replacing `job_seconds`.
+Default development settings are 480 seconds (8 minutes) for shared preparation and both
+native builds, then a fresh 900 seconds (15 minutes) for calibration and all paired rounds.
+`run_seconds = 300` also caps each binary invocation at the smaller of that value and the
+measurement time remaining. Neither budget resets per executable, command or round.
+A cached binary consumes only its lookup time within the build phase.
+
+The parent supervisor allows build + measurement + 60 seconds (24 minutes by default).
+Explicit phase failures start with `build-timeout` or `benchmark-timeout`; candidate failures
+reject the evaluation, reference failures retain the reference/retry behavior, and shared
+preparation failures remain infrastructure errors. Hitting the outer `supervisor-timeout`
+safety net is an infrastructure error because it cannot reliably identify the responsible side.
+Proof-only verification retains its separately configured `verification_seconds` limit.
+
+Successful results include `stage_seconds` for build, calibration, rounds and total measurement;
+`timing_seconds` remains the round timing for existing analysis tools. The benchmark fingerprint
+covers the execution-budget helper. Deploy identical code on coordinator and workers and
+regenerate configs using `scripts/exact-config.py`, or update the Ansible timing template.
+Completed evidence remains stored; changing budgets changes immutable plan/request hashes.
+A fully cold 8 GiB build confirmation remains necessary to validate the default headroom.
