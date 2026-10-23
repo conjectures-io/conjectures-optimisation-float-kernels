@@ -12,9 +12,10 @@ open ExactRuntime ExactSuite Lean
 def main (args : List String) : IO Unit := do
   let seeds := if args.isEmpty then [42, 20261019, 20261020]
     else args.map (fun s => s.toNat!.toUInt32)
-  for seed in seeds do
+  for profile in ["typical","scale","boundary"] do
+   for seed in seeds do
     for c in cells do
-      let p := prepareCell c seed
+      let p := prepareProfile c seed profile
       for sample in [0:p.samples] do
         let mut state := (p.input.extract (sample * p.size) ((sample + 1) * p.size), #[])
         for (layer, index) in p.layers.zipIdx do
@@ -28,7 +29,7 @@ def main (args : List String) : IO Unit := do
           let subnormal := state.1.foldl (fun n w =>
             n + if expOf w == 0 && fracOf w != 0 then 1 else 0) 0
           IO.println <| (Json.mkObj [
-            ("seed", toJson seed.toNat), ("cell", toJson c.name),
+            ("profile", toJson profile), ("seed", toJson seed.toNat), ("cell", toJson c.name),
             ("sample", toJson sample), ("layer", toJson index),
             ("size", toJson state.1.size), ("nonfinite", toJson nonfinite),
             ("zeros", toJson zeros), ("negative", toJson negative),

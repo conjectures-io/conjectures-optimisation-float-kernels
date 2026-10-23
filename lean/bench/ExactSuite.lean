@@ -188,4 +188,45 @@ def runPrepared (K : Kernels) (p : PreparedCell) (rep : Nat) : Array Word :=
 def runCell (K : Kernels) (c : Cell) (seed : UInt32) (rep : Nat := 0) : UInt32 :=
   hashArr (runPrepared K (prepareCell c seed) rep)
 
+
+/-- Experimental shape profiles, chosen outside measured inference. Legacy remains unchanged. -/
+def profileModel (c : Cell) (seed : UInt32) (profile : String) : List Layer × Nat × Nat :=
+  if profile == "legacy" then cellModel c seed else Id.run do
+    let r := lcg 8 (seed ^^^ 0x5bd1e995)
+    let draw (i span : Nat) := r[i]!.toNat % span
+    let edge (base i : Nat) := if r[i]! &&& 0x1000 == 0 then base - 1 else base + 1
+    let boundary := profile == "boundary"
+    let scale := profile == "scale"
+    let input := if boundary then edge ((32 + draw 0 67) * 8) 2
+      else if scale then (8 + draw 0 57) * 16 else (32 + draw 0 67) * 8
+    let h := if boundary then edge ((8 + draw 1 25) * 8) 3
+      else if scale then (2 + draw 1 7) * 16 else (8 + draw 1 25) * 8
+    let h2 := if boundary then edge ((4 + draw 2 13) * 8) 4
+      else if scale then (1 + draw 2 4) * 16 else (4 + draw 2 13) * 8
+    let side := if boundary then 13 + 2 * draw 5 3
+      else if scale then 20 + 4 * draw 5 2 else 12 + 4 * draw 5 2
+    let c1 := if boundary then 5 + 2 * draw 3 2
+      else if scale then 4 + draw 3 3 else 4 + draw 3 5
+    let c2 := if boundary then 9 + 2 * draw 4 4
+      else if scale then 8 + draw 4 5 else 8 + draw 4 9
+    match c.model with
+    | "mlp" => return (mlpLayers c.kind seed c.batch [input,h,h2,10], 1, c.batch * input)
+    | "cnn" => return (cnnLayers c.kind seed 3 side c1 c2 10, c.batch, 3 * side * side)
+    | "mnet" => return (mnetLayers c.kind seed 3 side c1 c2 10, c.batch, 3 * side * side)
+    | "nmlp" =>
+      let i := if boundary then edge ((16 + draw 0 49) * 8) 2
+        else if scale then (4 + draw 0 45) * 16 else (16 + draw 0 49) * 8
+      return (nmlpLayers c.kind seed c.batch i h h2 10, 1, c.batch * i)
+    | _ =>
+      let tokens := if boundary then 9 + 2 * draw 6 5
+        else if scale then 20 + 2 * draw 6 7 else 8 + draw 6 9
+      let channels := if boundary then 15 + 2 * draw 7 10
+        else if scale then 12 + draw 7 9 else 16 + 4 * draw 7 9
+      return (mixerLayers c.kind seed tokens channels 10, c.batch, tokens * channels)
+
+/-- Same input distribution as the old suite; only plausible shape coverage changes. -/
+def prepareProfile (c : Cell) (seed : UInt32) (profile : String) : PreparedCell :=
+  let (layers,samples,size) := profileModel c seed profile
+  ⟨layers,samples,size,gen c.kind (samples * size) (seed + 999)⟩
+
 end ExactSuite
