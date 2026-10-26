@@ -402,6 +402,8 @@ class EvaluationsDb:
                 )
             )
             boards[board] = {
+                "config_hash": config.identity(board),
+                "initial_reference": config.boards[board]["reference"]["sha256"],
                 "paused": paused,
                 "kings": [
                     {"promotion_id": p.id, "submission_id": sid, "hotkey": hotkey}
