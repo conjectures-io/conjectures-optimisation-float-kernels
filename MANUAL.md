@@ -17,6 +17,38 @@ with read-only operator code, a private writable build overlay and resource limi
 Ubuntu AppArmor may require a profile permitting user namespaces for that executable.
 Check `./setup.sh --check` and run a real verification before enabling workers.
 
+## Submit a kernel implementation
+
+For the client alone, install `requirements/miner.txt` in a Python virtual environment.
+No Lean installation or chain connection is needed to upload:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements/miner.txt
+.venv/bin/python miner/submit.py submit path/to/entry \
+  --hotkey ~/.bittensor/wallets/WALLET/hotkeys/HOTKEY
+.venv/bin/python miner/submit.py status 123
+```
+
+The entry directory must contain one nonempty UTF-8 `Kernel.lean` (at most 256000 bytes).
+The client signs the file for `torchlean`, uploads it to the central API, and prints its ID.
+The default API origin is `https://conjectures.io`. Use `--url` on either command to select dev:
+
+```bash
+.venv/bin/python miner/submit.py submit kernels/exact/incumbent \
+  --hotkey //Alice --url http://127.0.0.1:8000
+.venv/bin/python miner/submit.py status 123 --url http://127.0.0.1:8000
+```
+
+`//Alice` is a public test identity. Dev uploads use the normal signed format; the dev API
+must enable `TORCHLEAN_DEV_SKIP_REGISTRATION=1` with `APP_MODE=DEV` to accept unregistered
+identities. There is no client flag to bypass registration. Duplicate uploads are still refused.
+
+Status returns the proof state and recorded board evaluations. A proved submission may still
+be waiting for benchmarks; it does not by itself mean promotion. The client currently exposes
+`submit` and `status`; board and detailed report commands await their API endpoints.
+These commands require the TorchLean API changes to be deployed and intake enabled.
+
 ## Fresh database
 
 Configure the PostgreSQL values in `.env`, then:
