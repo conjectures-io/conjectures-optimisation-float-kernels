@@ -81,11 +81,11 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
         dir=str(d), hotkey="//Alice", url="http://v:9300/", slot="full"
     )
     submit.cmd_submit(args)
-    assert sent["url"] == "http://v:9300/v1/competitions/floatlib/submissions"
+    assert sent["url"] == "http://v:9300/v1/competitions/torchlean/submissions"
     assert set(sent["files"]) == {"Kernel.lean"}
     h = sent["headers"]
     message = service_sig.submit_message(
-        competition="floatlib",
+        competition="torchlean",
         digest=service_sig.digest_of(b"import Contract\n"),
         hotkey=h["X-Conjectures-Hotkey"],
         timestamp=int(h["X-Conjectures-Timestamp"]),

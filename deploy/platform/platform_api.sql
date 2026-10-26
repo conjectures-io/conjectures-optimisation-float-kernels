@@ -5,6 +5,6 @@ GRANT USAGE ON SCHEMA public TO platform_api;
 GRANT SELECT ON registrations, sources, submissions, board_progress, evaluations,
   evaluation_jobs, benchmark_jobs, promotions, weight_sets TO platform_api;
 GRANT INSERT ON sources TO platform_api;
-GRANT INSERT(hotkey,registration_id,source_sha256,account_id) ON submissions TO platform_api;
+GRANT INSERT(hotkey,registration_id,source_sha256,account_id,intake_mode) ON submissions TO platform_api;
 GRANT USAGE ON SEQUENCE submissions_id_seq TO platform_api;
 GRANT SELECT(publication,publication_hash) ON coordinator_state TO platform_api;
