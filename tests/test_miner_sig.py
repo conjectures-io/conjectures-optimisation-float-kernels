@@ -78,9 +78,7 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsy
         return Reply()
 
     monkeypatch.setattr(submit.requests, "post", post)
-    args = submit.argparse.Namespace(
-        dir=str(d), hotkey="//Alice", url="http://v:9300/"
-    )
+    args = submit.argparse.Namespace(dir=str(d), hotkey="//Alice", url="http://v:9300/")
     submit.cmd_submit(args)
     assert sent["url"] == "http://v:9300/v1/competitions/torchlean/submissions"
     assert set(sent["files"]) == {"Kernel.lean"}
@@ -136,7 +134,9 @@ def test_invalid_source_is_refused_before_upload(tmp_path, monkeypatch, content,
 
     monkeypatch.setattr(submit.requests, "post", unexpected)
     with pytest.raises(SystemExit, match=reason):
-        submit.cmd_submit(submit.argparse.Namespace(dir=str(tmp_path), hotkey="//Alice", url="http://v"))
+        submit.cmd_submit(
+            submit.argparse.Namespace(dir=str(tmp_path), hotkey="//Alice", url="http://v")
+        )
 
 
 def test_status_keeps_proof_and_board_decisions_separate(monkeypatch, capsys):
