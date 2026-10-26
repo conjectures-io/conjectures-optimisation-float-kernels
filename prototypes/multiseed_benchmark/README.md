@@ -1,7 +1,9 @@
 # Six-workload benchmark prototype
 
 This branch preserves the implementation exercised locally on 23 October 2026.
-It is an isolated prototype; worker/coordinator integration remains to be done.
+Its helpers preserve the original offline experiment. The maintained worker/coordinator
+integration now lives in `validator/{multiseed,benchmark,scoring}.py`; see
+[the worker protocol](../../docs/BENCHMARKING.md).
 
 ## Included code
 
@@ -48,8 +50,9 @@ JSON session: `workloads` contains `id`, `seed`, `profile` and `weight`;
 candidate/reference checksums before scoring.
 
 The native program defaults to `s0:42:legacy` when `BENCH_WORKLOADS` is absent.
-It does not implement the live worker's existing single-seed protocol. Do not
-deploy this branch's benchmark without adapting its caller and parser.
+Maintained workers always send the explicit six-workload plan; the default is only for
+manual invocations. Historical single-seed report tools retain their original scoring
+in `prototypes/single_seed_scoring.py`.
 
 ## Local evidence
 
@@ -71,7 +74,6 @@ No incumbent copy qualified, but two copy sessions per version cannot establish
 a rare false-positive rate. Full-suite runtime averaged 13.34 minutes versus
 7.06 minutes previously; the new maximum was 14.28 minutes.
 
-Before deployment: integrate job/request formats, benchmark identities and
-coordinator scoring; validate family-only worker runs and budget headroom;
-collect more independent controls. The new shape profiles have runtime
+Remaining validation: measure family-only worker budget headroom on each deployment host
+and collect more independent timing controls. The new shape profiles have runtime
 validation, but no additional formal sampler-validity proofs yet.

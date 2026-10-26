@@ -10,7 +10,8 @@ The reference alone calibrates each workload/cell in two passes, best of three, 
 repetition counts up to the target. Paired alternating rounds use identical workloads and
 counts; every output checksum must match. Output keys are `workload|model:batch:kind`.
 The generated development configuration uses 11 rounds, best of three, 50 ms cells, a separate
-960 s build phase and 900 s calibration/measurement phase. A full overall job covers 180 cells;
+960 s build phase and 1200 s calibration/measurement phase. The ceiling includes
+model preparation and process overhead as well as timed inference; it is not a target duration. A full overall job covers 180 cells;
 a single-family job covers 36. Production thresholds still require a host timing study.
 
 Each evaluation freezes model-cell weights, required hardware/seed strata, timing settings and

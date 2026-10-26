@@ -51,7 +51,7 @@ def main():
         f"cell_ms = {2 if args.quick else 50}",
         "run_seconds = 300",
         "build_seconds = 960",
-        "benchmark_seconds = 900",
+        "benchmark_seconds = 1200",
         "",
         "[admission]",
         "bar = 0.97",
