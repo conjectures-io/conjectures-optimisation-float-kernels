@@ -18,9 +18,9 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/float-kernels-matplotlib")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "validator")]
 
-from config import measurement_hash  # noqa: E402
 from loguru import logger  # noqa: E402
-from scoring import assess  # noqa: E402
+
+from prototypes.single_seed_scoring import assess, measurement_hash  # noqa: E402
 
 
 def ci(values, rng):

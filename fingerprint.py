@@ -25,6 +25,7 @@ BENCHMARK_FILES = (
     + [
         "validator/benchmark.py",
         "validator/timing.py",
+        "validator/multiseed.py",
         "lean/bench/ExactSuite.lean",
         "lean/bench/MainExact.lean",
     ]

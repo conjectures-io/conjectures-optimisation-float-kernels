@@ -8,6 +8,7 @@ import secrets
 from pathlib import Path
 
 from config import Config, digest, measurement_hash
+from multiseed import workloads
 from scoring import assess
 from sqlalchemy import exists, func, or_, select
 
@@ -182,6 +183,7 @@ class EvaluationsDb:
                         "cells": sorted(plan["cells"]),
                         "timing": plan["timing"],
                         "benchmark_identity": plan["benchmark_identity"],
+                        "workloads": workloads(st["seed"]),
                     }
                     request_hash = measurement_hash(request)
                     old = s.scalar(

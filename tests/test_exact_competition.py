@@ -7,6 +7,7 @@ import hashlib
 
 import pytest
 from config import Config, digest, measurement_hash
+from multiseed import expanded, workloads
 from rewards import score
 from scoring import assess
 
@@ -59,7 +60,8 @@ def result(request, ratio=0.9):
     return {
         "request_hash": measurement_hash(request),
         "provenance": {"identity": request["identity"], "machine": "test-machine"},
-        "repetitions": {c: 1 for c in request["cells"]},
+        "workloads": request["workloads"],
+        "repetitions": {c: 1 for c in expanded(request)},
         "rounds": [
             {
                 "reference_first": i % 2 == 0,
@@ -70,7 +72,7 @@ def result(request, ratio=0.9):
                         "reference_checksum": 123,
                         "candidate_checksum": 123,
                     }
-                    for c in request["cells"]
+                    for c in expanded(request)
                 },
             }
             for i in range(request["timing"]["rounds"])
@@ -82,6 +84,7 @@ def request_for(config, board="mlp"):
     plan = config.plan(board)
     return {k: v for k, v in plan["strata"][0].items() if k != "weight"} | {
         "cells": sorted(plan["cells"]),
+        "workloads": workloads(plan["strata"][0]["seed"]),
         "timing": plan["timing"],
         "benchmark_identity": plan["benchmark_identity"],
         "candidate_hash": "d" * 64,
@@ -119,7 +122,7 @@ def test_stratified_hardware_guard(config):
 def test_bad_evidence(config, change):
     request = request_for(config)
     data = result(request)
-    cell = next(iter(request["cells"]))
+    cell = next(iter(data["repetitions"]))
     if change == "nan":
         data["rounds"][0]["cells"][cell]["candidate_ns"] = float("nan")
     elif change == "checksum":

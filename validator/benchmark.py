@@ -15,8 +15,8 @@ import time
 from pathlib import Path
 
 import sandbox
-from config import digest, measurement_hash
-from timing import validate_timing
+from config import MeasurementRequest, digest, measurement_hash
+from multiseed import calibrated_counts
 
 import fingerprint
 
@@ -156,6 +156,12 @@ def run_binary(binary, request, reps, inner, side, deadline):
         "BENCH_INNER": str(inner),
         "LEAN_ABORT_ON_PANIC": "1",
     }
+    extra["BENCH_WORKLOADS"] = ",".join(
+        f"{w['id']}:{w['seed']}:{w['profile']}" for w in request["workloads"]
+    )
+    extra["BENCH_REPS"] = ",".join(
+        f"{k.split('|')[0]}|{lean_cell(k.split('|')[1])}={n}" for k, n in reps.items()
+    )
     command = [str(binary)]
     if sandbox._BENCH_CPU:
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
@@ -170,10 +176,15 @@ def run_binary(binary, request, reps, inner, side, deadline):
     deadline.remaining(side)
     if code:
         raise MeasurementFailure(side, f"bench exit {code}: {output[-1000:]}")
+    public = {
+        f"{w['id']}|{lean_cell(c)}": f"{w['id']}|{c}"
+        for w in request["workloads"]
+        for c in request["cells"]
+    }
     rows = {}
     for line in output.splitlines():
         fields = line.split()
-        if len(fields) != 4 or fields[1] != "true" or fields[0] in {lean_cell(c) for c in rows}:
+        if len(fields) != 4 or fields[1] != "true" or public.get(fields[0]) in rows:
             raise MeasurementFailure("infrastructure", "invalid or duplicate benchmark row")
         try:
             ns, checksum = int(fields[2]), int(fields[3])
@@ -181,18 +192,17 @@ def run_binary(binary, request, reps, inner, side, deadline):
             raise MeasurementFailure("infrastructure", "noninteger benchmark output") from exc
         if ns <= 0 or not 0 <= checksum < 2**32:
             raise MeasurementFailure("infrastructure", "invalid duration or checksum")
-        public = {lean_cell(c): c for c in request["cells"]}
         if fields[0] not in public:
             raise MeasurementFailure("infrastructure", "unknown benchmark cell")
         rows[public[fields[0]]] = (ns, checksum)
-    if set(rows) != set(request["cells"]):
+    if set(rows) != set(public.values()):
         raise MeasurementFailure("infrastructure", "missing or extra benchmark cells")
     deadline.remaining(side)
     return rows
 
 
 def measure(request, candidate, reference):
-    validate_timing(request["timing"])
+    MeasurementRequest.parse(request)
     if request["identity"] != machine_identity():
         raise MeasurementFailure("infrastructure", "hardware/execution identity mismatch")
     if request["benchmark_identity"] != fingerprint.benchmark():
@@ -230,11 +240,10 @@ def measure(request, candidate, reference):
             build_clock.remaining("candidate")
             build_seconds = build_clock.elapsed()
             benchmark_clock = Deadline("benchmark", request["timing"]["benchmark_seconds"])
-            initial = run_binary(ref, request, {}, 1, "reference", benchmark_clock)
-            reps = {
-                c: max(1, min(1000000, int(request["timing"]["cell_ms"] * 1e6 / ns)))
-                for c, (ns, _) in initial.items()
-            }
+            initial = run_binary(ref, request, {}, 3, "reference", benchmark_clock)
+            reps = calibrated_counts(initial, request["timing"]["cell_ms"])
+            checked = run_binary(ref, request, reps, 3, "reference", benchmark_clock)
+            reps = calibrated_counts(checked, request["timing"]["cell_ms"], reps)
             rounds = []
             t0 = time.monotonic()
             for i in range(request["timing"]["rounds"]):
@@ -248,7 +257,7 @@ def measure(request, candidate, reference):
                     for side, binary in sides
                 }
                 cells = {}
-                for c in request["cells"]:
+                for c in reps:
                     a, b = observed["reference"][c], observed["candidate"][c]
                     if a[1] != b[1]:
                         raise MeasurementFailure("checksum", f"output mismatch on {c}")
@@ -265,6 +274,7 @@ def measure(request, candidate, reference):
                 raise MeasurementFailure("infrastructure", "checkout changed during benchmark")
             return {
                 "request_hash": measurement_hash(request),
+                "workloads": request["workloads"],
                 "provenance": {
                     "identity": machine_identity(),
                     "machine": socket.gethostname(),

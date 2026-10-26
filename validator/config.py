@@ -11,12 +11,13 @@ import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from multiseed import workloads
 from timing import validate_timing
 
 MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
 KINDS = ("normal", "wide", "sparse")
-VERSION = "exact-boards-v2"
+VERSION = "exact-boards-v3-multiseed"
 
 
 def digest(value: object) -> str:
@@ -35,6 +36,7 @@ class MeasurementRequest:
     cells: tuple[str, ...]
     timing: dict
     benchmark_identity: str
+    workloads: list[dict]
 
     @classmethod
     def parse(cls, request):
@@ -43,10 +45,16 @@ class MeasurementRequest:
         cells = request["cells"]
         if not isinstance(cells, (list, tuple)) or not cells or len(set(cells)) != len(cells):
             raise ValueError("measurement requires unique cell names")
+        valid_cells = {f"{m}:b{b}:{kind}" for m in MODELS for b in BATCHES[m] for kind in KINDS}
+        if set(cells) - valid_cells:
+            raise ValueError("unknown measurement cell")
         for key in ("identity", "candidate_hash", "reference_hash", "benchmark_identity"):
             sha(request[key])
         if type(request["seed"]) is not int or not 0 <= request["seed"] < 2**32:
             raise ValueError("invalid measurement seed")
+        if request["workloads"] != workloads(request["seed"]):
+            raise ValueError("workload plan mismatch")
+        validate_timing(request["timing"])
         return cls(**(request | {"cells": tuple(sorted(cells))}))
 
     def identity_hash(self):
@@ -233,6 +241,7 @@ class Config:
         ]
         return {
             "version": VERSION,
+            "workload_policy": "six-workloads-50-30-20-v1",
             "board": board,
             "initial_reference": self.boards[board]["reference"]["sha256"],
             "seed_mode": self.seed_mode,

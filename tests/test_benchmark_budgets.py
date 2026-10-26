@@ -8,6 +8,7 @@ from pathlib import Path
 import benchmark
 import pytest
 import sandbox
+from multiseed import workloads
 from timing import supervisor_seconds, validate_timing
 
 CELL = "mlp:b1:normal"
@@ -30,7 +31,7 @@ def clock(monkeypatch):
 
 def timing(**extra):
     return (
-        dict(rounds=1, inner=1, cell_ms=1, run_seconds=10, build_seconds=10, benchmark_seconds=3)
+        dict(rounds=1, inner=1, cell_ms=1, run_seconds=10, build_seconds=10, benchmark_seconds=4)
         | extra
     )
 
@@ -53,6 +54,7 @@ def measurement(tmp_path, monkeypatch, clock):
         benchmark_identity="b" * 64,
         environment="test",
         seed=42,
+        workloads=workloads(42),
         candidate_hash="c" * 64,
         reference_hash="d" * 64,
         cells=[CELL],
@@ -71,7 +73,7 @@ def measurement(tmp_path, monkeypatch, clock):
     def run(command, timeout, **kwargs):
         caps.append(timeout)
         clock.advance(1 if kwargs["env_extra"]["BENCH_REPS"] else 0.5)
-        return 0, f"{CELL} true 100 123\n"
+        return 0, "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
 
     monkeypatch.setattr(sandbox, "run", run)
     return request, caps
@@ -80,9 +82,9 @@ def measurement(tmp_path, monkeypatch, clock):
 def test_build_does_not_consume_measurement_time_and_durations_are_recorded(measurement):
     request, caps = measurement
     result = benchmark.measure(request, b"candidate", b"reference")
-    assert caps == pytest.approx([3, 2.5, 1.5])
+    assert caps == pytest.approx([4, 3.5, 2.5, 1.5])
     assert result["stage_seconds"] == pytest.approx(
-        dict(build=9, calibration=0.5, rounds=2, benchmark=2.5)
+        dict(build=9, calibration=1.5, rounds=2, benchmark=3.5)
     )
     assert result["timing_seconds"] == pytest.approx(2)
     assert sandbox.WORK.read_bytes() == b"operator source"
@@ -114,7 +116,12 @@ def test_calibration_consumes_the_same_budget_as_rounds(measurement, clock, monk
 
 @pytest.mark.parametrize("side", ["candidate", "reference"])
 def test_per_run_timeout_is_explicit_and_preserves_responsible_side(monkeypatch, clock, side):
-    request = {"timing": timing(run_seconds=2), "cells": [CELL], "seed": 42}
+    request = {
+        "timing": timing(run_seconds=2),
+        "cells": [CELL],
+        "seed": 42,
+        "workloads": workloads(42),
+    }
     monkeypatch.setattr(sandbox, "run", lambda command, timeout, **kw: (124, ""))
     with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout") as exc:
         benchmark.run_binary(
@@ -215,7 +222,12 @@ def test_real_slow_invocation_is_terminated_as_benchmark_timeout(tmp_path, monke
     monkeypatch.setattr(sandbox, "_BENCH_MEMORY_MB", 0)
     monkeypatch.setattr(sandbox, "_FILE_MB", 0)
     monkeypatch.setattr(sandbox, "_BENCH_CPU", "")
-    request = {"timing": timing(run_seconds=0.05), "cells": [CELL], "seed": 42}
+    request = {
+        "timing": timing(run_seconds=0.05),
+        "cells": [CELL],
+        "seed": 42,
+        "workloads": workloads(42),
+    }
     with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout"):
         benchmark.run_binary(
             executable, request, {}, 1, "candidate", benchmark.Deadline("benchmark", 2)

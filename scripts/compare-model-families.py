@@ -22,10 +22,10 @@ from statistics import median
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "validator")]
 
-from config import BATCHES, KINDS, MODELS, measurement_hash  # noqa: E402
-from scoring import assess  # noqa: E402
+from config import BATCHES, KINDS, MODELS  # noqa: E402
 
 import fingerprint  # noqa: E402
+from prototypes.single_seed_scoring import assess, measurement_hash  # noqa: E402
 
 LEAN_MODELS = {
     "mlp": "mlp",
