@@ -100,14 +100,38 @@ def cmd_submit(args: argparse.Namespace) -> None:
     print(f"check with: {command}")
 
 
-def cmd_status(args):
-    response = requests.get(f"{base(args.url)}/submissions/{args.id}", timeout=TIMEOUT)
+def show(what: str, url: str, path: str, params: dict | None = None) -> None:
+    # Print one public read as JSON. These are the API's public fields only: a board's current
+    # champion keeps its source private, and nothing here asks for source.
+    response = requests.get(f"{base(url)}{path}", params=params, timeout=TIMEOUT)
     if response.status_code != 200:
-        sys.exit(refused("status", response))
+        sys.exit(refused(what, response))
     print(json.dumps(response.json(), indent=2))
 
 
-CMDS = {"submit": cmd_submit, "status": cmd_status}
+def cmd_status(args):
+    show("status", args.url, f"/submissions/{args.id}")
+
+
+def cmd_report(args):
+    show("report", args.url, f"/submissions/{args.id}/report")
+
+
+def cmd_boards(args):
+    show("boards", args.url, "/boards")
+
+
+def cmd_leaderboard(args):
+    show("leaderboard", args.url, "/leaderboard", {"board": args.board})
+
+
+CMDS = {
+    "submit": cmd_submit,
+    "status": cmd_status,
+    "report": cmd_report,
+    "boards": cmd_boards,
+    "leaderboard": cmd_leaderboard,
+}
 
 
 def main() -> None:
@@ -126,6 +150,13 @@ def main() -> None:
     status = sub.add_parser("status", help="show proof status and recorded board evaluations")
     status.add_argument("id", type=int)
     common(status)
+    report = sub.add_parser("report", help="show a submission's measurements and decisions")
+    report.add_argument("id", type=int)
+    common(report)
+    common(sub.add_parser("boards", help="show each board's rules, reference and champion"))
+    leaderboard = sub.add_parser("leaderboard", help="show challengers against a board's champion")
+    leaderboard.add_argument("--board", default="overall", help="board name (default overall)")
+    common(leaderboard)
     args = ap.parse_args()
     try:
         CMDS[cast(str, args.cmd)](args)

@@ -45,8 +45,10 @@ must enable `TORCHLEAN_DEV_SKIP_REGISTRATION=1` with `APP_MODE=DEV` to accept un
 identities. There is no client flag to bypass registration. Duplicate uploads are still refused.
 
 Status returns the proof state and recorded board evaluations. A proved submission may still
-be waiting for benchmarks; it does not by itself mean promotion. The client currently exposes
-`submit` and `status`; board and detailed report commands await their API endpoints.
+be waiting for benchmarks; it does not by itself mean promotion. `report ID` adds the timings
+per environment and seed, `boards` each board's rules and champion, and
+`leaderboard --board NAME` the challengers against that board's champion (default `overall`).
+All of them read the public API; a current champion's source stays private.
 These commands require the TorchLean API changes to be deployed and intake enabled.
 
 ## Fresh database

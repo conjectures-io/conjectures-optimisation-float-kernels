@@ -154,8 +154,8 @@ def test_status_keeps_proof_and_board_decisions_separate(monkeypatch, capsys):
         def json(self):
             return payload
 
-    def get(url, timeout):
-        assert url == "http://dev/v1/competitions/torchlean/submissions/12"
+    def get(url, params, timeout):
+        assert url == "http://dev/v1/competitions/torchlean/submissions/12" and params is None
         return Reply()
 
     monkeypatch.setattr(submit.requests, "get", get)
@@ -163,6 +163,36 @@ def test_status_keeps_proof_and_board_decisions_separate(monkeypatch, capsys):
     import json
 
     assert json.loads(capsys.readouterr().out) == payload
+
+
+@pytest.mark.parametrize(
+    ("argv", "path", "params"),
+    [
+        (["report", "12"], "/submissions/12/report", None),
+        (["boards"], "/boards", None),
+        (["leaderboard"], "/leaderboard", {"board": "overall"}),
+        (["leaderboard", "--board", "mlp"], "/leaderboard", {"board": "mlp"}),
+    ],
+)
+def test_read_commands_print_public_api_reads(monkeypatch, capsys, argv, path, params):
+    submit = load("miner_submit_reads", REPO / "miner" / "submit.py")
+    seen = []
+
+    class Reply:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def get(url, params, timeout):
+        seen.append((url, params))
+        return Reply()
+
+    monkeypatch.setattr(submit.requests, "get", get)
+    monkeypatch.setattr(sys, "argv", ["submit.py", *argv, "--url", "http://dev"])
+    submit.main()
+    assert seen == [("http://dev/v1/competitions/torchlean" + path, params)]
+    assert '"ok": true' in capsys.readouterr().out
 
 
 def test_duplicate_reports_existing_submission():
