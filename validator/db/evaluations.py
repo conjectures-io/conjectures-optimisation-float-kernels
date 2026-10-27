@@ -12,6 +12,8 @@ from multiseed import workloads
 from scoring import assess
 from sqlalchemy import exists, func, or_, select
 
+from axiom import get_events
+
 from . import models as m
 from .champions import champion, history, source_blocked
 from .engine import session_scope
@@ -92,6 +94,7 @@ class EvaluationsDb:
 
     def plan(self, config: Config):
         created = []
+        planned = []
         with session_scope(self.sessions) as s:
             self._lead(s)
             for board in config.boards:
@@ -176,6 +179,7 @@ class EvaluationsDb:
                 )
                 s.add(e)
                 s.flush()
+                reused = 0
                 for st in plan["strata"]:
                     request = {k: st[k] for k in ("environment", "identity", "seed")} | {
                         "candidate_hash": sub.source_sha256,
@@ -196,6 +200,7 @@ class EvaluationsDb:
                         .order_by(m.BenchmarkJob.id.desc())
                         .limit(1)
                     )
+                    reused += old is not None
                     if old is None:
                         old = m.BenchmarkJob(
                             request_hash=request_hash,
@@ -217,6 +222,21 @@ class EvaluationsDb:
                         )
                     )
                 created.append(e.id)
+                planned.append(
+                    {
+                        "evaluation_id": e.id,
+                        "submission_id": sub.id,
+                        "hotkey": sub.hotkey,
+                        "board": board,
+                        "generation": generation,
+                        "reference_promotion_id": e.reference_promotion_id,
+                        "jobs": len(plan["strata"]),
+                        "reused_jobs": reused,
+                    }
+                )
+        # After the commit, so an event never describes a plan that rolled back.
+        for fields in planned:
+            get_events().info("evaluation_planned", **fields)
         return created
 
     def ready(self):
@@ -259,19 +279,46 @@ class EvaluationsDb:
                 if job.state in ("queued", "running"):
                     job.state = "cancelled"
                     job.claimant = job.owner = job.token = job.lease_until = None
+            promotion = None
             if decision["outcome"] == "qualifies":
-                s.add(
-                    m.Promotion(
-                        board=e.board,
-                        evaluation_id=e.id,
-                        source_environment=(sub.proof_report or {}).get("source_environment", {}),
-                    )
+                promotion = m.Promotion(
+                    board=e.board,
+                    evaluation_id=e.id,
+                    source_environment=(sub.proof_report or {}).get("source_environment", {}),
                 )
+                s.add(promotion)
             progress = s.get(m.BoardProgress, e.board)
             progress.last_submission_id, progress.last_submitted_at = sub.id, sub.submitted_at
             s.flush()
             self._publish(s, config)
-            return True
+            fields = {
+                "evaluation_id": e.id,
+                "submission_id": sub.id,
+                "hotkey": sub.hotkey,
+                "board": e.board,
+                "generation": e.generation,
+                "reference_promotion_id": e.reference_promotion_id,
+            }
+            promotion_id = promotion.id if promotion else None
+        # After the commit: a decision or a promotion that rolled back was never made.
+        events = get_events()
+        (events.warning if decision["outcome"] == "benchmark-failed" else events.info)(
+            "evaluation_decided",
+            **fields,
+            outcome=decision["outcome"],
+            score=decision.get("score"),
+            gain_lower=decision.get("gain_lower"),
+            guard_passed=decision.get("guard_passed"),
+            reason=decision.get("reason"),
+        )
+        if promotion_id is not None:
+            events.info(
+                "champion_promoted",
+                **fields,
+                promotion_id=promotion_id,
+                score=decision.get("score"),
+            )
+        return True
 
     def aggregate(self, config):
         count = 0
@@ -299,10 +346,12 @@ class EvaluationsDb:
             try:
                 decision = assess(e.plan, pairs)
             except (ValueError, KeyError, TypeError) as exc:
+                quarantined = False
                 with session_scope(self.sessions) as s:
                     self._lead(s)
                     row = s.get(m.Evaluation, e.id, with_for_update=True)
                     if row.state == "pending":
+                        quarantined = True
                         cancel(s, row)
                         for job in s.scalars(job_query(e.id)):
                             # Retain malformed payloads for diagnosis, but never reuse them.
@@ -318,6 +367,15 @@ class EvaluationsDb:
                                     )
                                 ):
                                     cancel(s, consumer)
+                if quarantined:
+                    get_events().error(
+                        "evaluation_quarantined",
+                        evaluation_id=e.id,
+                        submission_id=e.submission_id,
+                        board=e.board,
+                        generation=e.generation,
+                        error=f"{type(exc).__name__}: {exc}"[:2000],
+                    )
                 continue
             count += self.finalize(e.id, config, decision)
         return count
@@ -340,6 +398,10 @@ class EvaluationsDb:
                 cancel(s, pending)
             s.flush()
             self._publish(s, config)
+            board = row.board
+        get_events().warning(
+            "promotion_disqualified", promotion_id=promotion_id, board=board, reason=reason
+        )
 
     def set_disqualification(self, source_hash, active, reason, actor, config):
         """Operator decision serialized with all coordinator writes, across every board."""
@@ -380,6 +442,13 @@ class EvaluationsDb:
                     cancel(s, evaluation)
             s.flush()
             self._publish(s, config)
+        get_events().warning(
+            "source_disqualification_set",
+            source_hash=source_hash,
+            active=active,
+            reason=reason,
+            actor=actor,
+        )
 
     def publish(self, config):
         with session_scope(self.sessions) as s:
@@ -404,6 +473,8 @@ class EvaluationsDb:
                 )
             )
             boards[board] = {
+                "config_hash": config.identity(board),
+                "initial_reference": config.boards[board]["reference"]["sha256"],
                 "paused": paused,
                 "kings": [
                     {"promotion_id": p.id, "submission_id": sid, "hotkey": hotkey}

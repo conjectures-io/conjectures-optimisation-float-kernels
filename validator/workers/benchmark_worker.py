@@ -19,11 +19,34 @@ from timing import supervisor_seconds
 from worker_credentials import load
 
 import db
+from axiom import get_events, init
 from db.jobs import WorkerDb
+
+
+def report(job, error, seconds):
+    # A candidate failure is the miner's result; reference, checksum and infrastructure ones are
+    # ours. Telemetry must never fail the job, so optional fields are read defensively.
+    events = get_events()
+    kind = (error or {}).get("kind")
+    emit = events.info if error is None else events.warning if kind == "candidate" else events.error
+    emit(
+        "benchmark_job_finished",
+        job_id=job.id,
+        environment=getattr(job, "environment", None),
+        seed=(job.request or {}).get("seed"),
+        candidate_hash=getattr(job, "candidate_hash", None),
+        reference_hash=getattr(job, "reference_hash", None),
+        outcome="completed" if error is None else "failed",
+        error_kind=kind,
+        reason=str((error or {}).get("reason") or "")[:2000] or None,
+        seconds=round(seconds, 1),
+    )
 
 
 def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
     lease = job.lease_seconds
+    started = time.monotonic()
+    error = None
     with tempfile.TemporaryDirectory(prefix="exact-job-") as tmp:
         path = Path(tmp)
         try:
@@ -54,20 +77,19 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
             )
             result = json.loads((path / "result.json").read_text())
             if "error" in result:
-                repo.fail(job.id, owner, job.token, result["error"])
+                error = result["error"]
+                repo.fail(job.id, owner, job.token, error)
             else:
                 repo.complete(job.id, owner, job.token, result["result"])
         except BudgetExceeded as exc:
             logger.warning("benchmark job {} ran out of time: {}", job.id, exc)
-            repo.fail(
-                job.id,
-                owner,
-                job.token,
-                {"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"},
-            )
+            error = {"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"}
+            repo.fail(job.id, owner, job.token, error)
         except Exception as exc:
             logger.warning("exact job {} failed: {}", job.id, exc)
-            repo.fail(job.id, owner, job.token, {"kind": "infrastructure", "reason": str(exc)})
+            error = {"kind": "infrastructure", "reason": str(exc)}
+            repo.fail(job.id, owner, job.token, error)
+    report(job, error, time.monotonic() - started)
 
 
 def main():
@@ -80,16 +102,22 @@ def main():
     )
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+    events = init("competition-benchmark-worker")
     from sandbox import require_backend
 
     require_backend()
     load(args.credentials)
     args.environment = args.environment or os.environ.get("BENCHMARK_ENVIRONMENT")
     if not args.environment:
-        parser.error("--environment or BENCHMARK_ENVIRONMENT is required")
+        message = "--environment or BENCHMARK_ENVIRONMENT is required"
+        events.error("service_misconfigured", error=message)
+        parser.error(message)
     owner = f"{socket.gethostname()}:{__import__('os').getpid()}"
+    events.bind(environment=args.environment, worker=owner)
+    events.info("service_started", once=args.once)
     store = db.connect()
     repo = WorkerDb(store.sessions)
+    reason = "crashed"
     try:
         while True:
             # Lock before claiming so a job does not wait behind another timing process on a lease.
@@ -100,9 +128,14 @@ def main():
                 if job:
                     execute(repo, job, owner, lock.fileno(), build_lock.fileno())
             if args.once:
+                reason = "once"
                 return
             time.sleep(2)
+    except KeyboardInterrupt:
+        reason = "interrupted"
+        raise
     finally:
+        events.info("service_stopped", reason=reason)
         store.close()
 
 

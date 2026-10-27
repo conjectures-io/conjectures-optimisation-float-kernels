@@ -1,6 +1,7 @@
 """Exercise macOS setup orchestration without downloads or a real Lean build."""
 
 import os
+import resource
 import shutil
 import subprocess
 from pathlib import Path
@@ -129,11 +130,18 @@ def test_rejects_linux_before_installing(project):
 @pytest.mark.parametrize("limit", [256, 131072])
 def test_build_children_inherit_sufficient_file_limit(project, limit):
     repo, _, env = project
+    # Hosted runners can have a hard cap of 65536. Test an achievable inherited limit,
+    # while still exercising preservation above 65536 on machines that permit it.
+    hard = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+    if hard != resource.RLIM_INFINITY:
+        if hard < 65536:
+            pytest.skip("requires a hard file limit of at least 65536")
+        limit = min(limit, hard)
     result = subprocess.run(
         [
             "bash",
             "-c",
-            'ulimit -Sn "$1"; exec bash "$2"',
+            'set -e; ulimit -Sn "$1"; exec bash "$2"',
             "setup",
             str(limit),
             str(repo / "setup-macos.sh"),

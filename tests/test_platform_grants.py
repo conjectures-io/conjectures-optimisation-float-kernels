@@ -33,5 +33,37 @@ def test_platform_privileges(store):
                 "'leader_token','SELECT')"
             )
         )
+        for column in ("id", "config_hash", "config_evidence"):
+            assert c.scalar(
+                text(
+                    "SELECT has_column_privilege('platform_api',"
+                    "'coordinator_state',:column,'SELECT')"
+                ),
+                {"column": column},
+            )
+        assert c.scalar(
+            text(
+                "SELECT has_column_privilege('platform_api',"
+                "'source_disqualifications','active','SELECT')"
+            )
+        )
+        assert not c.scalar(
+            text(
+                "SELECT has_column_privilege('platform_api',"
+                "'source_disqualifications','actor','SELECT')"
+            )
+        )
         c.exec_driver_sql("DROP OWNED BY platform_api")
         c.exec_driver_sql("DROP ROLE platform_api")
+
+
+def test_publication_pins_board_measurement_identities(store, config):
+    from db.evaluations import EvaluationsDb
+
+    coordinator = EvaluationsDb(store.sessions)
+    coordinator.set_leader("api-test")
+    coordinator.reconcile(config)
+    publication = store.publications.publication()
+    for name, board in publication["boards"].items():
+        assert board["config_hash"] == config.identity(name)
+        assert board["initial_reference"] == config.boards[name]["reference"]["sha256"]
