@@ -20,6 +20,7 @@ from provenance import specification_identity
 
 import db
 import fingerprint
+from axiom import get_events, observe_worker
 from db.audits import AuditDb
 
 AUDIT_SOURCES = (
@@ -46,10 +47,20 @@ def audit_profile(cases):
     }
 
 
+def audit_evidence(verdict):
+    """Malformed child output must remain an infrastructure error, including in telemetry."""
+    if not isinstance(verdict, dict) or not isinstance(verdict.get("classes"), dict):
+        return {}
+    data = verdict["classes"].get("audit")
+    return data if isinstance(data, dict) else {}
+
+
 def classify(code, verdict, task, execution_identity=None):
     """Only complete, matching evidence can pass or report a mismatch."""
     expected = execution_identity or task.request["proof_identity"]
-    data = verdict.get("classes", {}).get("audit", {})
+    if not isinstance(verdict, dict):
+        return "error"
+    data = audit_evidence(verdict)
     valid = (
         verdict.get("mode") == "audit"
         and verdict.get("stage") == "audit"
@@ -81,6 +92,17 @@ def run_audit(repo, task, settings, stop):
         "artifacts": str(directory.resolve()),
     }
     started = time.monotonic()
+    events = get_events()
+    fields = {
+        "audit_id": task.id,
+        "source_hash": task.source_hash,
+        "promotion_id": task.request.get("promotion_id"),
+        "board": task.request.get("board"),
+        "attempt": getattr(task, "attempts", 1),
+        "seed": task.seed,
+        "proof_identity": task.request["proof_identity"],
+    }
+    events.info("audit_started", **fields, cases_per_kind=task.cases)
     execution_identity = fingerprint.current()
     expected_spec = task.request.get("specification_identity")
     report["audit_verifier_identity"] = execution_identity
@@ -150,13 +172,35 @@ def run_audit(repo, task, settings, stop):
     report["seconds"] = time.monotonic() - started
     report["state"] = state
     (directory / "report.json").write_text(json.dumps(report, indent=2))
-    if not stop.is_set() and repo.finish(task, state, report, settings.retry):
+    if stop.is_set():
+        return
+    if repo.finish(task, state, report, settings.retry):
+        evidence = audit_evidence(report.get("verdict"))
+        details = {
+            **fields,
+            "state": state,
+            "seconds": report["seconds"],
+            "reason": str(report["reason"])[:2000],
+            "cases": evidence.get("cases"),
+            "mismatches": evidence.get("mismatches"),
+        }
+        if state == "failed":
+            events.critical("audit_failed", **details)
+        elif state == "error":
+            events.error("audit_error", **details)
+        else:
+            events.info("audit_clean", **details)
         if state == "clean":
             logger.info("champion audit clean: {}", task.source_hash)
         else:
-            logger.error("champion audit {}: {}: {}", state, task.source_hash, report["reason"])
+            logger.bind(axiom_event=True).error(
+                "champion audit {}: {}: {}", state, task.source_hash, report["reason"]
+            )
+    else:
+        events.warning("audit_result_discarded", **fields, reason="lease lost before saving")
 
 
+@observe_worker("torchlean-audit-worker")
 def main():
     from worker_credentials import load
 
@@ -191,7 +235,11 @@ def main():
     repo = AuditDb(store.sessions)
     stop = threading.Event()
     owner = f"{socket.gethostname()}:{os.getpid()}"
+    get_events().bind(
+        worker_id=owner, proof_identity=identity, specification_identity=spec_identity
+    )
     try:
+        next_alert = 0.0
         while True:
             if audit_profile(args.cases) != profile or fingerprint.current() != identity:
                 raise RuntimeError("pinned checkout changed; restart the audit worker")
@@ -200,10 +248,20 @@ def main():
                 break
             if task := repo.claim(profile, identity, owner, args.lease, spec_identity):
                 run_audit(repo, task, args, stop)
-            for alert in repo.alerts(profile, args.alert_seconds):
-                logger.warning(
-                    "champion audit waiting (possibly another release required): {}", alert
-                )
+            if time.monotonic() >= next_alert:
+                for alert in repo.alerts(profile, args.alert_seconds):
+                    get_events().warning(
+                        "audit_waiting",
+                        audit_id=alert["id"],
+                        source_hash=alert["source"],
+                        state=alert["state"],
+                        attempts=alert["attempts"],
+                        required_proof_identity=alert["proof_identity"],
+                    )
+                    logger.warning(
+                        "champion audit waiting (possibly another release required): {}", alert
+                    )
+                next_alert = time.monotonic() + min(args.alert_seconds, 60)
             if args.once:
                 break
             time.sleep(args.poll)

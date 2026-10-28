@@ -1,0 +1,47 @@
+[
+  {
+    "name": "TorchLean $ENVIRON audit mismatch",
+    "type": "MatchEvent",
+    "description": "A persisted differential mismatch in a promoted source; investigate before any operator eligibility change.",
+    "aplQuery": "['$DATASET']\n| where competition == 'torchlean' and environ == '$ENVIRON'\n| where source == 'torchlean-audit-worker' and event_type == 'audit_failed'\n| project _time, severity, event_type, environ, source, host, audit_id, board, promotion_id, source_hash, attempt, seed, cases, mismatches, reason"
+  },
+  {
+    "name": "TorchLean $ENVIRON operational errors",
+    "type": "Threshold",
+    "description": "Worker/startup/infrastructure errors or unexpected ERROR logs.",
+    "aplQuery": "['$DATASET']\n| where competition == 'torchlean' and environ == '$ENVIRON'\n| where severity in ('error', 'critical') and event_type != 'audit_failed'\n| summarize errors=count() by source, host",
+    "columnName": "errors",
+    "operator": "Above",
+    "threshold": 0,
+    "intervalMinutes": 1,
+    "rangeMinutes": 5,
+    "notifyByGroup": true,
+    "notifyEveryRun": false
+  },
+  {
+    "name": "TorchLean $ENVIRON audit backlog",
+    "type": "Threshold",
+    "description": "Old pending/retrying audits, including tasks requiring another pinned release.",
+    "aplQuery": "['$DATASET']\n| where competition == 'torchlean' and environ == '$ENVIRON'\n| where event_type == 'audit_waiting'\n| summarize waiting=count() by host",
+    "columnName": "waiting",
+    "operator": "Above",
+    "threshold": 0,
+    "intervalMinutes": 1,
+    "rangeMinutes": 5,
+    "notifyByGroup": true,
+    "notifyEveryRun": false
+  },
+  {
+    "name": "TorchLean $ENVIRON auditor heartbeat ($AUDIT_HOST)",
+    "type": "Threshold",
+    "description": "Required auditor emitted no heartbeat for five minutes; also detects missing ingestion.",
+    "aplQuery": "['$DATASET']\n| where competition == 'torchlean' and environ == '$ENVIRON'\n| where source == 'torchlean-audit-worker' and host == '$AUDIT_HOST' and event_type == 'service_heartbeat'\n| summarize heartbeats=count()",
+    "columnName": "heartbeats",
+    "operator": "Below",
+    "threshold": 1,
+    "intervalMinutes": 1,
+    "rangeMinutes": 5,
+    "alertOnNoData": true,
+    "notifyEveryRun": false
+  }
+]
