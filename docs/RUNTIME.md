@@ -22,17 +22,16 @@ reach the models that use them. See [the benchmark](BENCHMARKING.md).
 
 ## Starting implementation
 
-The package combines an exact limb accumulator, digit-based final rounding, word-level maximum
-pooling, cached convolution with a direct 1×1 path, fast proved residual addition and
-second-moment layer normalization. Other kernels reuse the dot implementation or the specs.
+The starting package uses an exact limb accumulator, digit-based final rounding and word-level
+maximum pooling. Dot-based layers reuse that exact dot implementation; residual addition and
+scale/shift use the specs. Normalization uses `rmsnormWith dotFn` and `layernormWith dotFn`.
 
 The accumulator sums finite products exactly before final binary32 rounding. Its proof connects
 that integer representation to FloatLib's exact dot product. Special inputs follow the pinned
-FloatLib semantics. The normalization optimization proves the exact population-variance identity;
-it does not replace exact arithmetic with a floating-point approximation.
+FloatLib semantics.
 
-This is a competitive starting point, not a claim that every kernel is optimal. You may use a
-different representation, traversal or fast path, provided the complete equality proof passes.
+You may use a different representation, traversal or fast path, provided the complete equality
+proof passes.
 
 ## Proof structure
 
