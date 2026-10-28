@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from duplicates import normalized
 from loguru import logger
 
 HERE = Path(__file__).resolve().parents[1]
@@ -36,6 +37,9 @@ if not Path(BWRAP).is_file():
 _ENV_PASS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR")
 _ENV_PREFIX = ("ELAN", "LEAN", "LAKE")
 
+
+# The host directories a sandboxed build or bench sees: programs and libraries, nothing else.
+_SYSTEM = ("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32")
 
 # What `systemd-run --user` needs to reach the user's systemd; bwrap unsets both again, so the
 # sandboxed command never sees them.
@@ -188,18 +192,22 @@ def run(
     memory_mb: int = _BUILD_MEMORY_MB,
     layer: Path = LAYER,
 ):
-    # Runs `cmd` in bwrap with no network, a minimal environment and a `memory_mb` scope, HOME and
-    # the repo root hidden behind tmpfs and only the toolchain, the Lean workspace and `pinned`
-    # (absent before the first pin, hence -try) put back read-only, so no build can read a secret.
+    # Runs `cmd` in bwrap with no network, a minimal environment and a `memory_mb` scope. Only the
+    # system programs and libraries, the toolchain, the Lean workspace and `pinned` (absent before
+    # the first pin, hence -try) are mounted, read-only, so no build can read a credential file or
+    # reach a host socket (/etc, /run and /var are absent), even when the service runs as root.
     require_backend()
     home, pinned = Path.home(), HERE / "pinned"
-    box = [BWRAP, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
+    box = [BWRAP, "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
+    for path in _SYSTEM:
+        # Merged-/usr hosts link /bin, /lib, … into /usr: recreate the link, not a second mount.
+        if os.path.islink(path):
+            box += ["--symlink", os.readlink(path), path]
+        else:
+            box += ["--ro-bind-try", path, path]
     box += ["--tmpfs", str(home), "--ro-bind", str(ELAN), str(ELAN)]
     box += ["--tmpfs", str(HERE), "--ro-bind", str(LIB), str(LIB)]
     box += ["--ro-bind-try", str(pinned), str(pinned)]
-    # The user's runtime dir holds its D-Bus and systemd sockets.
-    if (runtime := os.environ.get("XDG_RUNTIME_DIR")) and Path(runtime).is_dir():
-        box += ["--tmpfs", runtime]
     box += [a for k in _ENV_SCOPE for a in ("--unsetenv", k)]
     box += ["--unshare-all", "--die-with-parent"]
     if build == "trusted":
@@ -396,11 +404,30 @@ def policy(src: Path, v: Verdict) -> str | None:
         return f"banned name {m.group(0)!r} at line {text.count(chr(10), 0, m.start()) + 1}"
     if reason := options(text):
         return reason
+    if reason := global_declarations(text):
+        return reason
     for attrs in re.findall(r"@\[([^\]]*)\]", text):
         for a in attrs.split(","):
             name = a.split()[-1] if a.split() else ""
             if name not in ATTRIBUTES:
                 return f"attribute {a.strip()!r} is not allowed"
+    return None
+
+
+# Declarations that apply beyond the file: every module importing the entry sees them, the
+# operator's bench and audit included, so one could change what those compute or print (a
+# `ToString Nat` that prints every timing as 1 ns). Only their `local` forms are allowed.
+GLOBAL = re.compile(
+    r"(?<![\w.'])(instance|notation|infixl|infixr|infix|prefix|postfix|unif_hint)(?![\w'])"
+)
+
+
+def global_declarations(text: str) -> str | None:
+    # Read with comments removed and whitespace collapsed, so none can hide in or between them.
+    code = normalized(text)
+    for m in GLOBAL.finditer(code):
+        if not code[: m.start()].endswith("local "):
+            return f"{m.group(1)} without `local`: it would apply to the operator's bench and audit"
     return None
 
 

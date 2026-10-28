@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import time
@@ -185,3 +186,47 @@ def test_the_per_file_cap_bites_inside_the_real_sandbox(monkeypatch):
     monkeypatch.setattr(gate, "_FILE_MB", 1)
     code, _ = gate.run(["sh", "-c", "head -c 2097152 /dev/zero > /tmp/fill"], 30)
     assert gate.overfile(code), code
+
+
+@pytest.fixture
+def host_secrets(monkeypatch):
+    # What a host keeps outside HOME: a credential file and a service socket (as /etc/conjectures
+    # and /run/docker.sock are on the servers), plus a secret in the parent's environment.
+    directory = Path(tempfile.mkdtemp(prefix="sandbox-host-", dir="/var/tmp"))
+    secret = directory / "worker.json"
+    secret.write_text("password")
+    sock = socket.socket(socket.AF_UNIX)
+    sock.bind(str(directory / "service.sock"))
+    sock.listen()
+    monkeypatch.setenv("DATABASE_URL", "postgresql://secret")
+    try:
+        yield directory
+    finally:
+        sock.close()
+        shutil.rmtree(directory)
+
+
+def probe(script: str) -> str:
+    # One shell line in the real sandbox: its combined output.
+    code, out = gate.run(["sh", "-c", script], 30)
+    assert code == 0, out
+    return out
+
+
+@pytest.mark.skipif(not _sandbox_works(), reason="sandbox or prepared Lean workspace unavailable")
+def test_a_sandboxed_command_cannot_reach_host_secrets_or_services(host_secrets):
+    # Nothing outside the toolchain, the Lean workspace and scratch space: no credential files,
+    # no service sockets, no network and none of the parent's environment.
+    assert "hidden" in probe(f"cat {host_secrets}/worker.json 2>/dev/null || echo hidden")
+    connect = (
+        "python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' "
+        f"{host_secrets}/service.sock 2>/dev/null && echo reached || echo refused"
+    )
+    assert "refused" in probe(connect)
+    assert "empty" in probe('[ -z "$(ls -A /run 2>/dev/null)" ] && echo empty || ls -A /run')
+    net = (
+        "python3 -c 'import socket; socket.create_connection((\"1.1.1.1\", 53), 2)' "
+        "2>/dev/null && echo online || echo offline"
+    )
+    assert "offline" in probe(net)
+    assert "postgresql" not in probe("env")
