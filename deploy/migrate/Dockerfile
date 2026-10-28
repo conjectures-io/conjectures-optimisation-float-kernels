@@ -17,10 +17,10 @@ RUN pip install --no-cache-dir \
 
 # The models are the schema's source of truth, so autogenerate and the migration
 # tests have something to compare against. Importing them imports the store package,
-# which also imports two sibling modules: admission (scoring.py) and axiom (the
-# event sink); both are standard library plus loguru.
+# which also imports sibling modules: axiom (the event sink) and duplicates (the source
+# normalization submissions are checked with); standard library plus loguru.
 COPY validator/db ./validator/db
-COPY validator/axiom.py ./validator/
+COPY validator/axiom.py validator/duplicates.py ./validator/
 
 # Alembic config and revisions are ops artifacts, not part of any package.
 COPY deploy/migrate/alembic.ini ./alembic.ini
