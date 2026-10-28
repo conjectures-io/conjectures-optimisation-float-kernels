@@ -23,7 +23,7 @@ private home configuration directory. Nonsecret inventory variables are `axiom_d
 `axiom_environ` and `axiom_url`. No token defaults to disabled. Tokens stay outside sandboxed Lean
 processes. This branch supplies code/configuration only; no live monitors or hosts were changed.
 
-The sources are `torchlean-coordinator`, `torchlean-benchmark-worker` and
+The sources are `competition-coordinator`, `competition-benchmark-worker` and
 `torchlean-audit-worker`. Each emits start/stop, a heartbeat every 60 seconds (including while
 busy), and `service_failed` on abnormal startup or exit. Benchmark events include `job_id`;
 audit events include `audit_id`, `source_hash`, `promotion_id`, board, attempt and seed.

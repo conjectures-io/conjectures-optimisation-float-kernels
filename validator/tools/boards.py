@@ -8,6 +8,7 @@ from config import Config
 from sqlalchemy import text
 
 import db
+from axiom import init
 from db.evaluations import EvaluationsDb
 
 
@@ -19,6 +20,8 @@ def main():
     p.add_argument("promotion_id", type=int)
     p.add_argument("--reason", required=True)
     args = parser.parse_args()
+    # Operator decisions are the coordinator's own, so they report under its source.
+    init("competition-coordinator", tool="boards")
     config = Config.load(args.config)
     store = db.connect()
     try:

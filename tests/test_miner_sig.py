@@ -6,6 +6,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 from service import sig as service_sig
 
 REPO = Path(__file__).resolve().parents[1]
@@ -49,7 +51,8 @@ def test_a_miner_signature_verifies_at_the_validator_and_only_for_its_slug():
     assert not service_sig.verify(kp.ss58_address, other, signature)
 
 
-def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
+@pytest.mark.parametrize("intake_mode", ["subnet", "dev"])
+def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsys, intake_mode):
     # The signed fields travel as X-Conjectures-* headers, the file as the one part Kernel.lean.
     submit = load("miner_submit", REPO / "miner" / "submit.py")
     d = tmp_path / "k"
@@ -68,7 +71,7 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
                 "proof_state": "queued",
                 "source_sha256": "0" * 64,
                 "status_url": "/v1/competitions/torchlean/submissions/1",
-                "intake_mode": "subnet",
+                "intake_mode": intake_mode,
             }
 
     def post(url, headers, files, timeout):
@@ -80,6 +83,10 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
     submit.cmd_submit(args)
     assert sent["url"] == "http://v:9300/v1/competitions/torchlean/submissions"
     assert set(sent["files"]) == {"Kernel.lean"}
+    output = capsys.readouterr().out
+    assert "proof state: queued" in output
+    assert "miner/submit.py status 1 --url http://v:9300/" in output
+    assert ("dev intake:" in output) == (intake_mode == "dev")
     h = sent["headers"]
     message = service_sig.submit_message(
         competition="torchlean",
@@ -113,3 +120,97 @@ def test_wrong_hotkey_signature_is_rejected():
 def test_malformed_signature_and_hotkey_are_rejected():
     assert not service_sig.verify(ALICE.ss58_address, "message", "not hex")
     assert not service_sig.verify("not an address", "message", "00" * 64)
+
+
+@pytest.mark.parametrize(
+    "content,reason",
+    [(b"", "empty"), (b"\xff", "UTF-8"), (b"x" * 256_001, "256000")],
+)
+def test_invalid_source_is_refused_before_upload(tmp_path, monkeypatch, content, reason):
+    submit = load("miner_submit_invalid", REPO / "miner" / "submit.py")
+    (tmp_path / "Kernel.lean").write_bytes(content)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid input must not reach the API")
+
+    monkeypatch.setattr(submit.requests, "post", unexpected)
+    with pytest.raises(SystemExit, match=reason):
+        submit.cmd_submit(
+            submit.argparse.Namespace(dir=str(tmp_path), hotkey="//Alice", url="http://v")
+        )
+
+
+def test_status_keeps_proof_and_board_decisions_separate(monkeypatch, capsys):
+    submit = load("miner_submit_status", REPO / "miner" / "submit.py")
+    payload = {
+        "submission": 12,
+        "proof_state": "proved",
+        "intake_mode": "dev",
+        "evaluations": [{"board": "mlp", "state": "pending", "decision": None}],
+    }
+
+    class Reply:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    def get(url, params, timeout):
+        assert url == "http://dev/v1/competitions/torchlean/submissions/12" and params is None
+        return Reply()
+
+    monkeypatch.setattr(submit.requests, "get", get)
+    submit.cmd_status(submit.argparse.Namespace(id=12, url="http://dev/"))
+    import json
+
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+@pytest.mark.parametrize(
+    ("argv", "path", "params"),
+    [
+        (["report", "12"], "/submissions/12/report", None),
+        (["boards"], "/boards", None),
+        (["leaderboard"], "/leaderboard", {"board": "overall"}),
+        (["leaderboard", "--board", "mlp"], "/leaderboard", {"board": "mlp"}),
+    ],
+)
+def test_read_commands_print_public_api_reads(monkeypatch, capsys, argv, path, params):
+    submit = load("miner_submit_reads", REPO / "miner" / "submit.py")
+    seen = []
+
+    class Reply:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def get(url, params, timeout):
+        seen.append((url, params))
+        return Reply()
+
+    monkeypatch.setattr(submit.requests, "get", get)
+    monkeypatch.setattr(sys, "argv", ["submit.py", *argv, "--url", "http://dev"])
+    submit.main()
+    assert seen == [("http://dev/v1/competitions/torchlean" + path, params)]
+    assert '"ok": true' in capsys.readouterr().out
+
+
+def test_duplicate_reports_existing_submission():
+    submit = load("miner_submit_duplicate", REPO / "miner" / "submit.py")
+
+    class Reply:
+        status_code = 409
+        headers = {"content-type": "application/problem+json"}
+
+        def json(self):
+            return {
+                "reason_code": "DUPLICATE_SUBMISSION",
+                "detail": "Duplicate submission",
+                "submission": 12,
+                "state": "proved",
+            }
+
+    message = submit.refused("submit", Reply())
+    assert "DUPLICATE_SUBMISSION" in message
+    assert "Existing submission 12 (proved)" in message

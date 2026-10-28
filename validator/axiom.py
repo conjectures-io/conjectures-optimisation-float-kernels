@@ -1,7 +1,7 @@
 """Structured events to Axiom, in the conjectures platform's envelope, never in the way.
 
 The platform (conjectures-validator, `conjectures_subnet/axiom`) ships its events to one Axiom
-dataset, and this competition's workers ship theirs to the same one, so a dashboard can
+dataset, and this competition's processes ship theirs to the same one, so a dashboard can
 read both. That only works if every record has the platform's shape exactly:
 
     {**details, "_time": <ISO-8601 UTC, stamped at emit>, "severity": debug|info|warning|error|
@@ -20,7 +20,8 @@ Environment (the platform's names and meanings):
 Two rules, the platform's too, because telemetry that can stall or break the thing it watches is
 worse than none: `emit` never blocks (a bounded queue, drained by a daemon thread that batches
 and POSTs gzipped NDJSON, flushed at exit) and never raises (a full queue or a failed POST drops
-and counts). Standard library only: this runs in the gate worker, next to hostile Lean, and
+and counts). Standard library only: this runs in the coordinator and the benchmark workers,
+next to hostile Lean, and
 shipping a log line is not a reason to grow its dependencies.
 
 Explicit events come from `get_events()`; `init()` at each entry point also bridges loguru and
@@ -62,10 +63,11 @@ COMPETITION: Final = "torchlean"
 Severity: TypeAlias = Literal["debug", "info", "warning", "error", "critical"]
 SEVERITIES: Final[tuple[Severity, ...]] = ("debug", "info", "warning", "error", "critical")
 
-# Process sources, shared by explicit events and the error-log bridge.
+# Process sources shared by explicit events and the error-log bridge. Auditor instrumentation
+# changes its audit identity and therefore backfills historical champions on deployment.
 Source: TypeAlias = Literal[
-    "competition-submission-api",
-    "competition-gate-worker",
+    "competition-coordinator",
+    "competition-benchmark-worker",
     "competition-chain-watcher",
     "competition-weight-setter",
     "torchlean-coordinator",
@@ -73,8 +75,8 @@ Source: TypeAlias = Literal[
     "torchlean-audit-worker",
 ]
 SOURCES: Final[tuple[Source, ...]] = (
-    "competition-submission-api",
-    "competition-gate-worker",
+    "competition-coordinator",
+    "competition-benchmark-worker",
     "competition-chain-watcher",
     "competition-weight-setter",
     "torchlean-coordinator",
@@ -87,12 +89,28 @@ EventType: TypeAlias = Literal[
     "service_started",
     "service_stopped",
     "service_misconfigured",
-    "submission_claimed",
-    "gate_verdict",
-    "submission_requeued",
-    "gate_validator_error",
-    "slot_paused",
-    "slot_recovered",
+    # A submission's proof check: `outcome` is proved, rejected (the miner's to fix) or retry
+    # (ours: the infrastructure failed and the submission goes back in the queue).
+    "proof_checked",
+    # One board's evaluation of a proved submission, from planning to its stored decision.
+    "evaluation_planned",
+    "evaluation_decided",
+    # Results the scorer could not read: the evaluation is superseded and replanned, never held
+    # against the miner, so this is the only trace of a worker producing bad evidence.
+    "evaluation_quarantined",
+    "champion_promoted",
+    # Operator decisions; the rows are overwritten in place, so these keep who and why.
+    "promotion_disqualified",
+    "source_disqualification_set",
+    # The compact reward publication the weight setter pays from, whenever it changes.
+    "rewards_published",
+    # A reference or checksum failure holds a board's evaluation; its share follows the
+    # paused policy until it clears.
+    "board_paused",
+    "board_resumed",
+    # A benchmark job queued or leased too long, or retried too often.
+    "benchmark_stalled",
+    "benchmark_job_finished",
     "registrations_recorded",
     "chain_read_failed",
     "weights_planned",
@@ -379,7 +397,7 @@ def client_from_env(
 
 
 class Events:
-    # The sink call sites use (`get_events().info("gate_verdict", submission_id=…)`), carrying the
+    # The sink call sites use (`get_events().info("proof_checked", submission_id=…)`), carrying the
     # process's source and every event's common fields, never raising for the caller.
 
     def __init__(self, client: Client, *, source: str, **common: object) -> None:

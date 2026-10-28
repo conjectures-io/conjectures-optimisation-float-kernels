@@ -64,13 +64,15 @@ TorchLean routes/uploads separately. Do not give the API coordinator or benchmar
 
 **Compatibility must match the central API release.** Its current TorchLean intake expects
 `intake_mode` and nullable registration IDs for explicit development uploads, and its dashboard
-needs public coordinator configuration and source-restriction reads. This checkout's
-`tensor_0001` schema/grants predate those additions. Deploy the companion schema/grant updates
-before enabling that central API; a successful database connection alone is insufficient.
+needs public coordinator configuration and source-restriction reads. Migration `tensor_0002`
+and the current `grant.sh` provide them: apply both before enabling that central API; a
+successful database connection alone is insufficient.
 See [the database contract](../deploy/platform/CONTRACT.md) for the integration boundary.
 
 Registration bypass belongs only to a development API and is not a miner-controlled upload field.
-Production must enforce the current-registration and cutoff policy.
+Production must enforce the current-registration and cutoff policy. The coordinator evaluates
+dev uploads only when its config has `dev_intake = true` (`scripts/exact-config.py --dev-intake`);
+generate production configs without it.
 
 ## Chain and rewards
 
@@ -113,3 +115,24 @@ merely by editing the shipped starter file.
 For source disqualification/restoration and independent audits, use the commands in
 [WORKERS.md](WORKERS.md). For a disposable full-worker test, use
 [the local rehearsal](LOCAL-EXPERIMENTS.md#full-local-rehearsal).
+
+## Events
+
+With `AXIOM_TOKEN` and `AXIOM_DATASET` set, each entry point sends structured events to the
+platform's Axiom dataset (`validator/axiom.py`), every one tagged `competition: "torchlean"`.
+Without them nothing is sent. ERROR logs and uncaught exceptions arrive as `log_error`.
+
+| source | events |
+|---|---|
+| `competition-coordinator` | `proof_checked` (proved, rejected, or retry when the infrastructure failed), `evaluation_planned`, `evaluation_decided`, `evaluation_quarantined` (unreadable results; never the miner's fault), `champion_promoted`, `rewards_published`, `board_paused`/`board_resumed`, `benchmark_stalled`; from the operator tools, `promotion_disqualified` and `source_disqualification_set` |
+| `competition-benchmark-worker` | `benchmark_job_finished` per job, tagged with the worker's environment; a host needs the token to report |
+| `competition-chain-watcher` | `registrations_recorded`, `chain_read_failed` |
+| `competition-weight-setter` | `weights_planned`/`weights_set`/`weights_skipped`/`weights_failed` |
+
+Each has `service_started`, `service_stopped` and `service_misconfigured`.
+The coordinator, benchmark worker and auditor also send heartbeats and `service_failed` on
+abnormal exit; their stop event records `outcome`. Other entry points record a stop `reason`.
+Warnings mark the miner's failures (a rejected proof, a crashing candidate); errors mark ours.
+The `torchlean-audit-worker` source reports audit outcomes and backlog warnings. Instrumenting
+its source changes its audit identity, so deployment backfills historical champions. See
+[Axiom monitoring](AXIOM-MONITORING.md) for event severities and monitor setup.

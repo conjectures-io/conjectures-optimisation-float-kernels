@@ -23,6 +23,26 @@ from axiom import get_events, observe_worker
 from db.jobs import WorkerDb
 
 
+def report(job, error, seconds):
+    # A candidate failure is the miner's result; reference, checksum and infrastructure ones are
+    # ours. Telemetry must never fail the job, so optional fields are read defensively.
+    events = get_events()
+    kind = (error or {}).get("kind")
+    emit = events.info if error is None else events.warning if kind == "candidate" else events.error
+    emit(
+        "benchmark_job_finished",
+        job_id=job.id,
+        environment=getattr(job, "environment", None),
+        seed=(job.request or {}).get("seed"),
+        candidate_hash=getattr(job, "candidate_hash", None),
+        reference_hash=getattr(job, "reference_hash", None),
+        outcome="completed" if error is None else "failed",
+        error_kind=kind,
+        reason=str((error or {}).get("reason") or "")[:2000] or None,
+        seconds=round(seconds, 1),
+    )
+
+
 def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
     lease = job.lease_seconds
     started = time.monotonic()
@@ -32,6 +52,7 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
 
     def fail(error):
         if repo.fail(job.id, owner, job.token, error):
+            report(job, error, time.monotonic() - started)
             kind = error.get("kind")
             severity = (
                 "warning" if kind == "candidate" else "critical" if kind == "checksum" else "error"
@@ -80,6 +101,7 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
                 fail(result["error"])
             else:
                 if repo.complete(job.id, owner, job.token, result["result"]):
+                    report(job, None, time.monotonic() - started)
                     events.info("benchmark_completed", **fields, seconds=time.monotonic() - started)
                 else:
                     events.warning("benchmark_result_discarded", **fields, reason="lease lost")
@@ -91,7 +113,7 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
             fail({"kind": "infrastructure", "reason": str(exc)})
 
 
-@observe_worker("torchlean-benchmark-worker")
+@observe_worker("competition-benchmark-worker")
 def main():
     install_signals()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -108,7 +130,9 @@ def main():
     load(args.credentials)
     args.environment = args.environment or os.environ.get("BENCHMARK_ENVIRONMENT")
     if not args.environment:
-        parser.error("--environment or BENCHMARK_ENVIRONMENT is required")
+        message = "--environment or BENCHMARK_ENVIRONMENT is required"
+        get_events().error("service_misconfigured", error=message)
+        parser.error(message)
     get_events().bind(benchmark_environment=args.environment)
     owner = f"{socket.gethostname()}:{__import__('os').getpid()}"
     store = db.connect()

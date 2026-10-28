@@ -215,7 +215,11 @@ def test_benchmark_events_follow_fenced_writes(monkeypatch, error, saved, event,
 
     monkeypatch.setattr(benchmark_worker, "supervised", run)
     benchmark_worker.execute(repo, job, "host")
-    assert [e["event_type"] for e in capture.events] == ["benchmark_claimed", event]
+    expected = ["benchmark_claimed"]
+    if saved:
+        expected.append("benchmark_job_finished")
+    expected.append(event)
+    assert [e["event_type"] for e in capture.events] == expected
     assert job.token not in json.dumps(capture.events)
     assert capture.events[-1]["severity"] == severity
 
@@ -244,3 +248,38 @@ def test_monitor_rendering_pins_environment_host_and_notifier():
 def test_monitor_rendering_rejects_query_injection():
     with pytest.raises(ValueError):
         monitor_renderer().render("dataset'; injected", "prod", "host", "notifier")
+
+
+@pytest.mark.parametrize(
+    "worker,source",
+    [
+        ("coordinator", "competition-coordinator"),
+        ("benchmark_worker", "competition-benchmark-worker"),
+    ],
+)
+def test_worker_entrypoints_keep_one_lifecycle_client_on_startup_failure(
+    monkeypatch, worker, source
+):
+    import importlib
+    import sys
+
+    import sandbox
+
+    module = importlib.import_module("workers." + worker)
+    capture = Capture()
+    monkeypatch.setattr(axiom, "client_from_env", lambda env=None: capture)
+    monkeypatch.setattr(sys, "argv", [worker])
+    monkeypatch.delenv("COMPETITION_CONFIG", raising=False)
+    monkeypatch.delenv("BENCHMARK_ENVIRONMENT", raising=False)
+    monkeypatch.setattr(module, "install_signals", lambda: None)
+    monkeypatch.setattr(sandbox, "require_backend", lambda: None)
+    if worker == "benchmark_worker":
+        monkeypatch.setattr(module, "load", lambda _: None)
+    with pytest.raises(SystemExit):
+        module.main()
+    types = [e["event_type"] for e in capture.events]
+    assert types.count("service_started") == types.count("service_stopped") == 1
+    assert "service_heartbeat" in types
+    assert "service_misconfigured" in types
+    assert "service_failed" in types
+    assert all(e["source"] == source for e in capture.events)

@@ -77,7 +77,8 @@ class Submission(Base):
     __tablename__ = "submissions"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     hotkey: Mapped[str] = mapped_column(Text)
-    registration_id: Mapped[int] = mapped_column(ForeignKey("registrations.id"), unique=True)
+    registration_id: Mapped[int | None] = mapped_column(ForeignKey("registrations.id"), unique=True)
+    intake_mode: Mapped[str] = mapped_column(Text, server_default="subnet")
     source_sha256: Mapped[str] = mapped_column(ForeignKey("sources.sha256"))
     submitted_at: Mapped[dt.datetime] = timestamp()
     account_id: Mapped[str | None] = mapped_column(Text)
@@ -94,6 +95,11 @@ class Submission(Base):
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("hotkey", "source_sha256", name="uq_submissions_hotkey_source"),
+        CheckConstraint(
+            "(intake_mode = 'subnet' AND registration_id IS NOT NULL) OR "
+            "(intake_mode = 'dev' AND registration_id IS NULL)",
+            name="ck_submissions_intake",
+        ),
         CheckConstraint("state IN ('queued','running','proved','rejected')", name="ck_proof_state"),
         CheckConstraint(
             "(state = 'running') = (owner IS NOT NULL AND token IS NOT NULL "

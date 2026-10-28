@@ -78,15 +78,15 @@ def of_type(records: list[dict[str, object]], event_type: str) -> list[dict[str,
 
 def test_the_envelope_is_the_platforms_and_is_written_last():
     capture = Capture()
-    events = axiom.init("competition-gate-worker", client=axiom_client(capture), netuid=577)
-    events.warning("gate_verdict", submission_id=7, source="spoofed", severity="spoofed")
+    events = axiom.init("competition-coordinator", client=axiom_client(capture), netuid=577)
+    events.warning("proof_checked", submission_id=7, source="spoofed", severity="spoofed")
     events.bind(network="test")
     events.info("service_started", when=dt.date(2026, 9, 24))
     first, second = flushed(capture)
 
     assert ENVELOPE <= set(first)
-    assert first["source"] == "competition-gate-worker"  # a details key cannot displace it
-    assert first["severity"] == "warning" and first["event_type"] == "gate_verdict"
+    assert first["source"] == "competition-coordinator"  # a details key cannot displace it
+    assert first["severity"] == "warning" and first["event_type"] == "proof_checked"
     assert first["environ"] == "dev" and first["competition"] == "torchlean"
     assert first["netuid"] == 577 and first["submission_id"] == 7
     stamped = dt.datetime.fromisoformat(str(first["_time"]))
@@ -153,7 +153,7 @@ def test_a_dead_endpoint_drops_and_counts_and_never_raises():
     capture = Capture(fail=True)
     c = axiom_client(capture)
     for _ in range(5):
-        c.ingest(severity="error", source="competition-gate-worker", event_type="x", details={})
+        c.ingest(severity="error", source="competition-coordinator", event_type="x", details={})
     c.close()
     c.close()  # idempotent
     assert c.stats()["failed"] == 5 and c.stats()["sent"] == 0
@@ -162,7 +162,7 @@ def test_a_dead_endpoint_drops_and_counts_and_never_raises():
 def test_a_full_queue_drops_rather_than_blocks():
     c = axiom_client(Capture(), queue_size=1, start=False)
     for _ in range(3):
-        c.ingest(severity="info", source="competition-gate-worker", event_type="x", details={})
+        c.ingest(severity="info", source="competition-coordinator", event_type="x", details={})
     assert c.stats()["dropped"] == 2
     c.close()
 
@@ -181,7 +181,7 @@ def test_a_broken_client_cannot_reach_the_caller():
 
 def test_errors_logged_anywhere_arrive_as_log_error():
     capture = Capture()
-    axiom.init("competition-submission-api", client=axiom_client(capture))
+    axiom.init("competition-benchmark-worker", client=axiom_client(capture))
     logger.warning("not an error")
     logger.error("the store refused")
     try:
@@ -200,7 +200,7 @@ def test_errors_logged_anywhere_arrive_as_log_error():
     ]
     assert [r["severity"] for r in records] == ["error", "error", "error", "critical"]
     first = records[0]
-    assert first["source"] == "competition-submission-api"
+    assert first["source"] == "competition-benchmark-worker"
     assert first["function"] == "test_errors_logged_anywhere_arrive_as_log_error"
     assert first["module"] == "test_axiom" and isinstance(first["line"], int)
     assert "ValueError: boom" in str(records[1]["exception"])
@@ -209,7 +209,7 @@ def test_errors_logged_anywhere_arrive_as_log_error():
 
 def test_reset_removes_the_bridge():
     capture = Capture()
-    axiom.init("competition-submission-api", client=axiom_client(capture))
+    axiom.init("competition-benchmark-worker", client=axiom_client(capture))
     axiom.reset()
     logger.error("after reset")
     assert capture.records() == []
