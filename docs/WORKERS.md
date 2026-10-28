@@ -1,6 +1,6 @@
-# Tensor workers
+# Competition workers
 
-The replacement workflow has four roles:
+The main workflow has four roles; the independent auditor is optional:
 
 - `python -m workers.coordinator`: proof verification, immutable plans, aggregation, promotions,
   compact publication. Requires COMPETITION_CONFIG.
@@ -23,7 +23,7 @@ Provision an individual login using [the worker access guide](WORKER-DATABASE-AC
 PYTHONPATH=.:validator .venv/bin/python -m workers.benchmark_worker --credentials /secure/benchmark.json --environment NAME
 ```
 
-The only job mutation implementation is the frozen SQL protocol installed by tensor_0001.
+Benchmark job mutations go through the SQL protocol installed by the competition migrations.
 Leases and retries come from coordinator-created job columns. A worker needs credentials,
 environment identity and local execution settings, not another copy of competition policy.
 
@@ -80,7 +80,7 @@ lock; use separate hardware to avoid CPU and memory interference.
 
 The auditor rebuilds the source; it does not test the original benchmark executable. It shares
 Lean/FloatLib with the reference and complements proof checks and the external specification oracle.
-The audit tables are included in the single fresh migration `tensor_0001`.
+The audit tables are part of the competition schema.
 
 ### Operator source restrictions
 
@@ -102,14 +102,15 @@ completed evaluations or promotion-level disqualification history.
 
 ## Independent build and measurement budgets
 
-`[timing]` now requires `build_seconds` and `benchmark_seconds`, replacing `job_seconds`.
-Default development settings are 480 seconds (8 minutes) for shared preparation and both
-native builds, then a fresh 900 seconds (15 minutes) for calibration and all paired rounds.
+`[timing]` requires separate `build_seconds` and `benchmark_seconds`.
+The development config generator sets 960 seconds (16 minutes) for shared preparation and both
+native builds, then a fresh 1200 seconds (20 minutes) for calibration and all paired rounds.
 `run_seconds = 300` also caps each binary invocation at the smaller of that value and the
 measurement time remaining. Neither budget resets per executable, command or round.
 A cached binary consumes only its lookup time within the build phase.
 
-The parent supervisor allows build + measurement + 60 seconds (24 minutes by default).
+The parent supervisor allows build + measurement + 60 seconds
+(37 minutes with the generated development budgets).
 Explicit phase failures start with `build-timeout` or `benchmark-timeout`; candidate failures
 reject the evaluation, reference failures retain the reference/retry behavior, and shared
 preparation failures remain infrastructure errors. Hitting the outer `supervisor-timeout`
@@ -119,6 +120,6 @@ Proof-only verification retains its separately configured `verification_seconds`
 Successful results include `stage_seconds` for build, calibration, rounds and total measurement;
 `timing_seconds` remains the round timing for existing analysis tools. The benchmark fingerprint
 covers the execution-budget helper. Deploy identical code on coordinator and workers and
-regenerate configs using `scripts/exact-config.py`, or update the Ansible timing template.
+regenerate or review configs using `scripts/exact-config.py`.
 Completed evidence remains stored; changing budgets changes immutable plan/request hashes.
-A fully cold 8 GiB build confirmation remains necessary to validate the default headroom.
+Calibrate cold-build headroom on each supported architecture before setting production budgets.

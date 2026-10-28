@@ -1,3 +1,5 @@
+> Historical development record. Dates, settings and results below are not the current competition policy.
+
 # Tensor refactor: local validation
 
 Date: 2026-10-20. Local amd64 host, disposable PostgreSQL 17, real sandboxed Lean builds.
@@ -88,7 +90,7 @@ The takeover run uses the final build graph; sources are frozen per run. Mathema
 and kernels were unchanged by this refactor.
 
 Deployment requires a **fresh competition DB** and coordinated central API/frontend changes.
-See [the schema contract](../deploy/platform/CONTRACT.md). No production systems were modified.
+See [the schema contract](../../deploy/platform/CONTRACT.md). No production systems were modified.
 
 ## Branch merge validation — 2026-10-22
 

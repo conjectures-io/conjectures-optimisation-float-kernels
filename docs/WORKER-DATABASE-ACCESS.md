@@ -6,10 +6,9 @@ serve particular environment names. Assignments do not change the scoring config
 
 ## Database deployment
 
-Deploy a fresh tensor database and run `tensor_0001` with an administrator connection capable
-of creating roles and granting privileges. This fresh initial migration includes the new protocol;
-it does not upgrade a previously initialized tensor_0001 database. Recreate disposable dev
-databases before using this version.
+Apply the competition migrations to a dedicated PostgreSQL database using an administrator
+connection capable of creating roles and granting privileges. Run the migration head, not just
+a hardcoded initial revision. Keep schema and job-protocol versions aligned across hosts.
 
 The migration creates two cluster-wide NOLOGIN permission groups:
 

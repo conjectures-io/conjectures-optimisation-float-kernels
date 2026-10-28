@@ -5,11 +5,11 @@ current competition's workload, reward policy, or leaderboard.
 
 ## TorchLean specification links
 
-The gate's tensor contract restates the pinned TorchLean sum and batched matrix
+The earlier scalar contract restates TorchLean's left-fold sum and batched matrix
 multiplication definitions over FloatLib. The optional
 [Stage2/Link.lean](../lean/stage2/Stage2/Link.lean) proves that these definitions
-agree with TorchLean's. The gate uses the restated contract; it does not build
-TorchLean during each submission.
+agree with TorchLean's. These links concern the earlier sequential-rounding contract, not the current
+round-once tensor contract. TorchLean is not rebuilt for each current submission.
 
 The optional stage2 targets retain implementations, composition proofs, and
 exploratory benchmarks:

@@ -1,119 +1,160 @@
-# Tensor competition manual
+# Miner manual
 
-## Environment
+Submit a complete kernel implementation to **https://conjectures.io**. This guide uses the
+production TorchLean API; no local database or competition services are needed to submit.
 
-Run `./setup.sh --service`; use `--chain` when running the chain watcher or weight setter.
-Setup installs miner dependencies too (`requirements/miner.txt`).
-Use `./setup.sh --benchmark-worker` on a timing host: it installs only the Python worker
-dependencies and builds `VerifyExact` and `benchExact`, with the same pinned Lean packages
-and sandbox. It does not require Docker, PM2 or chain dependencies.
-Use `./setup.sh --dev` for the full build plus all Python dependencies, including pytest,
-SQLAlchemy, the chain SDK, Ruff and plotting libraries. Select `.venv/bin/python` in your IDE.
-Activate `.venv` or call its Python explicitly. Set `PYTHONPATH=.:validator` from the project root.
-PM2 and Compose read `.env`; export its DB/config values before launching Python workers directly.
+## 1. Check eligibility
 
-Bubblewrap is installed in `.venv/bin/bwrap`. Builds and timings run without network access,
-with read-only operator code, a private writable build overlay and resource limits.
-Ubuntu AppArmor may require a profile permitting user namespaces for that executable.
-Check `./setup.sh --check` and run a real verification before enabling workers.
-
-## Fresh database
-
-Configure the PostgreSQL values in `.env`, then:
+You need the private hotkey file for an active registration on the competition's subnet.
+The latest registration must be strictly newer than the published cutoff and must not already
+have a submission. An older unused registration does not qualify instead. Check the live policy:
 
 ```bash
-docker compose up -d db
-docker compose build migrate
-docker compose run --rm migrate
+curl -fsS https://conjectures.io/v1/competitions/torchlean
+curl -fsS https://conjectures.io/v1/competitions/torchlean/boards
 ```
 
-The initial revision is `tensor_0001`. This schema replaces the old competition schema;
-use a new database. Subsequent deployed changes should use incremental migrations.
-Host workers use the published loopback port; containers on the database's Docker network use
-`conjectures_tensor_db:5432`.
+A registration allows **one submission**, regardless of whether its proof passes or fails.
+If processing is interrupted, the system retries that submission; uploading another file does
+not replace it. A later eligible registration allows another submission. An identical file from
+the same hotkey is rejected as a duplicate even after re-registration, with the existing ID.
 
-The central API requires coordinated changes described in
-[the DB contract](deploy/platform/CONTRACT.md).
-Apply its grants using `deploy/platform/grant.sh` after loading the relevant environment values.
+## 2. Install the client
 
-## Coordinator configuration
+Use Python 3.11 or newer. From the repository root:
 
 ```bash
-.venv/bin/python scripts/exact-config.py --quick --output competition.toml
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements/miner.txt
 ```
 
-Quick mode is a workflow check: five rounds and 2 ms cells. It is not production calibration.
-Without `--quick`, the generator uses 25 rounds, 100 ms cells and one fresh seed.
-Review model, hardware and reward allocations and initial reference hashes.
+This installs signing and HTTP dependencies. You do not need the Bittensor SDK just to upload.
+Use your Bittensor hotkey JSON file; the client signs locally and sends the signature, not the key.
 
-`COMPETITION_CONFIG` names this TOML file. The coordinator owns configuration.
-It stores resolved immutable plans in the DB; workers do not load the config file.
-A new board starts with uploads received after activation. Removing/re-adding a board establishes
-a new intake boundary. Changing an active board replans its pending challenger in original order.
-Fresh seeds remain fixed across retries of that challenger.
-
-## Processes
+## 3. Prepare your entry
 
 ```bash
-pm2 start deploy/pm2.config.js --only tensor-coordinator,tensor-benchmark-worker
-pm2 start deploy/pm2.config.js --only tensor-chain-watcher
+cp -r kernels/exact/incumbent my-entry
 ```
 
-Only one coordinator leads. Multiple benchmark workers can run on different hosts using the same
-code and an environment name matching the coordinator config. Each host serializes timings.
-Configure an execute-only DB role with `deploy/platform/benchmark_worker.sql`.
-Architecture-local builds are cached by source, benchmark identity and machine identity.
+Edit `my-entry/Kernel.lean`. It must be a nonempty UTF-8 file of at most **256,000 bytes**,
+import only `ContractExact`, and define:
 
-Proof failures reject an entry. Infrastructure failures retry the same entry and retain its spent
-registration. Reference/checksum failures pause the affected comparison; other boards can proceed.
-The reward pause policy either preserves the existing ranks or directs that board's share to treasury.
-No automatic demotion occurs.
+```lean
+namespace Submission
+open ExactRuntime
 
-For operator disqualification while the coordinator is stopped:
+def kernels : Kernels := -- your complete set of 12 kernels
+  …
+
+theorem correct : Obligation kernels := by
+  …
+
+end Submission
+```
+
+The skeleton above is illustrative; the copied incumbent is a complete, proved starting point.
+You may change any kernels, but must prove equality with the entire pinned specification for
+all inputs. Benchmark checksums alone are insufficient. See [the kernel guide](docs/RUNTIME.md)
+for the record's fields and [proof policy](docs/PROOFS.md) for allowed source constructs.
+
+Only `Kernel.lean` is uploaded. Local notes or other files in `my-entry` are ignored.
+
+## 4. Verify locally
+
+On Linux, install the tools reported missing by `./setup.sh --check`, then run:
 
 ```bash
-.venv/bin/python -m tools.boards --config competition.toml disqualify 12 --reason 'audit failure'
+./setup.sh
+export PYTHONPATH=.:validator
+.venv/bin/python -m verification my-entry --verdict results/my-entry-proof.json
 ```
 
-A trial verification writes a report and does not change DB eligibility or rewards:
+Setup installs the pinned Lean toolchain/packages, project-local sandbox and Python dependencies.
+It builds the shipped package first. The first setup may take substantially longer than later runs.
+Verification checks the same proof stages as the competition and writes a JSON verdict. Exit code
+0 means passed, 1 means rejected, and 2 means an infrastructure problem. It does not submit work.
+Linux verification needs unprivileged user namespaces and a working user systemd session for
+resource limits; see [local setup troubleshooting](docs/LOCAL-EXPERIMENTS.md).
+
+On macOS, use the native development setup:
 
 ```bash
-.venv/bin/python -m verification my-entry --verdict results/trial.json
+xcode-select --install  # if Command Line Tools are not already installed
+./setup-macos.sh --source my-entry/Kernel.lean
 ```
 
-## Weight setter
+Use Python 3.11+ (`PYTHON=/path/to/python3.12` selects an interpreter). This builds the Lean
+statement and native tools. For the full sandboxed gate and kernel replay, use Linux.
 
-After checking the publication and stopping any other setter for the same validator wallet:
+## 5. Benchmark locally
+
+After setup, build your entry and run the model suite:
 
 ```bash
-pm2 start deploy/pm2.config.js --only tensor-weight-setter
+cp my-entry/Kernel.lean lean/work/Submission.lean
+(cd lean && ~/.elan/bin/lake build VerifyExact benchExact)
+BENCH_INNER=3 BENCH_WORKLOADS=s0:42:typical lean/.lake/build/bin/benchExact
 ```
 
-Keep `WEIGHT_DRY_RUN=1` for rehearsal. Set `WEIGHT_DRY_RUN=0` only for the actual cutover.
-Reload the PM2 config with `--update-env` after edits. Save the final process list with `pm2 save`.
-Idle chain polls write no rows; real and explicit dry-run attempts record their compact reward inputs.
-
-## Tests and audits
+Each output row contains a workload/cell name, success flag, elapsed nanoseconds and checksum.
+This is a quick local measurement, not an official score: it has no reference calibration or
+paired statistical decision. To inspect layer costs:
 
 ```bash
-.venv/bin/pytest -q -m 'not slow' -rs
-.venv/bin/python selftest.py
-.venv/bin/python scripts/check-exact-proofs.py --replay
-.venv/bin/python scripts/audit-exact-spec.py --native --edge-cases --cases-per-kernel 200
-.venv/bin/python scripts/audit-exact-models.py --random-seeds 4
+(cd lean && ~/.elan/bin/lake build exactDev)
+lean/.lake/build/bin/exactDev profile cnn
 ```
 
-Run workspace-mutating Lean tests sequentially. A real disposable-DB worker rehearsal:
+Other profile names are `mlp`, `mnet`, `nmlp` and `mixer`. See
+[benchmarking](docs/BENCHMARKING.md) and [local experiments](docs/LOCAL-EXPERIMENTS.md)
+for interpretation and repeatable comparisons. Avoid concurrent builds or other CPU-heavy work.
+
+## 6. Submit
 
 ```bash
-.venv/bin/python scripts/test-exact-workflow.py \
-  --admin-url postgresql+psycopg://USER:PASSWORD@127.0.0.1:PORT/postgres \
-  --output data/tensor-rehearsal --minutes 15
+.venv/bin/python miner/submit.py submit my-entry \
+  --hotkey ~/.bittensor/wallets/my-wallet/hotkeys/my-hotkey
 ```
 
-It creates/drops its own database, proves a source, runs every required job and saves raw timings,
-decisions and a computed vector. It makes no chain calls.
+Replace the example wallet/key names with yours. The client hashes the file, signs the TorchLean
+upload message and prints the submission ID. Keep your system clock synchronized; signatures
+have a limited validity window. `--url` overrides the API origin when using your own instance.
 
-The miner CLI keeps the signed-message protocol and `https://conjectures.io` default.
-Public tensor uploads and board reads require the coordinated central API rollout.
-API errors use problem bodies with `type`, `title`, `status`, `detail`, `reason_code`.
+A successful upload means **queued**, not verified or promoted. Keep your submitted source and ID.
+
+## 7. Follow the result
+
+```bash
+.venv/bin/python miner/submit.py status 123
+.venv/bin/python miner/submit.py report 123
+.venv/bin/python miner/submit.py leaderboard --board mobilenet
+```
+
+Boards are `overall`, `mlp`, `resnet`, `mobilenet`, `normalized_mlp` and `mixer`.
+Processing states include `queued`, `proving`, `waiting`, `benchmarking`, `completed`, `rejected`
+and `disqualified`. Completion means decisions are available; it does not mean a takeover.
+Each family can finish at a different time. Reports contain per-device measurements and decisions.
+
+A ratio of `0.95` means 5% less runtime than that board's reference. Promotion also requires the
+published confidence and regression checks; see [scoring](docs/BENCHMARKING.md). Reward shares
+are configurable: use the live board/champion responses rather than assuming a fixed payout split.
+
+## Common errors
+
+Errors use `{type, title, status, detail, reason_code}`. The CLI prints the reason and message.
+
+| Reason | Action |
+|---|---|
+| `NOT_REGISTERED` | Check the hotkey and active subnet registration. |
+| `REGISTRATION_BEFORE_CUTOFF` | The latest registration is too old for this competition. |
+| `NO_ENTITLEMENT` | That registration already has a submission; inspect its existing result. |
+| `DUPLICATE_SUBMISSION` | Use the existing submission ID returned with the error. |
+| `SIGNATURE_EXPIRED` | Synchronize your clock and retry the request. |
+| `SUBMISSIONS_CLOSED` | Intake is closed; check the competition's published state. |
+| `RATE_LIMITED` | Wait before retrying. |
+| `COMPETITION_SCHEMA_UNAVAILABLE` | The service is unavailable; retry later. |
+
+Public sources are available only for former champions whose code no longer holds any board.
+Queued, rejected, never-champion and currently winning sources are withheld.
+For integration details and history queries, see [the public API](docs/API.md).

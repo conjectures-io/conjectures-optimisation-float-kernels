@@ -1,11 +1,13 @@
+> Historical development record. Dates, settings and results below are not the current competition policy.
+
 # Exact-runtime specification audit
 
 The reviews below preceded the later fan-in workload refinement. For the current generator's
 paired input-sensitivity results and reproduction commands, see
-[workload quality](EXACT-CONTRACT.md#workload-quality-and-input-sensitivity).
+[workload quality](../CONTRACT.md#workload-quality-and-input-sensitivity).
 The arithmetic observations about average pooling and extreme final overflow still apply.
 Universal builder-shape proofs were subsequently added for all scored cells and every UInt32
-seed; see [the proof inventory](EXACT-PROOFS.md#generated-benchmark-models-every-seed).
+seed; see [the proof inventory](../MATHEMATICAL-PROOFS.md#generated-benchmark-models-every-seed).
 
 ## Follow-up review: stable contract and generated models
 
@@ -98,7 +100,7 @@ words, model traces and source hashes. The nightly/manual CI job runs a smaller 
 
 **Historical audit:** the findings below describe the original specification. The follow-up
 implementation introduces stable normalization and a checked runtime boundary; see
-[the current contract and validation guide](EXACT-CONTRACT.md). Original recorded results
+[the current contract and validation guide](../CONTRACT.md). Original recorded results
 must not be interpreted as tests of the revised contract.
 
 ## Status
