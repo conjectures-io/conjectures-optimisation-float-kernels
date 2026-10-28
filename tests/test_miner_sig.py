@@ -28,11 +28,11 @@ ALICE = service_sig.load_keypair("//Alice")
 def test_the_message_is_the_platforms_five_lines():
     # conjectures-validator's submission_api/competition_sig.py builds exactly this text.
     message = miner_sig.submit_message(
-        competition="floatlib", digest="ab" * 32, hotkey="5Hot", timestamp=1700000000
+        competition="torchlean", digest="ab" * 32, hotkey="5Hot", timestamp=1700000000
     )
     assert message == (
         "conjectures-competition-submit-v1\n"
-        "competition: floatlib\n"
+        "competition: torchlean\n"
         f"digest: {'ab' * 32}\n"
         "hotkey: 5Hot\n"
         "timestamp: 1700000000"
@@ -42,9 +42,9 @@ def test_the_message_is_the_platforms_five_lines():
 def test_a_miner_signature_verifies_at_the_validator_and_only_for_its_slug():
     kp = miner_sig.load_keypair("//Alice")
     fields = dict(digest="cd" * 32, hotkey=kp.ss58_address, timestamp=1700000000)
-    signature = miner_sig.sign(kp, miner_sig.submit_message(competition="floatlib", **fields))
-    ok = service_sig.submit_message(competition="floatlib", **fields)
-    other = service_sig.submit_message(competition="floatlib-mul", **fields)
+    signature = miner_sig.sign(kp, miner_sig.submit_message(competition="torchlean", **fields))
+    ok = service_sig.submit_message(competition="torchlean", **fields)
+    other = service_sig.submit_message(competition="floatlib", **fields)
     assert service_sig.verify(kp.ss58_address, ok, signature)
     assert not service_sig.verify(kp.ss58_address, other, signature)
 
@@ -54,22 +54,21 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
     submit = load("miner_submit", REPO / "miner" / "submit.py")
     d = tmp_path / "k"
     d.mkdir()
-    (d / "Kernel.lean").write_bytes(b"import Contract\n")
+    (d / "Kernel.lean").write_bytes(b"import ContractExact\n")
     sent: dict = {}
 
     class Reply:
-        status_code = 200
+        status_code = 201
         headers = {"content-type": "application/json"}
 
         def json(self):
             return {
-                "competition": "floatlib",
+                "competition": "torchlean",
                 "submission": 1,
-                "slot": "full",
-                "state": "queued",
-                "digest": "0" * 64,
-                "created": True,
-                "slots_remaining": 0,
+                "proof_state": "queued",
+                "source_sha256": "0" * 64,
+                "status_url": "/v1/competitions/torchlean/submissions/1",
+                "intake_mode": "subnet",
             }
 
     def post(url, headers, files, timeout):
@@ -77,16 +76,14 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch):
         return Reply()
 
     monkeypatch.setattr(submit.requests, "post", post)
-    args = submit.argparse.Namespace(
-        dir=str(d), hotkey="//Alice", url="http://v:9300/", slot="full"
-    )
+    args = submit.argparse.Namespace(dir=str(d), hotkey="//Alice", url="http://v:9300/")
     submit.cmd_submit(args)
-    assert sent["url"] == "http://v:9300/v1/competitions/floatlib/submissions"
+    assert sent["url"] == "http://v:9300/v1/competitions/torchlean/submissions"
     assert set(sent["files"]) == {"Kernel.lean"}
     h = sent["headers"]
     message = service_sig.submit_message(
-        competition="floatlib",
-        digest=service_sig.digest_of(b"import Contract\n"),
+        competition="torchlean",
+        digest=service_sig.digest_of(b"import ContractExact\n"),
         hotkey=h["X-Conjectures-Hotkey"],
         timestamp=int(h["X-Conjectures-Timestamp"]),
     )
@@ -106,7 +103,7 @@ def test_client_url_defaults_to_central_api_and_can_be_overridden(monkeypatch):
 
 def test_wrong_hotkey_signature_is_rejected():
     message = service_sig.submit_message(
-        competition="floatlib", digest="ab" * 32, hotkey=ALICE.ss58_address, timestamp=1700000000
+        competition="torchlean", digest="ab" * 32, hotkey=ALICE.ss58_address, timestamp=1700000000
     )
     bob = service_sig.load_keypair("//Bob")
     signature = service_sig.sign(bob, message)

@@ -1,4 +1,4 @@
-# Exact-runtime mathematical proofs
+# Mathematical proofs
 
 The operator proofs below are separate from the miner's `Obligation K` proof. They connect the
 executable contract to real/rational mathematics, tensor coordinates and model shape semantics.
@@ -83,7 +83,9 @@ These results apply to arbitrary layer lists, not just the five benchmark builde
 claim that every arbitrary list is well-shaped. Nor do shape proofs establish numerical safety:
 finiteness, positive epsilon and useful activation distributions are separate conditions.
 
-## Generated benchmark models: every seed
+<a id="generated-benchmark-models-every-seed"></a>
+
+## Original cell selector: every seed
 
 File: `lean/audit/ExactSuiteProofs.lean`, namespace `ExactSuite`.
 
@@ -117,6 +119,11 @@ then connects the selected program to its generated input.
 for any kernel set satisfying `Obligation`; `accepted_cell_output_size` proves its exact total
 output length. These statements are about shapes. They do not prove that every seed avoids
 numerical overflow, dead ReLU paths or poor timing behavior.
+
+The theorem above is about `prepareCell`. The current multiseed benchmark uses `prepareProfile`;
+that selector is not quantified by `all_cells_valid`. The generic builder and model-shape
+lemmas remain available, but a separate bridge is needed to prove every profile/seed reaches
+their premises. Executable validation of current profiles complements these narrower proofs.
 
 ## Check and reproduce
 
