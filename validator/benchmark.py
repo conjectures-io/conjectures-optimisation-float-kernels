@@ -37,14 +37,32 @@ class MeasurementFailure(Exception):
 
 
 class Deadline:
-    """One absolute wall-clock deadline shared by every command in a phase."""
+    """One absolute wall-clock deadline shared by every command in a phase.
+
+    Paired rounds give both sides the same deadline (`share`). When it runs out there, the side
+    that has run longer is at fault, not whichever was running at the time: otherwise a slow
+    candidate's overrun lands on the reference half the time, and a reference failure is retried
+    as infrastructure, pausing the board, instead of deciding the evaluation.
+    """
 
     def __init__(self, phase, seconds):
         self.phase, self.seconds = phase, seconds
         self.started = time.monotonic()
         self.end = self.started + seconds
+        self.used = None
 
-    def fail(self, side, detail=None):
+    def share(self):
+        # From here on each command is charged to its side, for `fail` to find the side at fault.
+        self.used = {}
+
+    def charge(self, side, seconds):
+        if self.used is not None:
+            self.used[side] = self.used.get(side, 0.0) + seconds
+
+    def fail(self, side, detail=None, *, shared=True):
+        if shared and self.used:
+            # Ties stay with the side that was running.
+            side = max(self.used, key=lambda s: (self.used[s], s == side))
         detail = detail or f"exceeded {self.seconds:g}s {self.phase} budget"
         raise MeasurementFailure(side, f"{self.phase}-timeout: {detail}")
 
@@ -200,7 +218,8 @@ def build(source, expected, side, deadline):
 
 
 def run_binary(binary, request, reps, inner, side, deadline):
-    timeout = min(request["timing"]["run_seconds"], deadline.remaining(side))
+    budget = deadline.remaining(side)
+    timeout = min(request["timing"]["run_seconds"], budget)
     extra = {
         "BENCH_CELLS": ",".join(lean_cell(c) for c in request["cells"]),
         "BENCH_REPS": ",".join(f"{lean_cell(c)}={n}" for c, n in reps.items()),
@@ -217,14 +236,21 @@ def run_binary(binary, request, reps, inner, side, deadline):
     command = [str(binary)]
     if sandbox._BENCH_CPU:
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
+    started = time.monotonic()
     code, output = sandbox.run(
         command,
         timeout,
         env_extra=extra,
         memory_mb=sandbox._BENCH_MEMORY_MB,
     )
+    deadline.charge(side, time.monotonic() - started)
     if code == 124:
-        deadline.fail(side, f"{side} invocation exceeded its {timeout:g}s time allowance")
+        # The per-run cap is this side's own; running out of the shared deadline is decided by use.
+        deadline.fail(
+            side,
+            f"{side} invocation exceeded its {timeout:g}s time allowance",
+            shared=budget < request["timing"]["run_seconds"],
+        )
     deadline.remaining(side)
     if code:
         raise MeasurementFailure(side, f"bench exit {code}: {output[-1000:]}")
@@ -311,6 +337,8 @@ def measure(request, candidate, reference, mode=None):
             reps = calibrated_counts(initial, request["timing"]["cell_ms"])
             checked = run_binary(ref, request, reps, 3, "reference", benchmark_clock)
             reps = calibrated_counts(checked, request["timing"]["cell_ms"], reps)
+            # Calibration runs only the reference; the rounds share what is left between both sides.
+            benchmark_clock.share()
             rounds = []
             t0 = time.monotonic()
             for i in range(request["timing"]["rounds"]):

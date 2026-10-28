@@ -118,6 +118,24 @@ def test_calibration_consumes_the_same_budget_as_rounds(measurement, clock, monk
     assert not caps
 
 
+@pytest.mark.parametrize("slow", ["candidate", "reference"])
+def test_shared_round_deadline_blames_the_side_that_used_it(measurement, clock, monkeypatch, slow):
+    # The deadline runs out during the fast side's run: the slow side is still at fault.
+    request, _ = measurement
+    request["timing"] = timing(rounds=2, benchmark_seconds=9.5)
+    rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
+
+    def run(command, timeout, **kwargs):
+        seconds = 3 if Path(command[-1]).name == slow else 1
+        clock.advance(min(seconds, timeout))
+        return (124, "") if seconds > timeout else (0, rows)
+
+    monkeypatch.setattr(sandbox, "run", run)
+    with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout") as exc:
+        benchmark.measure(request, b"candidate", b"reference")
+    assert exc.value.kind == slow
+
+
 @pytest.mark.parametrize("side", ["candidate", "reference"])
 def test_per_run_timeout_is_explicit_and_preserves_responsible_side(monkeypatch, clock, side):
     request = {
