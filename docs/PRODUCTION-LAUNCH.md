@@ -18,19 +18,29 @@ step in general.
 
 ## 1. Prepare (no effect on FloatLib or weights)
 
+pm2 reads `.env` only when it loads `deploy/pm2.config.js` (`pm2 start`), and what the calling
+shell exports overrides it. So run every pm2 command from a shell that has not sourced `.env`, and
+after changing `.env`, `pm2 delete` the app and `pm2 start` it again: `pm2 restart --update-env`
+does not read the file.
+
 1. Check out this branch as `deflate` in a new directory, e.g. `/opt/conjectures-torchlean`,
    and run `./setup.sh` (plus `--chain` for the two chain workers).
 2. `.env`: `POSTGRES_*` for a new database `tensor` on `POSTGRES_PORT=5435`,
    `COMPOSE_FILE=compose.yaml:deploy/platform/compose.yaml`, `PLATFORM_NETWORK=conjectures-api_default`,
    `NETUID=66`, `BITTENSOR_NETWORK=finney`, `BITTENSOR_ARCHIVE_NETWORK=archive`, the same
-   `BITTENSOR_WALLET_*` values as FloatLib's `.env`, `WEIGHT_DRY_RUN=1`, `COMPETITION_CONFIG`, and
+   `BITTENSOR_WALLET_*` values as FloatLib's `.env`, `WEIGHT_DRY_RUN=1`, `WEIGHT_TREASURY_HOTKEY`
+   (the treasury's hotkey, as in FloatLib's `.env`; unset, uid 121 is paid whoever holds it),
+   `COMPETITION_CONFIG`, and
    `AXIOM_TOKEN`/`AXIOM_DATASET` from the API's `.env` with `AXIOM_ENVIRON=prod`.
 3. Database: `docker compose up -d db`, `docker compose build migrate`,
    `docker compose run --rm migrate` (head is `tensor_0002`).
-4. API role: `set -a; . ./.env; set +a; PLATFORM_API_PASSWORD=<new> deploy/platform/grant.sh`.
+4. API role, in a subshell so `.env` stays out of this shell:
+   `(set -a; . ./.env; set +a; PLATFORM_API_PASSWORD=<new> deploy/platform/grant.sh)`.
    Keep the password only in the API's `COMPETITION_TORCHLEAN_DATABASE_URL` (step 2.1).
 5. Coordinator config with the production benchmark environments and their measured identities
-   (`scripts/exact-config.py`, then review), and an execute-only login per benchmark worker
+   (`scripts/exact-config.py` without `--quick` or `--dev-intake`, then review; regenerate it
+   after any update of this checkout, since its proof identity covers the verification code), and
+   an execute-only login per benchmark worker
    (`deploy/platform/benchmark_worker.sql`, `validator/tools/worker_access.py`).
 6. `pm2 start deploy/pm2.config.js --only tensor-coordinator,tensor-chain-watcher`. The chain
    watcher's first pass records the whole subnet with block dates from the archive node.
@@ -57,14 +67,19 @@ step in general.
    `V054__competition_intake_limits.sql` after backing up the database.
 3. Check `GET /v1/competitions/torchlean/health` (`ok`, `policy_ready: true`) and the boards,
    then one signed upload from a hotkey registered after the cutoff (`miner/submit.py submit`).
-4. Weights: `pm2 stop floatlib-weight-setter`, set `WEIGHT_DRY_RUN=0` in this `.env`, then
-   `pm2 restart tensor-weight-setter --update-env`. Confirm a `weights_set` event (Axiom) or an
-   accepted row in `weight_sets`, then `pm2 save`.
-5. `pm2 stop floatlib-gate-worker floatlib-chain-watcher` once FloatLib's queue is empty; its
-   database stays up for the historical reads.
+4. Weights, from a shell that has not sourced `.env`:
+   `pm2 delete floatlib-weight-setter` (deleted, not stopped, so no `pm2 resurrect` brings back a
+   second setter), set `WEIGHT_DRY_RUN=0` in this `.env`, then
+   `pm2 delete tensor-weight-setter && pm2 start deploy/pm2.config.js --only tensor-weight-setter`.
+   Confirm `service_started` with `dry_run=false` and a `weights_set` event (Axiom) or an accepted
+   row in `weight_sets`, then `pm2 save`.
+5. `pm2 delete floatlib-gate-worker floatlib-chain-watcher` once FloatLib's queue is empty, then
+   `pm2 save`; its database stays up for the historical reads.
 
 ## Rollback
 
-Weights first: `pm2 stop tensor-weight-setter`, `pm2 start floatlib-weight-setter`. Then intake:
+Weights first: `pm2 delete tensor-weight-setter`, then from the FloatLib checkout
+`/opt/conjectures-optimisation-float-kernels`, whose `.env` still has `WEIGHT_DRY_RUN=0`:
+`pm2 start deploy/pm2.config.js --only floatlib-weight-setter` and `pm2 save`. Then intake:
 `TORCHLEAN_SUBMISSIONS_ENABLED=0` (and `FLOATLIB_SUBMISSIONS_ENABLED=1` with `floatlib-gate-worker`
-started, if FloatLib reopens) and recreate the API container. Nothing above deletes FloatLib data.
+started from the same checkout, if FloatLib reopens) and recreate the API container. Nothing above deletes FloatLib data.

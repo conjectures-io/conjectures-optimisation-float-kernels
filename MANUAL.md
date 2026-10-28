@@ -42,7 +42,10 @@ The default API origin is `https://conjectures.io`. Use `--url` on either comman
 
 `//Alice` is a public test identity. Dev uploads use the normal signed format; the dev API
 must enable `TORCHLEAN_DEV_SKIP_REGISTRATION=1` with `APP_MODE=DEV` to accept unregistered
-identities. There is no client flag to bypass registration. Duplicate uploads are still refused.
+identities, and that deployment's coordinator config needs `dev_intake = true`
+(`scripts/exact-config.py --dev-intake`); production never evaluates dev uploads. There is no
+client flag to bypass registration. Duplicate uploads are still refused, and so is a copy of an
+earlier entry or of a board's initial reference up to comments and whitespace.
 
 Status returns the proof state and recorded board evaluations. A proved submission may still
 be waiting for benchmarks; it does not by itself mean promotion. `report ID` adds the timings
