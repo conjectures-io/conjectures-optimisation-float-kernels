@@ -109,8 +109,9 @@ def test_old_per_run_files_are_pruned_and_others_kept(tmp_path):
 
 
 def _sandbox_works() -> bool:
-    # The real sandbox needs bwrap, user namespaces, a user systemd and prlimit on this host.
-    if not shutil.which("bwrap"):
+    # Fast CI has no prepared Lean workspace, even when the host provides bwrap.
+    # The real probes also need user namespaces, a user systemd and prlimit.
+    if not gate.CONFIG.is_dir() or not shutil.which(gate.BWRAP):
         return False
     try:
         gate.check_limits()
@@ -121,11 +122,41 @@ def _sandbox_works() -> bool:
         gate.SCRATCH = Path(directory) / "config"
         try:
             return gate.run(["true"], 30)[0] == 0
+        except OSError:
+            # A missing workspace/tool must not abort test collection.
+            return False
         finally:
             gate.SCRATCH = original
 
 
-@pytest.mark.skipif(not _sandbox_works(), reason="no working sandbox on this host")
+def test_sandbox_probe_without_prepared_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr(gate, "CONFIG", tmp_path / "missing-lake-config")
+    monkeypatch.setattr(shutil, "which", lambda command: "/usr/bin/bwrap")
+
+    def unexpected_run(*args, **kwargs):
+        pytest.fail("must not launch the sandbox without its workspace")
+
+    monkeypatch.setattr(gate, "run", unexpected_run)
+    assert not _sandbox_works()
+
+
+def test_sandbox_probe_handles_missing_files_and_restores_scratch(tmp_path, monkeypatch):
+    config = tmp_path / "lake-config"
+    config.mkdir()
+    monkeypatch.setattr(gate, "CONFIG", config)
+    monkeypatch.setattr(shutil, "which", lambda command: "/usr/bin/bwrap")
+    monkeypatch.setattr(gate, "check_limits", lambda: None)
+
+    def missing_file(*args, **kwargs):
+        raise FileNotFoundError("workspace removed before sandbox launch")
+
+    monkeypatch.setattr(gate, "run", missing_file)
+    original = gate.SCRATCH
+    assert not _sandbox_works()
+    assert gate.SCRATCH == original
+
+
+@pytest.mark.skipif(not _sandbox_works(), reason="sandbox or prepared Lean workspace unavailable")
 def test_nothing_a_sandboxed_command_starts_outlives_it():
     # A bench that left work running would slow the incumbent's next turn: the pid namespace
     # kills every process when the command exits.
@@ -137,7 +168,7 @@ def test_nothing_a_sandboxed_command_starts_outlives_it():
     assert left.stdout.strip() == "", f"left running: {left.stdout}"
 
 
-@pytest.mark.skipif(not _sandbox_works(), reason="no working sandbox on this host")
+@pytest.mark.skipif(not _sandbox_works(), reason="sandbox or prepared Lean workspace unavailable")
 def test_a_run_cannot_leave_the_config_copy_unremovable():
     # The config copy is writable in every run, so one that locks a dir in it must not stop the
     # next run, the champion's bench included, from starting on a fresh copy.
@@ -149,7 +180,7 @@ def test_a_run_cannot_leave_the_config_copy_unremovable():
     assert code == 0 and "fresh" in out
 
 
-@pytest.mark.skipif(not _sandbox_works(), reason="no working sandbox on this host")
+@pytest.mark.skipif(not _sandbox_works(), reason="sandbox or prepared Lean workspace unavailable")
 def test_the_per_file_cap_bites_inside_the_real_sandbox(monkeypatch):
     # prlimit's file-size limit reaches through systemd-run and bwrap to whatever writes the file.
     monkeypatch.setattr(gate, "_FILE_MB", 1)
