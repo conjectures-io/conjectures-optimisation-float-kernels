@@ -20,6 +20,11 @@ from .engine import session_scope
 from .submissions import SubmissionsDb, db_now, lead, put_source
 
 
+def intake_modes(config):
+    # Which uploads are evaluated: dev-tagged ones only on a development deployment.
+    return ("subnet", "dev") if config.dev_intake else ("subnet",)
+
+
 def lock_board(session, board):
     session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended("tensor:" + board, 0))))
 
@@ -131,6 +136,7 @@ class EvaluationsDb:
                     .where(
                         m.Submission.id > progress.activation_boundary,
                         m.Submission.state != "rejected",
+                        m.Submission.intake_mode.in_(intake_modes(config)),
                         ~source_blocked(m.Submission.source_sha256),
                         ~done,
                     )
@@ -271,6 +277,7 @@ class EvaluationsDb:
                 or s.scalar(select(source_blocked(sub.source_sha256)))
                 or sub.state != "proved"
                 or sub.verification_identity != config.proof_identity
+                or sub.intake_mode not in intake_modes(config)
             ):
                 cancel(s, e)
                 return False

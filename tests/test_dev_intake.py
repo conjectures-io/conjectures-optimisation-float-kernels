@@ -131,7 +131,12 @@ def test_dev_intake_migration_roundtrip(store, database_url, monkeypatch):
 
 
 def test_coordinator_can_verify_and_schedule_dev_upload(store, config):
+    import dataclasses
+
     from db.evaluations import EvaluationsDb
+
+    # A development deployment opts in; production never plans dev uploads.
+    config = dataclasses.replace(config, dev_intake=True)
 
     repo = EvaluationsDb(store.sessions)
     repo.set_leader("test-dev-intake")

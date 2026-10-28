@@ -98,6 +98,8 @@ class Config:
     proof_identity: str = ""
     benchmark_identity: str = ""
     seed_mode: str = "fixed"
+    # Plan uploads the API tagged `dev` (a development deployment); production plans only subnet.
+    dev_intake: bool = False
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
@@ -126,6 +128,7 @@ class Config:
             "benchmark_identity",
             "seed_mode",
             "seed_count",
+            "dev_intake",
         }
         if set(raw) - allowed:
             raise ValueError(f"unknown configuration keys: {set(raw) - allowed}")
@@ -146,6 +149,8 @@ class Config:
             raise ValueError("seed_count must be between 1 and 100")
         if data.get("seed_mode", "fixed") not in ("fixed", "fresh"):
             raise ValueError("seed_mode must be fixed or fresh")
+        if type(data.get("dev_intake", False)) is not bool:
+            raise ValueError("dev_intake must be true or false")
         envs = data["environments"]
         weights({k: v["weight"] for k, v in envs.items()}, "environments")
         for name, env in envs.items():

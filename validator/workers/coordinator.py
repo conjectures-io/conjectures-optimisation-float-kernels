@@ -263,7 +263,13 @@ def main():
                         future = None
                     if future is None:
                         sub = repo.submissions.claim_proof(
-                            owner, config.proof_identity, config.lease_seconds
+                            owner,
+                            config.proof_identity,
+                            config.lease_seconds,
+                            references=[
+                                (board, b["reference"]["sha256"])
+                                for board, b in config.boards.items()
+                            ],
                         )
                         if sub:
                             logger.info("[proof] verifying submission {}", sub.id)
