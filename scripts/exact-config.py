@@ -72,7 +72,7 @@ def main():
         f"architecture = {platform.machine()!r}",
         "",
         "[rewards]",
-        "rank_shares = [0.8, 0.2]",
+        "rank_shares = [1.0, 0.0]",
         "paused_policy = 'preserve'",
         "",
         "[rewards.board_weights]",

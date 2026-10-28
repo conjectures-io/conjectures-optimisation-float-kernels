@@ -315,3 +315,44 @@ def test_invalid_budget_overrides_fail_before_planning(config, scope, override):
     raw[scope][key]["timing"] = override
     with pytest.raises(ValueError):
         Config.parse(raw)
+
+
+def test_winner_only_rewards_keep_six_independent_pools(config):
+    boards = {
+        "overall": 0.5,
+        "mlp": 0.1,
+        "resnet": 0.1,
+        "mobilenet": 0.1,
+        "normalized_mlp": 0.1,
+        "mixer": 0.1,
+    }
+    publication = {
+        "version": "tensor-top2-v1",
+        "rewards": config.rewards | {"board_weights": boards, "rank_shares": [1.0, 0.0]},
+        "boards": {
+            board: {
+                "paused": False,
+                "kings": [
+                    {"promotion_id": 2, "submission_id": 2, "hotkey": "current-" + board},
+                    {"promotion_id": 1, "submission_id": 1, "hotkey": "previous-" + board},
+                ],
+            }
+            for board in boards
+        },
+    }
+    assert score(publication).weights == pytest.approx(
+        {"current-" + board: weight for board, weight in boards.items()}
+    )
+    # A board without a champion leaves its allocation unassigned to competitors.
+    publication["boards"]["overall"]["kings"] = []
+    assert sum(score(publication).weights.values()) == pytest.approx(0.5)
+
+
+def test_winner_only_policy_does_not_change_benchmark_identity(config):
+    raw = copy.deepcopy(config.__dict__)
+    raw["rewards"]["rank_shares"] = [1.0, 0.0]
+    updated = Config.parse(raw)
+    for board in config.boards:
+        assert updated.identity(board) == config.identity(board)
+        assert updated.plan(board) == config.plan(board)
+    assert updated.rewards["rank_shares"] == [1.0, 0.0]

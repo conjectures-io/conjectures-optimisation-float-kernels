@@ -45,7 +45,7 @@ It creates a **development policy** measured for the current checkout/host:
 | Build / measurement budgets | 960 s / 1200 s |
 | Per-binary invocation cap | 300 s |
 | Promotion / guard | 0.97 / 1.10 |
-| Paid ranks | Current / previous, 80/20 |
+| Paid ranks | Current champion only, 100/0 |
 | Board allocation | Overall 50%; each model family 10% |
 
 `--quick` uses a fixed seed, five rounds and 2 ms cells for workflow smoke tests. Neither mode

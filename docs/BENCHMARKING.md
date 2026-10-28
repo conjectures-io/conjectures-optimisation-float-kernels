@@ -69,9 +69,10 @@ separate decisions. Stored outcomes include `qualifies`, `above-bar`, `guard-fai
 
 ## Rewards
 
-Each board has a configurable reward allocation, shared by its current and previous eligible
-champion. Rank shares are configurable too (the development default is 80/20). One submission may
-hold several boards. Missing/ineligible ranks go to the treasury. Board reward weights are distinct
+Each of the six boards has a configurable reward allocation paid entirely to its current eligible
+champion. The default rank shares are `[1.0, 0.0]`: previous champions retain their history but
+receive no reward. One submission may hold several boards. An unheld board’s allocation goes to
+the treasury. Board reward weights are distinct
 from the model/hardware weights used to measure performance. Consult the live champion/publication
 fields for current shares; a displayed allocation is not proof of an on-chain payment.
 
