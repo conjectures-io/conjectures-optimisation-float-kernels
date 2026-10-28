@@ -18,6 +18,9 @@ CASES = [
     ("sorryax", False, False, "axioms"),
     ("forge", False, False, "policy"),
     ("tamper", False, False, "policy"),
+    # A global instance that rewrites the operator's bench output (1 ns) or audit count (0).
+    ("fakeclock", False, False, "policy"),
+    ("fakeaudit", False, False, "policy"),
     ("forge", True, False, "kernel"),
     ("tamper", True, False, "statement"),
 ]
