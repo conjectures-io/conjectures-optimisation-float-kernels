@@ -48,6 +48,8 @@ def raising(exc):
     ],
 )
 def test_supervisor_failure_is_infrastructure(monkeypatch, exc, kind):
+    monkeypatch.setattr(benchmark_worker, "preparation_mode", lambda request: "cold")
+
     # The subprocess owns phase attribution. The outer safety net cannot blame a candidate.
     def supervise(*args, **kwargs):
         assert args[2] == 1440

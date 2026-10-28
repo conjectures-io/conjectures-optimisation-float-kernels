@@ -466,3 +466,31 @@ def test_database_url_escapes_password(monkeypatch):
     password = "a:@/# b%"
     monkeypatch.setenv("POSTGRES_PASSWORD", password)
     assert make_url(database_url()).password == password
+
+
+def test_per_device_preparation_budgets_survive_db_planning_and_admission(store, config):
+    raw = copy.deepcopy(config.__dict__)
+    raw.pop("timing")
+    for board in raw["boards"].values():
+        board.pop("timing", None)
+    raw["environments"] = {
+        "dev": dict(weight=0.5, identity="a" * 64, architecture="amd64"),
+        "arm": dict(weight=0.5, identity="d" * 64, architecture="arm64"),
+    }
+    configured = Config.parse(raw)
+    repo, worker = setup(store, configured)
+    accepted(store, configured)
+    repo.plan(configured)
+    with db.session_scope(store.sessions) as session:
+        jobs = list(session.scalars(select(m.BenchmarkJob)))
+        assert len(jobs) == 4
+        for job in jobs:
+            assert job.request["timing"]["benchmark_seconds"] == 360
+            expected = (300, 120) if job.environment == "dev" else (960, 180)
+            assert (
+                job.request["timing"]["build_seconds"],
+                job.request["timing"]["cached_build_seconds"],
+            ) == expected
+    drain(worker, env="dev", identity="a" * 64)
+    drain(worker, env="arm", identity="d" * 64)
+    assert repo.aggregate(configured) == 2

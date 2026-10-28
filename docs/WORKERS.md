@@ -102,22 +102,58 @@ completed evaluations or promotion-level disqualification history.
 
 ## Independent build and measurement budgets
 
-`[timing]` requires separate `build_seconds` and `benchmark_seconds`.
-The development config generator sets 960 seconds (16 minutes) for shared preparation and both
-native builds, then a fresh 1200 seconds (20 minutes) for calibration and all paired rounds.
-`run_seconds = 300` also caps each binary invocation at the smaller of that value and the
-measurement time remaining. Neither budget resets per executable, command or round.
-A cached binary consumes only its lookup time within the build phase.
+Defaults keep proof verification separate (30 minutes), then give native preparation and
+measurement their own clocks:
 
-The parent supervisor allows build + measurement + 60 seconds
-(37 minutes with the generated development budgets).
+| Phase | amd64 | ARM64 |
+|---|---:|---:|
+| Cold preparation: shared modules + reference/candidate binaries | 5 min | 16 min |
+| Cached preparation: validate/load both binaries | 2 min | 3 min |
+| Overall measurement, including calibration | 20 min | 20 min |
+| Single-model-family measurement, including calibration | 6 min | 6 min |
+
+The generated config records the environment's `architecture` (`x86_64`/`amd64` or
+`aarch64`/`arm64`). An environment without an architecture uses the conservative ARM64
+build defaults. One-model boards default to six minutes; multi-model boards to twenty.
+Rounds, inner measurements and cell targets remain 11 / 3 / 50 ms.
+
+Override only the values that need changing:
+
+```toml
+[environments.dev-amd64.timing]
+build_seconds = 300
+cached_build_seconds = 120
+
+[boards.mlp.timing]
+benchmark_seconds = 360
+```
+
+Environment overrides affect only preparation limits; board overrides affect only measurement
+and per-invocation limits. Explicit global `[timing]` values still override the defaults for all
+boards/environments, unless a more specific override is supplied. Existing configs with explicit
+960/1200-second limits therefore keep them: regenerate/review the policy to adopt these defaults.
+Resolved per-environment limits are frozen in evaluation strata and measurement requests.
+`run_seconds = 300` caps one invocation, additionally bounded by the measurement time remaining.
+No deadline resets per executable, command or round.
+
+A binary cache is keyed by source, benchmark identity and measured execution identity, with a
+manifest checking its size, executable permission and SHA-256. Cold preparation publishes these
+artifacts atomically. Later family jobs with both valid binaries skip shared/native rebuilding.
+The cache is reusable across boards/seeds, not across different hardware identities. Missing or
+corrupt artifacts select cold preparation; loss after selecting a cached job is an infrastructure
+retry, never a miner rejection. Cache eviction or a changed reference can require cold work again.
+
+The parent freezes the preparation mode for its child while holding the checkout lock and uses
+that mode's build allowance + measurement allowance + 60 seconds for its watchdog. A warm
+family job therefore has a 9-minute amd64 or 10-minute ARM64 watchdog; a cold overall job has
+26 or 37 minutes respectively. These are ceilings, not expected durations.
 Explicit phase failures start with `build-timeout` or `benchmark-timeout`; candidate failures
 reject the evaluation, reference failures retain the reference/retry behavior, and shared
 preparation failures remain infrastructure errors. Hitting the outer `supervisor-timeout`
 safety net is an infrastructure error because it cannot reliably identify the responsible side.
 Proof-only verification retains its separately configured `verification_seconds` limit.
 
-Successful results include `stage_seconds` for build, calibration, rounds and total measurement;
+Successful results record `preparation.mode` and its budget, plus `stage_seconds` for build, calibration, rounds and total measurement;
 `timing_seconds` remains the round timing for existing analysis tools. The benchmark fingerprint
 covers the execution-budget helper. Deploy identical code on coordinator and workers and
 regenerate or review configs using `scripts/exact-config.py`.

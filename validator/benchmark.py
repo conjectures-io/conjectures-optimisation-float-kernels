@@ -17,6 +17,7 @@ from pathlib import Path
 import sandbox
 from config import MeasurementRequest, digest, measurement_hash
 from multiseed import calibrated_counts
+from timing import preparation_seconds
 
 import fingerprint
 
@@ -96,20 +97,60 @@ def machine_identity():
     )
 
 
+def file_hash(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def cache_location(expected):
+    identity, benchmark_identity = machine_identity(), fingerprint.benchmark()
+    cache = (
+        sandbox.HERE / "pinned" / "exact-jobs" / digest([expected, benchmark_identity, identity])
+    )
+    return cache, dict(
+        source_sha256=expected, benchmark_identity=benchmark_identity, identity=identity
+    )
+
+
+def cached_binary(expected):
+    cache, evidence = cache_location(expected)
+    binary = cache / "bench"
+    try:
+        manifest = json.loads((cache / "manifest.json").read_text())
+        if any(manifest.get(k) != v for k, v in evidence.items()):
+            return None
+        if not binary.is_file() or binary.is_symlink() or not os.access(binary, os.X_OK):
+            return None
+        size = binary.stat().st_size
+        if (
+            type(manifest.get("bytes")) is not int
+            or not 0 < size == manifest["bytes"] <= 512 * 2**20
+        ):
+            return None
+        if file_hash(binary) == manifest.get("binary_sha256"):
+            return binary
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def preparation_mode(request):
+    if sandbox.CONFIG.is_dir() and all(
+        cached_binary(request[k]) is not None for k in ("reference_hash", "candidate_hash")
+    ):
+        return "cached"
+    return "cold"
+
+
 def build(source, expected, side, deadline):
     deadline.remaining(side)
     if hashlib.sha256(source).hexdigest() != expected:
         raise MeasurementFailure("infrastructure", "immutable source hash mismatch")
-    cache = (
-        sandbox.HERE
-        / "pinned"
-        / "exact-jobs"
-        / digest([expected, fingerprint.benchmark(), machine_identity()])
-    )
-    binary = cache / "bench"
-    if binary.is_file():
+    if binary := cached_binary(expected):
         deadline.remaining(side)
         return binary
+    cache, evidence = cache_location(expected)
+    binary = cache / "bench"
     cache.mkdir(parents=True, exist_ok=True)
     src = cache / "Kernel.lean"
     src.write_bytes(source)
@@ -140,7 +181,18 @@ def build(source, expected, side, deadline):
         tmp = binary.with_suffix(".tmp")
         shutil.copy2(built, tmp)
         deadline.remaining(side)
+        if (
+            fingerprint.benchmark() != evidence["benchmark_identity"]
+            or machine_identity() != evidence["identity"]
+        ):
+            raise MeasurementFailure(
+                "infrastructure", "build environment changed before caching binary"
+            )
         tmp.replace(binary)
+        manifest = evidence | {"bytes": binary.stat().st_size, "binary_sha256": file_hash(binary)}
+        temporary = cache / "manifest.json.tmp"
+        temporary.write_text(json.dumps(manifest))
+        temporary.replace(cache / "manifest.json")
     finally:
         sandbox.wipe(sandbox.LAYER)
     deadline.remaining(side)
@@ -201,7 +253,7 @@ def run_binary(binary, request, reps, inner, side, deadline):
     return rows
 
 
-def measure(request, candidate, reference):
+def measure(request, candidate, reference, mode=None):
     MeasurementRequest.parse(request)
     if request["identity"] != machine_identity():
         raise MeasurementFailure("infrastructure", "hardware/execution identity mismatch")
@@ -209,6 +261,9 @@ def measure(request, candidate, reference):
         raise MeasurementFailure(
             "infrastructure", "checkout does not match pinned verifier/benchmark"
         )
+    for content, key in ((candidate, "candidate_hash"), (reference, "reference_hash")):
+        if hashlib.sha256(content).hexdigest() != request[key]:
+            raise MeasurementFailure("infrastructure", "immutable source hash mismatch")
     sandbox.check_limits()
     # sandbox.run uses shared Lake/overlay scratch paths; hold this checkout lock throughout.
     with (
@@ -220,24 +275,36 @@ def measure(request, candidate, reference):
         fcntl.flock(lock, fcntl.LOCK_EX)
         original = sandbox.WORK.read_bytes() if sandbox.WORK.exists() else None
         try:
-            build_clock = Deadline("build", request["timing"]["build_seconds"])
+            mode = mode or preparation_mode(request)
+            build_clock = Deadline("build", preparation_seconds(request["timing"], mode))
             sandbox._budget.reset(build_clock.seconds, deadline=build_clock.end)
-            try:
-                sandbox.prepare_shared(native=True, deadline=build_clock.end)
-                build_clock.remaining("infrastructure")
-            except TimeoutError:
-                build_clock.fail(
-                    "infrastructure", "shared build preparation exceeded its time allowance"
+            if mode == "cached":
+                ref, sub = (
+                    cached_binary(request["reference_hash"]),
+                    cached_binary(request["candidate_hash"]),
                 )
-            except MeasurementFailure:
-                raise
-            except Exception as exc:
-                raise MeasurementFailure(
-                    "infrastructure", f"shared build preparation: {exc}"
-                ) from exc
-            ref = build(reference, request["reference_hash"], "reference", build_clock)
-            sub = build(candidate, request["candidate_hash"], "candidate", build_clock)
-            build_clock.remaining("candidate")
+                if ref is None or sub is None or not sandbox.CONFIG.is_dir():
+                    raise MeasurementFailure(
+                        "infrastructure",
+                        "cached preparation unavailable; retry with cold preparation",
+                    )
+            else:
+                try:
+                    sandbox.prepare_shared(native=True, deadline=build_clock.end)
+                    build_clock.remaining("infrastructure")
+                except TimeoutError:
+                    build_clock.fail(
+                        "infrastructure", "shared build preparation exceeded its time allowance"
+                    )
+                except MeasurementFailure:
+                    raise
+                except Exception as exc:
+                    raise MeasurementFailure(
+                        "infrastructure", f"shared build preparation: {exc}"
+                    ) from exc
+                ref = build(reference, request["reference_hash"], "reference", build_clock)
+                sub = build(candidate, request["candidate_hash"], "candidate", build_clock)
+            build_clock.remaining("infrastructure" if mode == "cached" else "candidate")
             build_seconds = build_clock.elapsed()
             benchmark_clock = Deadline("benchmark", request["timing"]["benchmark_seconds"])
             initial = run_binary(ref, request, {}, 3, "reference", benchmark_clock)
@@ -281,8 +348,8 @@ def measure(request, candidate, reference):
                     "architecture": platform.machine(),
                     "cpu_affinity": sandbox._BENCH_CPU,
                     "load": os.getloadavg(),
-                    "candidate_binary": hashlib.sha256(sub.read_bytes()).hexdigest(),
-                    "reference_binary": hashlib.sha256(ref.read_bytes()).hexdigest(),
+                    "candidate_binary": file_hash(sub),
+                    "reference_binary": file_hash(ref),
                 },
                 "calibration": {c: ns for c, (ns, _) in initial.items()},
                 "repetitions": reps,
@@ -294,6 +361,7 @@ def measure(request, candidate, reference):
                     "rounds": round_seconds,
                     "benchmark": benchmark_clock.elapsed(),
                 },
+                "preparation": {"mode": mode, "budget_seconds": build_clock.seconds},
             }
         finally:
             if original is not None:
@@ -309,6 +377,7 @@ def main():
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--result", type=Path)
+    parser.add_argument("--preparation-mode", choices=("cold", "cached"))
     args = parser.parse_args()
     if args.identity:
         print(
@@ -327,6 +396,7 @@ def main():
                 json.loads(args.request.read_text()),
                 args.candidate.read_bytes(),
                 args.reference.read_bytes(),
+                mode=args.preparation_mode,
             )
         }
     except MeasurementFailure as exc:

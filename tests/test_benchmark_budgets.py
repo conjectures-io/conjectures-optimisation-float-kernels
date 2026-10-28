@@ -12,6 +12,7 @@ from multiseed import workloads
 from timing import supervisor_seconds, validate_timing
 
 CELL = "mlp:b1:normal"
+NATIVE_BUILD = benchmark.build
 
 
 class Clock:
@@ -40,6 +41,9 @@ def timing(**extra):
 def measurement(tmp_path, monkeypatch, clock):
     monkeypatch.setattr(sandbox, "HERE", tmp_path)
     monkeypatch.setattr(sandbox, "WORK", tmp_path / "Submission.lean")
+    config = tmp_path / "lake-config"
+    config.mkdir()
+    monkeypatch.setattr(sandbox, "CONFIG", config)
     sandbox.WORK.write_bytes(b"operator source")
     monkeypatch.setattr(sandbox, "check_limits", lambda: None)
     monkeypatch.setattr(benchmark, "machine_identity", lambda: "a" * 64)
@@ -55,8 +59,8 @@ def measurement(tmp_path, monkeypatch, clock):
         environment="test",
         seed=42,
         workloads=workloads(42),
-        candidate_hash="c" * 64,
-        reference_hash="d" * 64,
+        candidate_hash=hashlib.sha256(b"candidate").hexdigest(),
+        reference_hash=hashlib.sha256(b"reference").hexdigest(),
         cells=[CELL],
         timing=timing(),
     )
@@ -149,6 +153,7 @@ def test_reference_and_candidate_share_one_build_deadline(tmp_path, monkeypatch,
         binary = sandbox.LAYER / "upper/bin/benchExact"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"trusted test binary")
+        binary.chmod(0o755)
         return 0, ""
 
     monkeypatch.setattr(sandbox, "own", native)
@@ -248,3 +253,164 @@ def test_absolute_deadline_charges_work_between_build_commands(monkeypatch, cloc
     clock.advance(8.75)
     sandbox.own(["second"], 100)
     assert caps == [10, 1]
+
+
+def test_cached_job_skips_shared_and_native_builds(measurement, monkeypatch, clock, tmp_path):
+    request, _ = measurement
+    request["timing"]["cached_build_seconds"] = 2
+    config = tmp_path / "config"
+    config.mkdir()
+    monkeypatch.setattr(sandbox, "CONFIG", config)
+    paths = {}
+    for key in ("candidate_hash", "reference_hash"):
+        path = tmp_path / key
+        path.write_bytes(key.encode())
+        paths[request[key]] = path
+    monkeypatch.setattr(benchmark, "cached_binary", lambda expected: paths[expected])
+    monkeypatch.setattr(sandbox, "prepare_shared", lambda **kw: pytest.fail("shared rebuild"))
+    monkeypatch.setattr(benchmark, "build", lambda *a: pytest.fail("native rebuild"))
+    result = benchmark.measure(request, b"candidate", b"reference")
+    assert result["preparation"] == {"mode": "cached", "budget_seconds": 2}
+    assert result["stage_seconds"]["build"] == 0
+
+
+def test_cache_evicted_after_parent_check_retries_as_infrastructure(measurement, monkeypatch):
+    request, _ = measurement
+    monkeypatch.setattr(benchmark, "cached_binary", lambda expected: None)
+    with pytest.raises(benchmark.MeasurementFailure, match="retry with cold") as exc:
+        benchmark.measure(request, b"candidate", b"reference", mode="cached")
+    assert exc.value.kind == "infrastructure"
+
+
+def test_cached_preparation_has_its_own_deadline(measurement, monkeypatch, clock):
+    request, caps = measurement
+    request["timing"]["cached_build_seconds"] = 2
+
+    def lookup(expected):
+        clock.advance(2)
+        return Path(expected)
+
+    monkeypatch.setattr(benchmark, "cached_binary", lookup)
+    with pytest.raises(benchmark.MeasurementFailure, match="build-timeout") as exc:
+        benchmark.measure(request, b"candidate", b"reference", mode="cached")
+    assert exc.value.kind == "infrastructure"
+    assert not caps
+
+
+def test_cache_integrity_and_execution_identity_control_reuse(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setattr(sandbox, "HERE", tmp_path)
+    monkeypatch.setattr(benchmark, "machine_identity", lambda: "a" * 64)
+    monkeypatch.setattr(benchmark.fingerprint, "benchmark", lambda: "b" * 64)
+    config = tmp_path / "config"
+    config.mkdir()
+    monkeypatch.setattr(sandbox, "CONFIG", config)
+    expected = hashlib.sha256(b"source").hexdigest()
+    cache, evidence = benchmark.cache_location(expected)
+    cache.mkdir(parents=True)
+    binary = cache / "bench"
+    binary.write_bytes(b"valid native code")
+    binary.chmod(0o755)
+    request = dict(reference_hash=expected, candidate_hash=expected)
+    assert benchmark.preparation_mode(request) == "cold"  # Unmanifested binary.
+    manifest = evidence | {
+        "bytes": binary.stat().st_size,
+        "binary_sha256": benchmark.file_hash(binary),
+    }
+    (cache / "manifest.json").write_text(json.dumps(manifest))
+    assert benchmark.preparation_mode(request) == "cached"
+    binary.write_bytes(b"wrong native code")
+    assert benchmark.preparation_mode(request) == "cold"
+    binary.write_bytes(b"valid native code")
+    binary.chmod(0o644)
+    assert benchmark.preparation_mode(request) == "cold"
+    binary.chmod(0o755)
+    monkeypatch.setattr(benchmark, "machine_identity", lambda: "c" * 64)
+    assert benchmark.preparation_mode(request) == "cold"
+
+
+def test_cold_build_is_reused_for_a_different_family(measurement, monkeypatch, clock, tmp_path):
+    request, _ = measurement
+    monkeypatch.setattr(benchmark, "build", NATIVE_BUILD)
+    # Exercise real cache publication instead of the fixture's mocked build().
+    monkeypatch.setattr(sandbox, "HERE", tmp_path)
+    monkeypatch.setattr(sandbox, "WORK", tmp_path / "Submission.lean")
+    monkeypatch.setattr(sandbox, "LAYER", tmp_path / "layer")
+    config = tmp_path / "config"
+    config.mkdir()
+    monkeypatch.setattr(sandbox, "CONFIG", config)
+    monkeypatch.setattr(sandbox, "check_limits", lambda: None)
+    monkeypatch.setattr(sandbox, "foreign", lambda path: [])
+    monkeypatch.setattr(benchmark, "machine_identity", lambda: "a" * 64)
+    monkeypatch.setattr(benchmark.fingerprint, "benchmark", lambda: "b" * 64)
+    calls = []
+    monkeypatch.setattr(sandbox, "prepare_shared", lambda **kw: calls.append("shared"))
+    for stage in ("intake", "policy", "statement"):
+        monkeypatch.setattr(sandbox, stage, lambda *a: None)
+
+    def native(*args, **kwargs):
+        calls.append("native")
+        path = sandbox.LAYER / "upper/bin/benchExact"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"native code")
+        path.chmod(0o755)
+        return 0, ""
+
+    monkeypatch.setattr(sandbox, "own", native)
+
+    def run(command, timeout, **kwargs):
+        cells = kwargs["env_extra"]["BENCH_CELLS"].split(",")
+        return 0, "\n".join(
+            f"{w['id']}|{cell} true 100 123" for w in request["workloads"] for cell in cells
+        )
+
+    monkeypatch.setattr(sandbox, "run", run)
+    first = benchmark.measure(request, b"candidate", b"reference")
+    second = benchmark.measure(
+        request | {"cells": ["resnet:b1:normal"]}, b"candidate", b"reference"
+    )
+    assert first["preparation"]["mode"] == "cold"
+    assert second["preparation"]["mode"] == "cached"
+    assert calls == ["shared", "native", "native"]
+
+
+def test_warm_supervisor_uses_warm_limit():
+    assert (
+        supervisor_seconds(
+            timing(build_seconds=960, cached_build_seconds=180, benchmark_seconds=360), "cached"
+        )
+        == 600
+    )
+
+
+def test_worker_freezes_preparation_mode_for_child_and_watchdog(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from workers import benchmark_worker as worker
+
+    monkeypatch.setattr(worker, "preparation_mode", lambda request: "cached")
+    monkeypatch.setattr(worker, "report", lambda *a: None)
+    repo = SimpleNamespace(
+        sources=lambda job_id: (b"candidate", b"reference"),
+        complete=lambda *a: True,
+        fail=lambda *a: pytest.fail("unexpected job failure"),
+    )
+    job = SimpleNamespace(
+        id=1,
+        token="lease-token",
+        lease_seconds=120,
+        request={"timing": timing(cached_build_seconds=2)},
+    )
+    seen = []
+
+    def supervised(command, heartbeat, seconds, *args, **kwargs):
+        seen.append((command, seconds))
+        Path(command[command.index("--result") + 1]).write_text(json.dumps({"result": {}}))
+
+    monkeypatch.setattr(worker, "supervised", supervised)
+    worker.execute(repo, job, "owner")
+    command, seconds = seen[0]
+    assert command[command.index("--preparation-mode") + 1] == "cached"
+    assert seconds == 66  # Two seconds cached preparation, four measurement, sixty grace.

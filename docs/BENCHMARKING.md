@@ -27,7 +27,8 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 
 ## Measurement
 
-1. Build candidate and reference locally for the target CPU. Build time is not scored.
+1. Build candidate and reference once for the target CPU, then reuse validated cached binaries
+   across family jobs. Build time is not scored.
 2. Calibrate repetitions on the reference, using two warmed best-of-three passes. Candidate and
    reference use the same repetition counts for every workload/cell.
 3. Run paired rounds, alternating which binary runs first and using one CPU affinity where supported.
@@ -38,6 +39,8 @@ The development config generator uses **11 rounds, best of 3, 50 ms cells**. The
 configuration defaults, not a promise about production. Read `/v1/competitions/torchlean/boards`
 and submission reports for live policy and frozen evaluation settings. Full processing also includes
 proof checking, native builds and queue waiting; it is longer than the timed inference.
+Default measurement ceilings are 20 minutes for overall and 6 minutes for one family;
+[worker budgets](WORKERS.md#independent-build-and-measurement-budgets) distinguish cold and cached preparation.
 
 ## Score and promotion
 

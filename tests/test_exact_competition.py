@@ -254,3 +254,64 @@ def test_parent_death_kills_worker_subprocess(tmp_path):
                 os.kill(child, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_default_budgets_vary_by_family_and_architecture(config):
+    raw = copy.deepcopy(config.__dict__)
+    raw.pop("timing")
+    raw["environments"] = {
+        "dev": dict(weight=0.5, identity="a" * 64, architecture="amd64"),
+        "arm": dict(weight=0.5, identity="b" * 64, architecture="arm64"),
+    }
+    for board in raw["boards"].values():
+        board.pop("timing", None)
+    raw["boards"]["overall"] = dict(
+        models={"mlp": 0.5, "resnet": 0.5}, reference=raw["boards"]["mlp"]["reference"].copy()
+    )
+    raw["rewards"]["board_weights"] = {"mlp": 0.25, "resnet": 0.25, "overall": 0.5}
+    configured = Config.parse(raw)
+    assert configured.verification_seconds == 1800
+    assert configured.plan("mlp")["timing"]["benchmark_seconds"] == 360
+    assert configured.plan("overall")["timing"]["benchmark_seconds"] == 1200
+    plan = configured.plan("mlp")
+    caps = {st["environment"]: st.get("timing", plan["timing"]) for st in plan["strata"]}
+    assert (caps["dev"]["build_seconds"], caps["dev"]["cached_build_seconds"]) == (300, 120)
+    assert (caps["arm"]["build_seconds"], caps["arm"]["cached_build_seconds"]) == (960, 180)
+    assert Config.parse(copy.deepcopy(configured.__dict__)).public() == configured.public()
+
+
+def test_environment_limits_are_frozen_and_checked_by_scoring(config):
+    raw = copy.deepcopy(config.__dict__)
+    raw["environments"]["local"]["timing"] = dict(build_seconds=50, cached_build_seconds=20)
+    configured = Config.parse(raw)
+    plan = configured.plan("mlp")
+    st = plan["strata"][0]
+    request = {k: st[k] for k in ("environment", "identity", "seed")} | {
+        "cells": sorted(plan["cells"]),
+        "timing": st["timing"],
+        "workloads": workloads(st["seed"]),
+        "benchmark_identity": plan["benchmark_identity"],
+        "candidate_hash": "d" * 64,
+        "reference_hash": "e" * 64,
+    }
+    assert assess(plan, [(request, result(request))])["outcome"] == "qualifies"
+    wrong = request | {"timing": plan["timing"]}
+    with pytest.raises(ValueError, match="incompatible measurement policy"):
+        assess(plan, [(wrong, result(wrong))])
+
+
+@pytest.mark.parametrize(
+    "scope,override",
+    [
+        ("environments", {"rounds": 10}),
+        ("environments", {"build_seconds": 10, "cached_build_seconds": 20}),
+        ("boards", {"build_seconds": 300}),
+        ("boards", {"benchmark_seconds": -1}),
+    ],
+)
+def test_invalid_budget_overrides_fail_before_planning(config, scope, override):
+    raw = copy.deepcopy(config.__dict__)
+    key = "local" if scope == "environments" else "mlp"
+    raw[scope][key]["timing"] = override
+    with pytest.raises(ValueError):
+        Config.parse(raw)
