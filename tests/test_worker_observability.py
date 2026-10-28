@@ -213,6 +213,8 @@ def test_benchmark_events_follow_fenced_writes(monkeypatch, error, saved, event,
         value = {"error": {"kind": error, "reason": "test failure"}} if error else {"result": {}}
         Path(command[command.index("--result") + 1]).write_text(json.dumps(value))
 
+    # Telemetry must not depend on the host's prepared workspace or binary cache.
+    monkeypatch.setattr(benchmark_worker, "preparation_mode", lambda _: "cold")
     monkeypatch.setattr(benchmark_worker, "supervised", run)
     benchmark_worker.execute(repo, job, "host")
     expected = ["benchmark_claimed"]
