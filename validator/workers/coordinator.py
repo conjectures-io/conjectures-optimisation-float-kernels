@@ -25,6 +25,7 @@ from sqlalchemy import text
 
 import db
 import fingerprint
+from axiom import config_error, get_events, init
 from db.evaluations import EvaluationsDb
 
 
@@ -54,7 +55,28 @@ def source_environment():
     }
 
 
+PROOF_OUTCOMES = {0: "proved", 1: "rejected"}
+
+
+def report_proof(sub, verdict, seconds):
+    # proved/rejected are the miner's result; anything else is ours, and the submission is retried.
+    outcome = PROOF_OUTCOMES.get(verdict["exit_code"], "retry")
+    events = get_events()
+    emit = {"proved": events.info, "rejected": events.warning}.get(outcome, events.error)
+    emit(
+        "proof_checked",
+        submission_id=sub.id,
+        hotkey=sub.hotkey,
+        source_sha256=sub.source_sha256,
+        outcome=outcome,
+        stage=verdict.get("stage"),
+        reason=str(verdict.get("reason") or "")[:2000] or None,
+        seconds=round(seconds, 1),
+    )
+
+
 def verify(repo, sub, config, stop):
+    started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="exact-proof-") as tmp:
         path = Path(tmp)
         try:
@@ -126,13 +148,38 @@ def verify(repo, sub, config, stop):
                 verdict["exit_code"],
                 verdict.get("stage"),
             )
-            repo.finish_proof(
+            if repo.finish_proof(
                 sub.id,
                 sub.token,
                 config.proof_identity,
                 verdict,
                 config.retry_seconds,
-            )
+            ):
+                report_proof(sub, verdict, time.monotonic() - started)
+
+
+def report_publication(publication, previous):
+    # A changed reward publication, and each board that paused or resumed since the last one.
+    events = get_events()
+    boards = publication["boards"]
+    events.info(
+        "rewards_published",
+        version=publication.get("version"),
+        boards={
+            board: {
+                "paused": value["paused"],
+                "kings": [k["hotkey"] for k in value["kings"]],
+            }
+            for board, value in boards.items()
+        },
+    )
+    before = (previous or {}).get("boards", {})
+    for board, value in boards.items():
+        was = before.get(board, {}).get("paused", False)
+        if value["paused"] and not was:
+            events.warning("board_paused", board=board)
+        elif was and not value["paused"]:
+            events.info("board_resumed", board=board)
 
 
 def main():
@@ -145,26 +192,39 @@ def main():
         help="reconcile, plan and aggregate once; no proof subprocess",
     )
     args = parser.parse_args()
+    events = init("competition-coordinator")
+
+    def refuse(message):
+        events.error("service_misconfigured", error=message)
+        parser.error(message)
+
     if args.config is None:
-        parser.error("set COMPETITION_CONFIG or --config")
-    config = Config.load(args.config)
+        refuse("set COMPETITION_CONFIG or --config")
+    try:
+        config = Config.load(args.config)
+    except Exception as exc:
+        events.error("service_misconfigured", error=config_error(exc))
+        raise
     if (
         config.proof_identity != fingerprint.proof()
         or config.benchmark_identity != fingerprint.benchmark()
     ):
-        parser.error("configuration identities must match this pinned checkout")
+        refuse("configuration identities must match this pinned checkout")
     for board in config.boards.values():
         if (
             hashlib.sha256(Path(board["reference"]["path"]).read_bytes()).hexdigest()
             != board["reference"]["sha256"]
         ):
-            parser.error("initial reference hash mismatch")
+            refuse("initial reference hash mismatch")
+    events.bind(proof_identity=config.proof_identity, benchmark_identity=config.benchmark_identity)
+    events.info("service_started", boards=sorted(config.boards), once=args.once)
     store = db.connect()
     repo = EvaluationsDb(store.sessions)
     stop = threading.Event()
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = None
     owner = f"{socket.gethostname()}:{os.getpid()}"
+    reason = "crashed"
     try:
         with store.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as leader:
             if not leader.scalar(
@@ -174,6 +234,8 @@ def main():
             try:
                 repo.set_leader(uuid.uuid4().hex)
                 repo.reconcile(config)
+                published = None
+                stalled = set()
                 next_alert = 0.0
                 while True:
                     leader.execute(text("SELECT 1"))
@@ -189,14 +251,25 @@ def main():
                     if planned or finalized:
                         logger.info("[coordinator] planned={} finalized={}", planned, finalized)
                     repo.publish(config)
+                    publication = store.publications.publication()
+                    if publication != published:
+                        report_publication(publication, published)
+                        published = publication
                     if args.once:
+                        reason = "once"
                         break
                     if future is not None and future.done():
                         future.result()
                         future = None
                     if future is None:
                         sub = repo.submissions.claim_proof(
-                            owner, config.proof_identity, config.lease_seconds
+                            owner,
+                            config.proof_identity,
+                            config.lease_seconds,
+                            references=[
+                                (board, b["reference"]["sha256"])
+                                for board, b in config.boards.items()
+                            ],
                         )
                         if sub:
                             logger.info("[proof] verifying submission {}", sub.id)
@@ -204,6 +277,19 @@ def main():
                     if time.monotonic() >= next_alert:
                         for alert in repo.alerts(config.alert_seconds):
                             logger.warning("exact benchmark waiting: {}", alert)
+                            # Once per job and state, not once a minute for as long as it waits.
+                            key = (alert["job"], alert["state"], alert["attempts"])
+                            if key in stalled:
+                                continue
+                            stalled.add(key)
+                            events.warning(
+                                "benchmark_stalled",
+                                job_id=alert["job"],
+                                environment=alert["environment"],
+                                state=alert["state"],
+                                attempts=alert["attempts"],
+                                error_kind=(alert["error"] or {}).get("kind"),
+                            )
                         next_alert = time.monotonic() + min(config.alert_seconds, 60)
                     time.sleep(2)
             finally:
@@ -212,9 +298,13 @@ def main():
                     leader.execute(
                         text("SELECT pg_advisory_unlock(hashtextextended('tensor:coordinator',0))")
                     )
+    except KeyboardInterrupt:
+        reason = "interrupted"
+        raise
     finally:
         stop.set()
         pool.shutdown(wait=True, cancel_futures=True)
+        events.info("service_stopped", reason=reason)
         store.close()
 
 

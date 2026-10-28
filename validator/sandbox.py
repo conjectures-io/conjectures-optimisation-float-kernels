@@ -375,9 +375,13 @@ def intake(src: Path, v: Verdict) -> str | None:
     if src.stat().st_size > _MAX_BYTES:
         return f"{src.stat().st_size} bytes, over {_MAX_BYTES}"
     try:
-        src.read_bytes().decode("utf-8")
+        text = src.read_bytes().decode("utf-8")
     except UnicodeDecodeError as exc:
         return f"not UTF-8: invalid byte at offset {exc.start}"
+    # Control characters (tab, newline and carriage return aside) have no place in Lean source,
+    # and NUL cannot be stored in the database's text and JSON columns.
+    if m := re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", text):
+        return f"control character U+{ord(m.group()):04X} at offset {m.start()}"
     return None
 
 

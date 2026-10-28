@@ -95,7 +95,7 @@ def test_cutoff_strict_and_utf8_and_hash_guard(store):
             )
 
 
-def test_proof_retry_fencing_and_cache(store, config):
+def test_proof_retry_fencing_and_copies(store, config):
     repo, _ = setup(store, config)
     register(store, "alice")
     sid = store.submissions.add("alice", b"source")
@@ -115,11 +115,15 @@ def test_proof_retry_fencing_and_cache(store, config):
     assert repo.submissions.finish_proof(
         sid, proof.token, config.proof_identity, {"exit_code": 0, "passed": True}, 1
     )
+    # Another hotkey's copy is rejected before its proof, not served from the proof cache.
     register(store, "bob", uid=1)
     other = store.submissions.add("bob", b"source")
     assert repo.submissions.claim_proof("two", config.proof_identity, 30) is None
     with db.session_scope(store.sessions) as s:
-        assert s.get(m.Submission, other).state == "proved"
+        assert (s.get(m.Submission, other).state, s.get(m.Submission, other).stage) == (
+            "rejected",
+            "intake",
+        )
 
 
 def test_claim_races_stale_completions_and_atomic_payout(store, config):

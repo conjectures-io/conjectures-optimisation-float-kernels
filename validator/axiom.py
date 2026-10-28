@@ -1,14 +1,14 @@
 """Structured events to Axiom, in the conjectures platform's envelope, never in the way.
 
 The platform (conjectures-validator, `conjectures_subnet/axiom`) ships its events to one Axiom
-dataset, and this competition's four processes ship theirs to the same one, so a dashboard can
+dataset, and this competition's processes ship theirs to the same one, so a dashboard can
 read both. That only works if every record has the platform's shape exactly:
 
     {**details, "_time": <ISO-8601 UTC, stamped at emit>, "severity": debug|info|warning|error|
      critical, "source": <process>, "event_type": <what happened>, "environ": AXIOM_ENVIRON}
 
 with the envelope written last, so a details key named `source` cannot displace the label every
-query filters on. Every event here also carries `competition: "floatlib"` and, in the two
+query filters on. Every event here also carries `competition: "torchlean"` and, in the two
 chain processes, `netuid` and `network`.
 
 Environment (the platform's names and meanings):
@@ -20,7 +20,8 @@ Environment (the platform's names and meanings):
 Two rules, the platform's too, because telemetry that can stall or break the thing it watches is
 worse than none: `emit` never blocks (a bounded queue, drained by a daemon thread that batches
 and POSTs gzipped NDJSON, flushed at exit) and never raises (a full queue or a failed POST drops
-and counts). Standard library only: this runs in the gate worker, next to hostile Lean, and
+and counts). Standard library only: this runs in the coordinator and the benchmark workers,
+next to hostile Lean, and
 shipping a log line is not a reason to grow its dependencies.
 
 Explicit events come from `get_events()`; `init()` at each entry point also bridges loguru and
@@ -54,22 +55,24 @@ if TYPE_CHECKING:
 
 AXIOM_API_URL: Final = "https://api.axiom.co"
 DEFAULT_ENVIRON: Final = "default"
-COMPETITION: Final = "floatlib"
+COMPETITION: Final = "torchlean"
 
 # The platform's `Severity` values, verbatim: one ladder whichever side emitted the event.
 Severity: TypeAlias = Literal["debug", "info", "warning", "error", "critical"]
 SEVERITIES: Final[tuple[Severity, ...]] = ("debug", "info", "warning", "error", "critical")
 
-# One per process: deploy/pm2.config.js runs exactly these four.
+# One per process: the supported entry points in docs/OPERATIONS.md. Intake is the central API's,
+# which reports it under its own `api-competitions` source. The auditor has none: its own source
+# file is part of its audit identity, so instrumenting it would re-audit every champion.
 Source: TypeAlias = Literal[
-    "competition-submission-api",
-    "competition-gate-worker",
+    "competition-coordinator",
+    "competition-benchmark-worker",
     "competition-chain-watcher",
     "competition-weight-setter",
 ]
 SOURCES: Final[tuple[Source, ...]] = (
-    "competition-submission-api",
-    "competition-gate-worker",
+    "competition-coordinator",
+    "competition-benchmark-worker",
     "competition-chain-watcher",
     "competition-weight-setter",
 )
@@ -79,12 +82,28 @@ EventType: TypeAlias = Literal[
     "service_started",
     "service_stopped",
     "service_misconfigured",
-    "submission_claimed",
-    "gate_verdict",
-    "submission_requeued",
-    "gate_validator_error",
-    "slot_paused",
-    "slot_recovered",
+    # A submission's proof check: `outcome` is proved, rejected (the miner's to fix) or retry
+    # (ours: the infrastructure failed and the submission goes back in the queue).
+    "proof_checked",
+    # One board's evaluation of a proved submission, from planning to its stored decision.
+    "evaluation_planned",
+    "evaluation_decided",
+    # Results the scorer could not read: the evaluation is superseded and replanned, never held
+    # against the miner, so this is the only trace of a worker producing bad evidence.
+    "evaluation_quarantined",
+    "champion_promoted",
+    # Operator decisions; the rows are overwritten in place, so these keep who and why.
+    "promotion_disqualified",
+    "source_disqualification_set",
+    # The compact reward publication the weight setter pays from, whenever it changes.
+    "rewards_published",
+    # A reference or checksum failure holds a board's evaluation; its share follows the
+    # paused policy until it clears.
+    "board_paused",
+    "board_resumed",
+    # A benchmark job queued or leased too long, or retried too often.
+    "benchmark_stalled",
+    "benchmark_job_finished",
     "registrations_recorded",
     "chain_read_failed",
     "weights_planned",
@@ -103,7 +122,7 @@ BATCH_EVENTS: Final = 100
 FLUSH_SECONDS: Final = 2.0
 TIMEOUT_SECONDS: Final = 10.0
 SHUTDOWN_SECONDS: Final = 5.0
-USER_AGENT: Final = "conjectures-floatlib-axiom/1"
+USER_AGENT: Final = "conjectures-torchlean-axiom/1"
 
 # A failed ingest is reported through loguru at WARNING: below the bridge's ERROR floor, so a
 # dead Axiom can never enqueue events about failing to enqueue events.
@@ -354,7 +373,7 @@ def client_from_env(
 
 
 class Events:
-    # The sink call sites use (`get_events().info("gate_verdict", submission_id=…)`), carrying the
+    # The sink call sites use (`get_events().info("proof_checked", submission_id=…)`), carrying the
     # process's source and every event's common fields, never raising for the caller.
 
     def __init__(self, client: Client, *, source: str, **common: object) -> None:

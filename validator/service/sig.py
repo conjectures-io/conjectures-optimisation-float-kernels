@@ -9,7 +9,7 @@ from typing import Final, cast
 
 from bittensor_wallet import Keypair
 
-COMPETITION: Final = "floatlib"
+COMPETITION: Final = "torchlean"
 COMPETITION_SUBMIT_PREFIX: Final = "conjectures-competition-submit-v1"
 SS58_FORMAT: Final = 42
 # sr25519 in bittensor_wallet's numbering, named so a default change can't switch curves.

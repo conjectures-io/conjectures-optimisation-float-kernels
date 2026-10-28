@@ -128,8 +128,12 @@ A successful upload means **queued**, not verified or promoted. Keep your submit
 ```bash
 .venv/bin/python miner/submit.py status 123
 .venv/bin/python miner/submit.py report 123
+.venv/bin/python miner/submit.py boards
 .venv/bin/python miner/submit.py leaderboard --board mobilenet
 ```
+
+`boards` lists each board's rules and champion; `leaderboard` defaults to `overall`. These read
+only public fields: a current champion's source stays private.
 
 Boards are `overall`, `mlp`, `resnet`, `mobilenet`, `normalized_mlp` and `mixer`.
 Processing states include `queued`, `proving`, `waiting`, `benchmarking`, `completed`, `rejected`
@@ -154,6 +158,15 @@ Errors use `{type, title, status, detail, reason_code}`. The CLI prints the reas
 | `SUBMISSIONS_CLOSED` | Intake is closed; check the competition's published state. |
 | `RATE_LIMITED` | Wait before retrying. |
 | `COMPETITION_SCHEMA_UNAVAILABLE` | The service is unavailable; retry later. |
+
+An upload identical to an earlier entry or to a board's initial reference up to comments and
+whitespace is accepted but then rejected before the proof, at stage `intake`. Status shows which
+entry it copies.
+
+Development APIs can accept unregistered test identities such as `//Alice` (with
+`TORCHLEAN_DEV_SKIP_REGISTRATION=1` and a coordinator config with `dev_intake = true`, from
+`scripts/exact-config.py --dev-intake`). Production never evaluates such uploads, and the client
+has no flag to bypass registration.
 
 Public sources are available only for former champions whose code no longer holds any board.
 Queued, rejected, never-champion and currently winning sources are withheld.

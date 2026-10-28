@@ -122,8 +122,7 @@ def _sandbox_works() -> bool:
         gate.SCRATCH = Path(directory) / "config"
         try:
             return gate.run(["true"], 30)[0] == 0
-        except OSError:
-            # A missing workspace/tool must not abort test collection.
+        except Exception:  # noqa: BLE001 - e.g. bwrap present but no Lean build tree to bind
             return False
         finally:
             gate.SCRATCH = original

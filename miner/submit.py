@@ -1,9 +1,10 @@
-"""Submit one complete tensor implementation to the central API; default https://conjectures.io."""
+"""Submit one complete TorchLean implementation to the central API; default https://conjectures.io."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ import sig  # noqa: E402 - the miner's copy of the signing contract, pinned by t
 
 DEFAULT_URL = "https://conjectures.io"
 TIMEOUT = 60
+MAX_FILE_BYTES = 256_000
 
 
 def base(url):
@@ -46,7 +48,17 @@ def kernel_of(d: Path) -> bytes:
     kernel = d / "Kernel.lean"
     if not kernel.is_file():
         sys.exit(f"{d} must contain Kernel.lean")
-    return kernel.read_bytes()
+    with kernel.open("rb") as source:
+        content = source.read(MAX_FILE_BYTES + 1)
+    if not content:
+        sys.exit("Kernel.lean must not be empty")
+    if len(content) > MAX_FILE_BYTES:
+        sys.exit(f"Kernel.lean must be at most {MAX_FILE_BYTES} bytes")
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        sys.exit("Kernel.lean must be UTF-8")
+    return content
 
 
 def signed_headers(kp: sig.Keypair, *, competition: str, digest: str, timestamp: int) -> dict:
@@ -76,40 +88,48 @@ def cmd_submit(args: argparse.Namespace) -> None:
         files={"Kernel.lean": ("Kernel.lean", lean)},
         timeout=TIMEOUT,
     )
-    if r.status_code not in (200, 201):
+    if r.status_code != 201:
         sys.exit(refused("submit", r))
     value = r.json()
-    print(f"submission {value['submission']} queued; digest {digest}")
-    print(f"check with: submit.py status {value['submission']} --url {url}")
+    print(f"submission {value['submission']}; proof state: {value['proof_state']}; digest {digest}")
+    if value.get("intake_mode") == "dev":
+        print("dev intake: subnet registration was not required")
+    command = shlex.join(
+        [sys.executable, "miner/submit.py", "status", str(value["submission"]), "--url", url]
+    )
+    print(f"check with: {command}")
+
+
+def show(what: str, url: str, path: str, params: dict | None = None) -> None:
+    # Print one public read as JSON. These are the API's public fields only: a board's current
+    # champion keeps its source private, and nothing here asks for source.
+    response = requests.get(f"{base(url)}{path}", params=params, timeout=TIMEOUT)
+    if response.status_code != 200:
+        sys.exit(refused(what, response))
+    print(json.dumps(response.json(), indent=2))
 
 
 def cmd_status(args):
-    response = requests.get(f"{base(args.url)}/submissions/{args.id}", timeout=TIMEOUT)
-    if response.status_code != 200:
-        sys.exit(refused("status", response))
-    print(json.dumps(response.json(), indent=2))
+    show("status", args.url, f"/submissions/{args.id}")
 
 
 def cmd_report(args):
-    response = requests.get(f"{base(args.url)}/submissions/{args.id}/report", timeout=TIMEOUT)
-    if response.status_code != 200:
-        sys.exit(refused("report", response))
-    print(json.dumps(response.json(), indent=2))
+    show("report", args.url, f"/submissions/{args.id}/report")
+
+
+def cmd_boards(args):
+    show("boards", args.url, "/boards")
 
 
 def cmd_leaderboard(args):
-    response = requests.get(
-        f"{base(args.url)}/leaderboard", params={"board": args.board}, timeout=TIMEOUT
-    )
-    if response.status_code != 200:
-        sys.exit(refused("leaderboard", response))
-    print(json.dumps(response.json(), indent=2))
+    show("leaderboard", args.url, "/leaderboard", {"board": args.board})
 
 
 CMDS = {
     "submit": cmd_submit,
     "status": cmd_status,
     "report": cmd_report,
+    "boards": cmd_boards,
     "leaderboard": cmd_leaderboard,
 }
 
@@ -120,22 +140,30 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p: argparse.ArgumentParser) -> None:
-        # The options every subcommand takes: where the API is, and which slot.
+        # The API origin; the competition identifier is fixed in the signing contract.
         p.add_argument("--url", default=DEFAULT_URL, help=f"API origin (default {DEFAULT_URL})")
 
     p = sub.add_parser("submit")
     p.add_argument("dir", help="submission directory with Kernel.lean")
     p.add_argument("--hotkey", required=True, help="Bittensor hotkey file (or //Alice for tests)")
     common(p)
-    for name in ("status", "report"):
-        sp = sub.add_parser(name)
-        sp.add_argument("id", type=int)
-        common(sp)
-    board = sub.add_parser("leaderboard")
-    common(board)
-    board.add_argument("--board", default="overall")
+    status = sub.add_parser("status", help="show proof status and recorded board evaluations")
+    status.add_argument("id", type=int)
+    common(status)
+    report = sub.add_parser("report", help="show a submission's measurements and decisions")
+    report.add_argument("id", type=int)
+    common(report)
+    common(sub.add_parser("boards", help="show each board's rules, reference and champion"))
+    leaderboard = sub.add_parser("leaderboard", help="show challengers against a board's champion")
+    leaderboard.add_argument("--board", default="overall", help="board name (default overall)")
+    common(leaderboard)
     args = ap.parse_args()
-    CMDS[cast(str, args.cmd)](args)
+    try:
+        CMDS[cast(str, args.cmd)](args)
+    except requests.RequestException as error:
+        sys.exit(f"API request failed: {error}")
+    except (OSError, ValueError) as error:
+        sys.exit(str(error))
 
 
 if __name__ == "__main__":

@@ -27,6 +27,11 @@ def main():
         "--reference", type=Path, default=ROOT / "kernels/exact/incumbent/Kernel.lean"
     )
     parser.add_argument(
+        "--dev-intake",
+        action="store_true",
+        help="development deployment only: also evaluate uploads the API tagged dev",
+    )
+    parser.add_argument(
         "--board", choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
     )
     args = parser.parse_args()
@@ -44,6 +49,7 @@ def main():
         "lease_seconds = 120",
         "alert_seconds = 900",
         "verification_seconds = 1800",
+        f"dev_intake = {'true' if args.dev_intake else 'false'}",
         "",
         "[timing]",
         f"rounds = {5 if args.quick else 11}",

@@ -95,7 +95,8 @@ def main():
         check=True,
     )
     expected = len(Config.load(config).boards)
-    candidate = args.candidate.read_bytes() + b"\n-- Local workflow smoke case.\n"
+    # A declaration, not a comment: intake refuses a copy of a reference up to comments.
+    candidate = args.candidate.read_bytes() + b"\ndef localWorkflowSmokeCase : Nat := 0\n"
     (out / "Kernel.lean").write_bytes(candidate)
     name = "exact_rehearsal_" + uuid.uuid4().hex[:12]
     admin = sa.create_engine(args.admin_url, isolation_level="AUTOCOMMIT")

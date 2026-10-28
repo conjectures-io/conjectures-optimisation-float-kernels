@@ -6,20 +6,27 @@ API and competition schema/grant releases must be deployed together.
 
 ## Intake
 
-One signed UTF-8 Kernel.lean, 1–256000 bytes. Keep the existing five-line signature message
-and coordinated competition slug. Validate signature age, membership, configured registration cutoff
-in the central API. Retired competitions are not queried.
+One signed UTF-8 Kernel.lean, 1–256000 bytes. Use the existing five-line signature message with competition slug `torchlean`. Validate signature
+age, current recorded membership and the configured registration cutoff in the central API.
+Retired competition databases are not queried.
 
 In one transaction:
 1. Acquire `pg_advisory_xact_lock(hashtextextended('tensor:intake',0))` (also used for board activation).
-2. Lock/select the latest registration for the hotkey, require it to be active, newer than the
-   cutoff and unused; never fall back to an older registration.
+2. Select the latest registration for the hotkey under that lock, check its current UID ownership
+   and cutoff; never fall back to an older unused one. Row-update grants on registrations are
+   not required.
 3. Insert immutable `sources(sha256,content)` with ON CONFLICT DO NOTHING.
 4. Insert `submissions(hotkey,registration_id,source_sha256,account_id)`, RETURNING id.
 
 Unique registration_id prevents a second upload regardless of proof status. Unique hotkey/source
 rejects duplicates even after re-registration. Sources verify their SHA-256 in a DB trigger.
-Use DB reception time; do not supply arbitrary IDs or dates. No entitlement_claims, slot,
+Use DB reception time; do not supply arbitrary IDs or dates.
+
+`tensor_0002` adds `submissions.intake_mode`, default `subnet`. Production uploads require a
+non-null registration ID. Explicit development uploads use `intake_mode=dev` with a null
+registration ID, enforced together by a check constraint. The central API permits this bypass
+only when `APP_MODE=DEV` and `TORCHLEAN_DEV_SKIP_REGISTRATION=1`; signatures, duplicate and request
+limits remain enforced. Never manufacture chain registrations to implement the bypass. No entitlement_claims, slot,
 submission_files or competition-side rate-limit table exists. The central API owns request limits.
 
 ## Reads
