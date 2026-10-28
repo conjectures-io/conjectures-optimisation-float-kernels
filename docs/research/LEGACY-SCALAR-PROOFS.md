@@ -154,7 +154,7 @@ banned words in separate notes rather than in the uploaded file.
 Allowed attributes are `inline`, `noinline`, `always_inline`, `specialize`,
 `simp`, `reducible`, and `irreducible`. Allowed numeric options are
 `maxHeartbeats`, `maxRecDepth`, and `synthInstance.maxHeartbeats`; see the caps and
-exact matching rules in [sandbox.py](../validator/sandbox.py). The scan is conservative and is
+exact matching rules in [sandbox.py](../../validator/sandbox.py). The scan is conservative and is
 backed by sandboxing, kernel replay, and the axiom audit.
 
 ## Gate stages

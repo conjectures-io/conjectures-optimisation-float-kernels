@@ -1,73 +1,53 @@
-# Proved tensor kernels
+# TorchLean kernel competition
 
-One submission supplies all 12 neural-network kernels and a Lean proof that they equal the pinned
-specification. The coordinator checks correctness once, then dispatches paired benchmark jobs to
-hardware workers. Five model-family boards and an overall board compare complete implementations.
-Each board pays its current and previous eligible champion using configurable allocations.
+Make CPU inference faster while proving that every output matches the pinned specification,
+bit for bit. Submit one Lean file containing all **12 kernels** and a correctness proof.
+You may improve any subset of the kernels; each submission is evaluated as a complete package.
 
-This branch replaces the former FloatLib workflow. It uses a **fresh competition database**
-with migration revision `tensor_0001`. Central API/frontend support must be updated to the
-[new schema contract](deploy/platform/CONTRACT.md) before public activation.
+Five model-family boards—MLP, ResNet, MobileNet, normalized MLP and Mixer—and an overall
+board each have their own champion. The same entry can win several boards. Rewards go to
+the current and previous eligible champion on each board, with allocations published by the API.
 
-## Local setup
+## Enter the competition
 
-```bash
-./setup.sh --service
-export PYTHONPATH=.:validator
-.venv/bin/python scripts/exact-config.py --quick --output competition.toml
-docker compose up -d db
-docker compose build migrate
-docker compose run --rm migrate
-```
-
-Use `./setup.sh --chain` to add the Bittensor SDK. Setup installs the pinned Lean packages,
-project-local bubblewrap, proof/benchmark targets and miner dependencies.
-The sandbox needs user namespaces and a working user systemd session for memory limits.
-
-For a benchmark-only host with a remote database, use `./setup.sh --benchmark-worker`.
-It builds only `VerifyExact` and `benchExact` and installs the database client and timing
-dependencies. It needs neither Docker nor PM2, miner signing libraries or Bittensor.
-Configure remote DB credentials as described in [distributed workers](docs/EXACT-WORKERS.md).
-
-For development, run `./setup.sh --dev`. This builds the full local toolset and installs
-tests, database clients, Bittensor, lint and plotting dependencies into `.venv`.
-Select `.venv/bin/python` as your IDE's Python interpreter (in VS Code:
-**Python: Select Interpreter**). For bare imports such as `db`, add `validator` to your
-language server's import paths; for VS Code/Pylance, set `python.analysis.extraPaths`
-to `["./validator"]`. Development setup does not start services or create a database.
-
-## Native macOS research
-
-Run `./setup-macos.sh --dev` to build proofs, benchmark and audit executables with test/plotting
-dependencies. It raises the process open-file limit for Mathlib extraction and preserves the
-existing submission. Use `--source kernels/exact/cached-conv/Kernel.lean` to select another source.
-The comparison runner works natively without CPU affinity and records that limitation.
-Sandboxed competition workers require Linux.
-
-## Run
+Python 3.11+ is enough to install the upload client; Lean is needed to develop and check kernels.
+From this checkout:
 
 ```bash
-pm2 start deploy/pm2.config.js --only tensor-coordinator,tensor-benchmark-worker
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements/miner.txt
+cp -r kernels/exact/incumbent my-entry
+# Edit my-entry/Kernel.lean and prove Submission.correct.
+.venv/bin/python miner/submit.py submit my-entry \
+  --hotkey ~/.bittensor/wallets/my-wallet/hotkeys/my-hotkey
+.venv/bin/python miner/submit.py status 123
 ```
 
-The config file selects boards, reference sources, hardware identities, seeds, timings, admission
-and rewards. Hardware workers use the same code on each architecture and receive immutable jobs.
-The weight setter reads the coordinator's compact publication; it defaults to dry run.
+Replace `123` with the ID printed after upload. The client uses **https://conjectures.io** and
+`/v1/competitions/torchlean`. Production uploads require an eligible, unused subnet registration
+and a valid hotkey signature. Check the competition's open state and registration cutoff before
+submitting. Each registration permits one submission; rejection still uses that registration.
 
-See [MANUAL.md](MANUAL.md) for verification, testing and operations,
-[distributed workers](docs/EXACT-WORKERS.md), [specification](docs/EXACT-CONTRACT.md),
-[mathematical proofs](docs/EXACT-PROOFS.md), and [independent audits](docs/EXACT-SPEC-AUDIT.md).
+Read the **[miner manual](MANUAL.md)** for eligibility, setup, verification, local benchmarks,
+submission tracking and errors. Start from the [shipped kernel package](kernels/exact/incumbent/Kernel.lean).
 
-## Test
+## How entries are judged
 
-```bash
-.venv/bin/pip install -r requirements/gate.txt -r requirements/test.txt # already included by --dev
-.venv/bin/pytest -q -m 'not slow'
-.venv/bin/python selftest.py
-```
+1. The gate checks the source policy, the complete correctness statement, independent Lean kernel
+   replay and permitted axioms.
+2. Candidate and champion run the same generated model workloads on each required CPU environment.
+3. Each board compares paired runtime ratios. Promotion requires the configured improvement,
+   statistical confidence and regression checks. A score below 1 means faster.
 
-Database tests create and migrate a disposable database on the configured PostgreSQL server.
-They require CREATE DATABASE and role-management privileges. Missing PostgreSQL causes skips;
-inspect the reported counts. The real proof fixtures take several minutes.
+The specification fixes rounding and exceptional values. Exact dot products round once; pooling,
+affine operations and normalization have their own pinned rounding boundaries. This is CPU
+**inference**, not training or backpropagation.
 
-See the [refactor validation report](docs/TENSOR-REFACTOR-VALIDATION.md) for test results and real worker rehearsals.
+## Documentation
+
+- [Manual](MANUAL.md): compete using the production API.
+- [Benchmarking and scoring](docs/BENCHMARKING.md): workloads, ratios and promotion.
+- [Kernel guide](docs/RUNTIME.md) and [contract](docs/CONTRACT.md): what to implement and prove.
+- [Public API](docs/API.md): board history, reports and source downloads.
+- [Operations](docs/OPERATIONS.md): run your own competition instance.
+- [Documentation index](docs/README.md): proofs, audits, workers and development tools.

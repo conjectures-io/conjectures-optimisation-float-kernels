@@ -1,156 +1,173 @@
-# Tensor competition manual
+# Miner manual
 
-## Environment
+Submit a complete kernel implementation to **https://conjectures.io**. This guide uses the
+production TorchLean API; no local database or competition services are needed to submit.
 
-Run `./setup.sh --service`; use `--chain` when running the chain watcher or weight setter.
-Setup installs miner dependencies too (`requirements/miner.txt`).
-Use `./setup.sh --benchmark-worker` on a timing host: it installs only the Python worker
-dependencies and builds `VerifyExact` and `benchExact`, with the same pinned Lean packages
-and sandbox. It does not require Docker, PM2 or chain dependencies.
-Use `./setup.sh --dev` for the full build plus all Python dependencies, including pytest,
-SQLAlchemy, the chain SDK, Ruff and plotting libraries. Select `.venv/bin/python` in your IDE.
-Activate `.venv` or call its Python explicitly. Set `PYTHONPATH=.:validator` from the project root.
-PM2 and Compose read `.env`; export its DB/config values before launching Python workers directly.
+## 1. Check eligibility
 
-Bubblewrap is installed in `.venv/bin/bwrap`. Builds and timings run without network access,
-with read-only operator code, a private writable build overlay and resource limits.
-Ubuntu AppArmor may require a profile permitting user namespaces for that executable.
-Check `./setup.sh --check` and run a real verification before enabling workers.
+You need the private hotkey file for an active registration on the competition's subnet.
+The latest registration must be strictly newer than the published cutoff and must not already
+have a submission. An older unused registration does not qualify instead. Check the live policy:
 
-## Submit a kernel implementation
+```bash
+curl -fsS https://conjectures.io/v1/competitions/torchlean
+curl -fsS https://conjectures.io/v1/competitions/torchlean/boards
+```
 
-For the client alone, install `requirements/miner.txt` in a Python virtual environment.
-No Lean installation or chain connection is needed to upload:
+A registration allows **one submission**, regardless of whether its proof passes or fails.
+If processing is interrupted, the system retries that submission; uploading another file does
+not replace it. A later eligible registration allows another submission. An identical file from
+the same hotkey is rejected as a duplicate even after re-registration, with the existing ID.
+
+## 2. Install the client
+
+Use Python 3.11 or newer. From the repository root:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements/miner.txt
-.venv/bin/python miner/submit.py submit path/to/entry \
-  --hotkey ~/.bittensor/wallets/WALLET/hotkeys/HOTKEY
+.venv/bin/python -m pip install -r requirements/miner.txt
+```
+
+This installs signing and HTTP dependencies. You do not need the Bittensor SDK just to upload.
+Use your Bittensor hotkey JSON file; the client signs locally and sends the signature, not the key.
+
+## 3. Prepare your entry
+
+```bash
+cp -r kernels/exact/incumbent my-entry
+```
+
+Edit `my-entry/Kernel.lean`. It must be a nonempty UTF-8 file of at most **256,000 bytes**,
+import only `ContractExact`, and define:
+
+```lean
+namespace Submission
+open ExactRuntime
+
+def kernels : Kernels := -- your complete set of 12 kernels
+  …
+
+theorem correct : Obligation kernels := by
+  …
+
+end Submission
+```
+
+The skeleton above is illustrative; the copied incumbent is a complete, proved starting point.
+You may change any kernels, but must prove equality with the entire pinned specification for
+all inputs. Benchmark checksums alone are insufficient. See [the kernel guide](docs/RUNTIME.md)
+for the record's fields and [proof policy](docs/PROOFS.md) for allowed source constructs.
+
+Only `Kernel.lean` is uploaded. Local notes or other files in `my-entry` are ignored.
+
+## 4. Verify locally
+
+On Linux, install the tools reported missing by `./setup.sh --check`, then run:
+
+```bash
+./setup.sh
+export PYTHONPATH=.:validator
+.venv/bin/python -m verification my-entry --verdict results/my-entry-proof.json
+```
+
+Setup installs the pinned Lean toolchain/packages, project-local sandbox and Python dependencies.
+It builds the shipped package first. The first setup may take substantially longer than later runs.
+Verification checks the same proof stages as the competition and writes a JSON verdict. Exit code
+0 means passed, 1 means rejected, and 2 means an infrastructure problem. It does not submit work.
+Linux verification needs unprivileged user namespaces and a working user systemd session for
+resource limits; see [local setup troubleshooting](docs/LOCAL-EXPERIMENTS.md).
+
+On macOS, use the native development setup:
+
+```bash
+xcode-select --install  # if Command Line Tools are not already installed
+./setup-macos.sh --source my-entry/Kernel.lean
+```
+
+Use Python 3.11+ (`PYTHON=/path/to/python3.12` selects an interpreter). This builds the Lean
+statement and native tools. For the full sandboxed gate and kernel replay, use Linux.
+
+## 5. Benchmark locally
+
+After setup, build your entry and run the model suite:
+
+```bash
+cp my-entry/Kernel.lean lean/work/Submission.lean
+(cd lean && ~/.elan/bin/lake build VerifyExact benchExact)
+BENCH_INNER=3 BENCH_WORKLOADS=s0:42:typical lean/.lake/build/bin/benchExact
+```
+
+Each output row contains a workload/cell name, success flag, elapsed nanoseconds and checksum.
+This is a quick local measurement, not an official score: it has no reference calibration or
+paired statistical decision. To inspect layer costs:
+
+```bash
+(cd lean && ~/.elan/bin/lake build exactDev)
+lean/.lake/build/bin/exactDev profile cnn
+```
+
+Other profile names are `mlp`, `mnet`, `nmlp` and `mixer`. See
+[benchmarking](docs/BENCHMARKING.md) and [local experiments](docs/LOCAL-EXPERIMENTS.md)
+for interpretation and repeatable comparisons. Avoid concurrent builds or other CPU-heavy work.
+
+## 6. Submit
+
+```bash
+.venv/bin/python miner/submit.py submit my-entry \
+  --hotkey ~/.bittensor/wallets/my-wallet/hotkeys/my-hotkey
+```
+
+Replace the example wallet/key names with yours. The client hashes the file, signs the TorchLean
+upload message and prints the submission ID. Keep your system clock synchronized; signatures
+have a limited validity window. `--url` overrides the API origin when using your own instance.
+
+A successful upload means **queued**, not verified or promoted. Keep your submitted source and ID.
+
+## 7. Follow the result
+
+```bash
 .venv/bin/python miner/submit.py status 123
+.venv/bin/python miner/submit.py report 123
+.venv/bin/python miner/submit.py boards
+.venv/bin/python miner/submit.py leaderboard --board mobilenet
 ```
 
-The entry directory must contain one nonempty UTF-8 `Kernel.lean` (at most 256000 bytes).
-The client signs the file for `torchlean`, uploads it to the central API, and prints its ID.
-The default API origin is `https://conjectures.io`. Use `--url` on either command to select dev:
+`boards` lists each board's rules and champion; `leaderboard` defaults to `overall`. These read
+only public fields: a current champion's source stays private.
 
-```bash
-.venv/bin/python miner/submit.py submit kernels/exact/incumbent \
-  --hotkey //Alice --url http://127.0.0.1:8000
-.venv/bin/python miner/submit.py status 123 --url http://127.0.0.1:8000
-```
+Boards are `overall`, `mlp`, `resnet`, `mobilenet`, `normalized_mlp` and `mixer`.
+Processing states include `queued`, `proving`, `waiting`, `benchmarking`, `completed`, `rejected`
+and `disqualified`. Completion means decisions are available; it does not mean a takeover.
+Each family can finish at a different time. Reports contain per-device measurements and decisions.
 
-`//Alice` is a public test identity. Dev uploads use the normal signed format; the dev API
-must enable `TORCHLEAN_DEV_SKIP_REGISTRATION=1` with `APP_MODE=DEV` to accept unregistered
-identities, and that deployment's coordinator config needs `dev_intake = true`
-(`scripts/exact-config.py --dev-intake`); production never evaluates dev uploads. There is no
-client flag to bypass registration. Duplicate uploads are still refused, and so is a copy of an
-earlier entry or of a board's initial reference up to comments and whitespace.
+A ratio of `0.95` means 5% less runtime than that board's reference. Promotion also requires the
+published confidence and regression checks; see [scoring](docs/BENCHMARKING.md). Reward shares
+are configurable: use the live board/champion responses rather than assuming a fixed payout split.
 
-Status returns the proof state and recorded board evaluations. A proved submission may still
-be waiting for benchmarks; it does not by itself mean promotion. `report ID` adds the timings
-per environment and seed, `boards` each board's rules and champion, and
-`leaderboard --board NAME` the challengers against that board's champion (default `overall`).
-All of them read the public API; a current champion's source stays private.
-These commands require the TorchLean API changes to be deployed and intake enabled.
+## Common errors
 
-## Fresh database
+Errors use `{type, title, status, detail, reason_code}`. The CLI prints the reason and message.
 
-Configure the PostgreSQL values in `.env`, then:
+| Reason | Action |
+|---|---|
+| `NOT_REGISTERED` | Check the hotkey and active subnet registration. |
+| `REGISTRATION_BEFORE_CUTOFF` | The latest registration is too old for this competition. |
+| `NO_ENTITLEMENT` | That registration already has a submission; inspect its existing result. |
+| `DUPLICATE_SUBMISSION` | Use the existing submission ID returned with the error. |
+| `SIGNATURE_EXPIRED` | Synchronize your clock and retry the request. |
+| `SUBMISSIONS_CLOSED` | Intake is closed; check the competition's published state. |
+| `RATE_LIMITED` | Wait before retrying. |
+| `COMPETITION_SCHEMA_UNAVAILABLE` | The service is unavailable; retry later. |
 
-```bash
-docker compose up -d db
-docker compose build migrate
-docker compose run --rm migrate
-```
+An upload identical to an earlier entry or to a board's initial reference up to comments and
+whitespace is accepted but then rejected before the proof, at stage `intake`. Status shows which
+entry it copies.
 
-The initial revision is `tensor_0001`. This schema replaces the old competition schema;
-use a new database. Subsequent deployed changes should use incremental migrations.
-Host workers use the published loopback port; containers on the database's Docker network use
-`conjectures_tensor_db:5432`.
+Development APIs can accept unregistered test identities such as `//Alice` (with
+`TORCHLEAN_DEV_SKIP_REGISTRATION=1` and a coordinator config with `dev_intake = true`, from
+`scripts/exact-config.py --dev-intake`). Production never evaluates such uploads, and the client
+has no flag to bypass registration.
 
-The central API requires coordinated changes described in
-[the DB contract](deploy/platform/CONTRACT.md).
-Apply its grants using `deploy/platform/grant.sh` after loading the relevant environment values.
-
-## Coordinator configuration
-
-```bash
-.venv/bin/python scripts/exact-config.py --quick --output competition.toml
-```
-
-Quick mode is a workflow check: five rounds and 2 ms cells. It is not production calibration.
-Without `--quick`, the generator uses 25 rounds, 100 ms cells and one fresh seed.
-Review model, hardware and reward allocations and initial reference hashes.
-
-`COMPETITION_CONFIG` names this TOML file. The coordinator owns configuration.
-It stores resolved immutable plans in the DB; workers do not load the config file.
-A new board starts with uploads received after activation. Removing/re-adding a board establishes
-a new intake boundary. Changing an active board replans its pending challenger in original order.
-Fresh seeds remain fixed across retries of that challenger.
-
-## Processes
-
-```bash
-pm2 start deploy/pm2.config.js --only tensor-coordinator,tensor-benchmark-worker
-pm2 start deploy/pm2.config.js --only tensor-chain-watcher
-```
-
-Only one coordinator leads. Multiple benchmark workers can run on different hosts using the same
-code and an environment name matching the coordinator config. Each host serializes timings.
-Configure an execute-only DB role with `deploy/platform/benchmark_worker.sql`.
-Architecture-local builds are cached by source, benchmark identity and machine identity.
-
-Proof failures reject an entry. Infrastructure failures retry the same entry and retain its spent
-registration. Reference/checksum failures pause the affected comparison; other boards can proceed.
-The reward pause policy either preserves the existing ranks or directs that board's share to treasury.
-No automatic demotion occurs.
-
-For operator disqualification while the coordinator is stopped:
-
-```bash
-.venv/bin/python -m tools.boards --config competition.toml disqualify 12 --reason 'audit failure'
-```
-
-A trial verification writes a report and does not change DB eligibility or rewards:
-
-```bash
-.venv/bin/python -m verification my-entry --verdict results/trial.json
-```
-
-## Weight setter
-
-After checking the publication and stopping any other setter for the same validator wallet:
-
-```bash
-pm2 start deploy/pm2.config.js --only tensor-weight-setter
-```
-
-Keep `WEIGHT_DRY_RUN=1` for rehearsal. Set `WEIGHT_DRY_RUN=0` only for the actual cutover.
-Reload the PM2 config with `--update-env` after edits. Save the final process list with `pm2 save`.
-Idle chain polls write no rows; real and explicit dry-run attempts record their compact reward inputs.
-
-## Tests and audits
-
-```bash
-.venv/bin/pytest -q -m 'not slow' -rs
-.venv/bin/python selftest.py
-.venv/bin/python scripts/check-exact-proofs.py --replay
-.venv/bin/python scripts/audit-exact-spec.py --native --edge-cases --cases-per-kernel 200
-.venv/bin/python scripts/audit-exact-models.py --random-seeds 4
-```
-
-Run workspace-mutating Lean tests sequentially. A real disposable-DB worker rehearsal:
-
-```bash
-.venv/bin/python scripts/test-exact-workflow.py \
-  --admin-url postgresql+psycopg://USER:PASSWORD@127.0.0.1:PORT/postgres \
-  --output data/tensor-rehearsal --minutes 15
-```
-
-It creates/drops its own database, proves a source, runs every required job and saves raw timings,
-decisions and a computed vector. It makes no chain calls.
-
-The miner CLI keeps the signed-message protocol and `https://conjectures.io` default.
-Public tensor uploads and board reads require the coordinated central API rollout.
-API errors use problem bodies with `type`, `title`, `status`, `detail`, `reason_code`.
+Public sources are available only for former champions whose code no longer holds any board.
+Queued, rejected, never-champion and currently winning sources are withheld.
+For integration details and history queries, see [the public API](docs/API.md).

@@ -1,7 +1,8 @@
-# Central API contract for the replacement tensor schema
+# Central API database contract
 
-This repository does not implement the central API. Updating conjectures-validator and its
-frontend is a separate coordinated rollout; old FloatLib SQL cannot target this schema.
+The HTTP API is implemented in `conjectures-validator`; this repository owns the competition
+schema and workers. The public slug and signed-message competition are `torchlean`.
+API and competition schema/grant releases must be deployed together.
 
 ## Intake
 
@@ -48,3 +49,12 @@ to treasury. Supersession preserves history; operator disqualification excludes 
 
 Apply platform_api.sql to reset privileges. The API can insert source/intake fields, read evidence,
 and read publication fields. It cannot forge proofs, benchmark outcomes, promotions or leadership.
+
+## Central API compatibility
+
+The central TorchLean API also supports explicit development intake: `intake_mode=dev` with a
+null registration ID, no fabricated chain registration. Production rows use `intake_mode=subnet`.
+Its read routes require coordinator public configuration/board hashes and source restrictions.
+The `tensor_0001` schema and grants in this checkout do not yet supply all of those fields/reads;
+merge and apply the companion intake migration and API grants before enabling that API release.
+The central API owns its own rate-limit migrations; it never migrates the competition database.

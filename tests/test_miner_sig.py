@@ -57,7 +57,7 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsy
     submit = load("miner_submit", REPO / "miner" / "submit.py")
     d = tmp_path / "k"
     d.mkdir()
-    (d / "Kernel.lean").write_bytes(b"import Contract\n")
+    (d / "Kernel.lean").write_bytes(b"import ContractExact\n")
     sent: dict = {}
 
     class Reply:
@@ -70,6 +70,7 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsy
                 "submission": 1,
                 "proof_state": "queued",
                 "source_sha256": "0" * 64,
+                "status_url": "/v1/competitions/torchlean/submissions/1",
                 "intake_mode": intake_mode,
             }
 
@@ -89,7 +90,7 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsy
     h = sent["headers"]
     message = service_sig.submit_message(
         competition="torchlean",
-        digest=service_sig.digest_of(b"import Contract\n"),
+        digest=service_sig.digest_of(b"import ContractExact\n"),
         hotkey=h["X-Conjectures-Hotkey"],
         timestamp=int(h["X-Conjectures-Timestamp"]),
     )
