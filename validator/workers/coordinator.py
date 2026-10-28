@@ -25,6 +25,7 @@ from sqlalchemy import text
 
 import db
 import fingerprint
+from axiom import get_events, observe_worker
 from db.evaluations import EvaluationsDb
 
 
@@ -126,15 +127,27 @@ def verify(repo, sub, config, stop):
                 verdict["exit_code"],
                 verdict.get("stage"),
             )
-            repo.finish_proof(
+            saved = repo.finish_proof(
                 sub.id,
                 sub.token,
                 config.proof_identity,
                 verdict,
                 config.retry_seconds,
             )
+            event = "proof_error" if verdict["exit_code"] == 2 else "proof_completed"
+            if saved:
+                get_events().emit(
+                    "error" if verdict["exit_code"] == 2 else "info",
+                    event,
+                    submission_id=sub.id,
+                    source_hash=sub.source_sha256,
+                    exit_code=verdict["exit_code"],
+                    stage=verdict.get("stage"),
+                    reason=str(verdict.get("reason", ""))[:2000],
+                )
 
 
+@observe_worker("torchlean-coordinator")
 def main():
     install_signals()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -148,6 +161,9 @@ def main():
     if args.config is None:
         parser.error("set COMPETITION_CONFIG or --config")
     config = Config.load(args.config)
+    get_events().bind(
+        proof_identity=config.proof_identity, benchmark_identity=config.benchmark_identity
+    )
     if (
         config.proof_identity != fingerprint.proof()
         or config.benchmark_identity != fingerprint.benchmark()
@@ -188,6 +204,9 @@ def main():
                     finalized = repo.aggregate(config)
                     if planned or finalized:
                         logger.info("[coordinator] planned={} finalized={}", planned, finalized)
+                        get_events().info(
+                            "evaluation_progress", planned=planned, finalized=finalized
+                        )
                     repo.publish(config)
                     if args.once:
                         break
@@ -204,6 +223,7 @@ def main():
                     if time.monotonic() >= next_alert:
                         for alert in repo.alerts(config.alert_seconds):
                             logger.warning("exact benchmark waiting: {}", alert)
+                            get_events().warning("benchmark_waiting", **alert)
                         next_alert = time.monotonic() + min(config.alert_seconds, 60)
                     time.sleep(2)
             finally:

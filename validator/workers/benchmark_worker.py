@@ -19,11 +19,34 @@ from timing import supervisor_seconds
 from worker_credentials import load
 
 import db
+from axiom import get_events, observe_worker
 from db.jobs import WorkerDb
 
 
 def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
     lease = job.lease_seconds
+    started = time.monotonic()
+    fields = {"job_id": job.id, "worker_id": owner}
+    events = get_events()
+    events.info("benchmark_claimed", **fields)
+
+    def fail(error):
+        if repo.fail(job.id, owner, job.token, error):
+            kind = error.get("kind")
+            severity = (
+                "warning" if kind == "candidate" else "critical" if kind == "checksum" else "error"
+            )
+            events.emit(
+                severity,
+                "benchmark_failed",
+                **fields,
+                kind=kind,
+                reason=str(error.get("reason", ""))[:2000],
+                seconds=time.monotonic() - started,
+            )
+        else:
+            events.warning("benchmark_result_discarded", **fields, reason="lease lost")
+
     with tempfile.TemporaryDirectory(prefix="exact-job-") as tmp:
         path = Path(tmp)
         try:
@@ -54,22 +77,21 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
             )
             result = json.loads((path / "result.json").read_text())
             if "error" in result:
-                repo.fail(job.id, owner, job.token, result["error"])
+                fail(result["error"])
             else:
-                repo.complete(job.id, owner, job.token, result["result"])
+                if repo.complete(job.id, owner, job.token, result["result"]):
+                    events.info("benchmark_completed", **fields, seconds=time.monotonic() - started)
+                else:
+                    events.warning("benchmark_result_discarded", **fields, reason="lease lost")
         except BudgetExceeded as exc:
             logger.warning("benchmark job {} ran out of time: {}", job.id, exc)
-            repo.fail(
-                job.id,
-                owner,
-                job.token,
-                {"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"},
-            )
+            fail({"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"})
         except Exception as exc:
             logger.warning("exact job {} failed: {}", job.id, exc)
-            repo.fail(job.id, owner, job.token, {"kind": "infrastructure", "reason": str(exc)})
+            fail({"kind": "infrastructure", "reason": str(exc)})
 
 
+@observe_worker("torchlean-benchmark-worker")
 def main():
     install_signals()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -87,6 +109,7 @@ def main():
     args.environment = args.environment or os.environ.get("BENCHMARK_ENVIRONMENT")
     if not args.environment:
         parser.error("--environment or BENCHMARK_ENVIRONMENT is required")
+    get_events().bind(benchmark_environment=args.environment)
     owner = f"{socket.gethostname()}:{__import__('os').getpid()}"
     store = db.connect()
     repo = WorkerDb(store.sessions)

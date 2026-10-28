@@ -1,14 +1,14 @@
 """Structured events to Axiom, in the conjectures platform's envelope, never in the way.
 
 The platform (conjectures-validator, `conjectures_subnet/axiom`) ships its events to one Axiom
-dataset, and this competition's four processes ship theirs to the same one, so a dashboard can
+dataset, and this competition's workers ship theirs to the same one, so a dashboard can
 read both. That only works if every record has the platform's shape exactly:
 
     {**details, "_time": <ISO-8601 UTC, stamped at emit>, "severity": debug|info|warning|error|
      critical, "source": <process>, "event_type": <what happened>, "environ": AXIOM_ENVIRON}
 
 with the envelope written last, so a details key named `source` cannot displace the label every
-query filters on. Every event here also carries `competition: "floatlib"` and, in the two
+query filters on. Every event here also carries `competition: "torchlean"` and, in the two
 chain processes, `netuid` and `network`.
 
 Environment (the platform's names and meanings):
@@ -31,11 +31,13 @@ stdlib-logging records at ERROR and above (event_type `log_error`) and uncaught 
 from __future__ import annotations
 
 import atexit
+import functools
 import gzip
 import json
 import logging
 import os
 import queue
+import socket
 import sys
 import threading
 import traceback
@@ -54,24 +56,30 @@ if TYPE_CHECKING:
 
 AXIOM_API_URL: Final = "https://api.axiom.co"
 DEFAULT_ENVIRON: Final = "default"
-COMPETITION: Final = "floatlib"
+COMPETITION: Final = "torchlean"
 
 # The platform's `Severity` values, verbatim: one ladder whichever side emitted the event.
 Severity: TypeAlias = Literal["debug", "info", "warning", "error", "critical"]
 SEVERITIES: Final[tuple[Severity, ...]] = ("debug", "info", "warning", "error", "critical")
 
-# One per process: deploy/pm2.config.js runs exactly these four.
+# Process sources, shared by explicit events and the error-log bridge.
 Source: TypeAlias = Literal[
     "competition-submission-api",
     "competition-gate-worker",
     "competition-chain-watcher",
     "competition-weight-setter",
+    "torchlean-coordinator",
+    "torchlean-benchmark-worker",
+    "torchlean-audit-worker",
 ]
 SOURCES: Final[tuple[Source, ...]] = (
     "competition-submission-api",
     "competition-gate-worker",
     "competition-chain-watcher",
     "competition-weight-setter",
+    "torchlean-coordinator",
+    "torchlean-benchmark-worker",
+    "torchlean-audit-worker",
 )
 
 # The closed vocabulary of what happened, each one a new thing a dashboard can be built on.
@@ -92,6 +100,22 @@ EventType: TypeAlias = Literal[
     "weights_skipped",
     "weights_failed",
     "log_error",
+    "service_heartbeat",
+    "service_failed",
+    "audit_started",
+    "audit_clean",
+    "audit_failed",
+    "audit_error",
+    "audit_result_discarded",
+    "audit_waiting",
+    "benchmark_claimed",
+    "benchmark_completed",
+    "benchmark_failed",
+    "benchmark_result_discarded",
+    "benchmark_waiting",
+    "proof_completed",
+    "proof_error",
+    "evaluation_progress",
 ]
 
 Details: TypeAlias = dict[str, object]
@@ -103,7 +127,8 @@ BATCH_EVENTS: Final = 100
 FLUSH_SECONDS: Final = 2.0
 TIMEOUT_SECONDS: Final = 10.0
 SHUTDOWN_SECONDS: Final = 5.0
-USER_AGENT: Final = "conjectures-floatlib-axiom/1"
+USER_AGENT: Final = "conjectures-torchlean-axiom/1"
+HEARTBEAT_SECONDS: Final = 60.0
 
 # A failed ingest is reported through loguru at WARNING: below the bridge's ERROR floor, so a
 # dead Axiom can never enqueue events about failing to enqueue events.
@@ -428,6 +453,8 @@ def _loguru_sink(message: Message) -> None:
     # Nothing here may raise, or log at ERROR and above.
     try:
         record = message.record
+        if record["extra"].get("axiom_event"):
+            return  # the call site already emitted a structured outcome
         exception = record["exception"]
         fields: Details = {
             "message": str(record["message"]),
@@ -530,6 +557,53 @@ def config_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"[:2000]
 
 
+def observe_worker(source: Source):
+    """Initialize telemetry before startup, report liveness even during a long job, flush on exit.
+
+    The heartbeat has no DB access and never decides work or leases. Notifications belong to
+    Axiom monitors, not the worker. Without ingestion credentials no heartbeat thread is started.
+    """
+
+    def decorate(main):
+        @functools.wraps(main)
+        def run(*args, **kwargs):
+            events = init(source, host=socket.gethostname(), pid=os.getpid())
+            stop = threading.Event()
+
+            def heartbeat():
+                while not stop.wait(HEARTBEAT_SECONDS):
+                    events.info("service_heartbeat")
+
+            thread = threading.Thread(target=heartbeat, name="axiom-heartbeat", daemon=True)
+            events.info("service_started")
+            events.info("service_heartbeat")
+            if events.enabled:
+                thread.start()
+            outcome = "stopped"
+            try:
+                return main(*args, **kwargs)
+            except KeyboardInterrupt:
+                outcome = "interrupted"
+                raise
+            except BaseException as exc:
+                if not isinstance(exc, SystemExit) or exc.code not in (None, 0):
+                    outcome = "failed"
+                    events.error(
+                        "service_failed", error_type=type(exc).__name__, reason=config_error(exc)
+                    )
+                raise
+            finally:
+                stop.set()
+                if thread.is_alive():
+                    thread.join(timeout=1)
+                events.info("service_stopped", outcome=outcome)
+                events.close()
+
+        return run
+
+    return decorate
+
+
 __all__ = [
     "AXIOM_API_URL",
     "COMPETITION",
@@ -548,5 +622,6 @@ __all__ = [
     "encode",
     "get_events",
     "init",
+    "observe_worker",
     "reset",
 ]

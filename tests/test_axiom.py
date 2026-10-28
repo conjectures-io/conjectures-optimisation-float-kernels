@@ -87,7 +87,7 @@ def test_the_envelope_is_the_platforms_and_is_written_last():
     assert ENVELOPE <= set(first)
     assert first["source"] == "competition-gate-worker"  # a details key cannot displace it
     assert first["severity"] == "warning" and first["event_type"] == "gate_verdict"
-    assert first["environ"] == "dev" and first["competition"] == "floatlib"
+    assert first["environ"] == "dev" and first["competition"] == "torchlean"
     assert first["netuid"] == 577 and first["submission_id"] == 7
     stamped = dt.datetime.fromisoformat(str(first["_time"]))
     assert stamped.utcoffset() == dt.timedelta(0)
