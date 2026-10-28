@@ -191,7 +191,7 @@ class EvaluationsDb:
                         "candidate_hash": sub.source_sha256,
                         "reference_hash": refhash,
                         "cells": sorted(plan["cells"]),
-                        "timing": plan["timing"],
+                        "timing": st.get("timing", plan["timing"]),
                         "benchmark_identity": plan["benchmark_identity"],
                         "workloads": workloads(st["seed"]),
                     }

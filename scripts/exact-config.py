@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import platform
 import sys
 from pathlib import Path
 
@@ -56,8 +57,7 @@ def main():
         "inner = 3",
         f"cell_ms = {2 if args.quick else 50}",
         "run_seconds = 300",
-        "build_seconds = 960",
-        "benchmark_seconds = 1200",
+        "# Build and measurement limits default by architecture and model count.",
         "",
         "[admission]",
         "bar = 0.97",
@@ -69,6 +69,7 @@ def main():
         f"[environments.{args.environment}]",
         "weight = 1.0",
         f"identity = {machine_identity()!r}",
+        f"architecture = {platform.machine()!r}",
         "",
         "[rewards]",
         "rank_shares = [0.8, 0.2]",

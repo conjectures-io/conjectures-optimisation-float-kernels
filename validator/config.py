@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from multiseed import workloads
-from timing import validate_timing
+from timing import DEFAULT_TIMING, build_defaults, validate_timing
 
 MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
@@ -133,6 +133,11 @@ class Config:
         if set(raw) - allowed:
             raise ValueError(f"unknown configuration keys: {set(raw) - allowed}")
         data = copy.deepcopy(raw)
+        timing_overrides = data.get("timing", {})
+        data["timing"] = DEFAULT_TIMING | timing_overrides
+        if "cached_build_seconds" not in timing_overrides:
+            data["timing"]["cached_build_seconds"] = min(180, data["timing"]["build_seconds"])
+        validate_timing(data["timing"])
         data["proof_identity"] = sha(data["proof_identity"])
         data["benchmark_identity"] = sha(data["benchmark_identity"])
         seeds = data.get("seeds", ())
@@ -154,16 +159,36 @@ class Config:
         envs = data["environments"]
         weights({k: v["weight"] for k, v in envs.items()}, "environments")
         for name, env in envs.items():
-            if set(env) != {"weight", "identity"}:
-                raise ValueError(f"{name}: environment requires weight and identity only")
+            if not {"weight", "identity"} <= env.keys() or set(env) - {
+                "weight",
+                "identity",
+                "architecture",
+                "timing",
+            }:
+                raise ValueError(f"{name}: invalid environment settings")
             sha(env["identity"])
+            overrides = {
+                k: timing_overrides[k]
+                for k in ("build_seconds", "cached_build_seconds")
+                if k in timing_overrides
+            }
+            local = env.get("timing", {})
+            if set(local) - {"build_seconds", "cached_build_seconds"}:
+                raise ValueError("environment timing overrides may only change build limits")
+            limits = build_defaults(env.get("architecture", "arm64")) | overrides | local
+            if "cached_build_seconds" not in overrides and "cached_build_seconds" not in local:
+                limits["cached_build_seconds"] = min(
+                    limits["cached_build_seconds"], limits["build_seconds"]
+                )
+            validate_timing(data["timing"] | limits)
+            env["timing"] = limits
         boards = data["boards"]
         if not boards:
             raise ValueError("at least one board required")
         for name, board in boards.items():
             if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
                 raise ValueError("invalid board key")
-            if set(board) - {"models", "reference", "environments"} or not {
+            if set(board) - {"models", "reference", "environments", "timing"} or not {
                 "models",
                 "reference",
             } <= set(board):
@@ -171,6 +196,22 @@ class Config:
             model_weights = weights(board["models"], "models")
             if set(model_weights) - set(MODELS):
                 raise ValueError("unknown workload model")
+            local = board.get("timing", {})
+            if set(local) - {"benchmark_seconds", "run_seconds"}:
+                raise ValueError("board timing overrides may only change measurement limits")
+            board["timing"] = (
+                {
+                    "benchmark_seconds": 360 if len(model_weights) == 1 else 1200,
+                    "run_seconds": data["timing"]["run_seconds"],
+                }
+                | {
+                    k: timing_overrides[k]
+                    for k in ("benchmark_seconds", "run_seconds")
+                    if k in timing_overrides
+                }
+                | local
+            )
+            validate_timing(data["timing"] | board["timing"])
             if "environments" in board:
                 override = weights(board["environments"], "board environments")
                 if set(override) - envs.keys():
@@ -223,6 +264,7 @@ class Config:
 
     def plan(self, board: str) -> dict:
         models = weights(self.boards[board]["models"], "models")
+        timing = self.timing | self.boards[board]["timing"]
         cells = {
             f"{m}:b{b}:{kind}": weight / 6
             for m, weight in models.items()
@@ -244,6 +286,10 @@ class Config:
             if weight > 0
             for seed in (self.seeds if self.seed_mode == "fixed" else range(self.seed_count))
         ]
+        for st in strata:
+            resolved = timing | self.environments[st["environment"]]["timing"]
+            if resolved != timing:
+                st["timing"] = resolved
         return {
             "version": VERSION,
             "workload_policy": "six-workloads-50-30-20-v1",
@@ -252,7 +298,7 @@ class Config:
             "seed_mode": self.seed_mode,
             "cells": cells,
             "strata": strata,
-            "timing": self.timing,
+            "timing": timing,
             "admission": self.admission,
             "proof_identity": self.proof_identity,
             "benchmark_identity": self.benchmark_identity,

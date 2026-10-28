@@ -12,7 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from benchmark import machine_identity
+from benchmark import machine_identity, preparation_mode
 from loguru import logger
 from process import ROOT, BudgetExceeded, install_signals, supervised
 from timing import supervisor_seconds
@@ -54,6 +54,7 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
             (path / "candidate").write_bytes(candidate)
             (path / "reference").write_bytes(reference)
             (path / "request.json").write_text(json.dumps(job.request))
+            mode = preparation_mode(job.request)
             supervised(
                 [
                     sys.executable,
@@ -67,9 +68,11 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
                     str(path / "reference"),
                     "--result",
                     str(path / "result.json"),
+                    "--preparation-mode",
+                    mode,
                 ],
                 lambda: repo.heartbeat(job.id, owner, job.token),
-                supervisor_seconds(job.request["timing"]),
+                supervisor_seconds(job.request["timing"], mode),
                 lease / 3,
                 path / "process.log",
                 pass_fds=tuple(fd for fd in (host_lock_fd, checkout_lock_fd) if fd is not None),

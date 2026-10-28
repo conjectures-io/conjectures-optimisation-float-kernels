@@ -91,7 +91,10 @@ def assess(plan, measurements):
         st = expected[key]
         if request["identity"] != st["identity"] or set(request["cells"]) != set(plan["cells"]):
             raise ValueError("incompatible stratum")
-        if any(request[k] != plan[k] for k in ("timing", "benchmark_identity")):
+        if (
+            request["timing"] != st.get("timing", plan["timing"])
+            or request["benchmark_identity"] != plan["benchmark_identity"]
+        ):
             raise ValueError("incompatible measurement policy")
         validate_result(request, result, plan["cells"])
         groups = []
