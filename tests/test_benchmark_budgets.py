@@ -41,6 +41,9 @@ def timing(**extra):
 def measurement(tmp_path, monkeypatch, clock):
     monkeypatch.setattr(sandbox, "HERE", tmp_path)
     monkeypatch.setattr(sandbox, "WORK", tmp_path / "Submission.lean")
+    config = tmp_path / "lake-config"
+    config.mkdir()
+    monkeypatch.setattr(sandbox, "CONFIG", config)
     sandbox.WORK.write_bytes(b"operator source")
     monkeypatch.setattr(sandbox, "check_limits", lambda: None)
     monkeypatch.setattr(benchmark, "machine_identity", lambda: "a" * 64)
