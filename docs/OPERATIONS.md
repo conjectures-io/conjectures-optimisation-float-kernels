@@ -129,6 +129,10 @@ Without them nothing is sent. ERROR logs and uncaught exceptions arrive as `log_
 | `competition-chain-watcher` | `registrations_recorded`, `chain_read_failed` |
 | `competition-weight-setter` | `weights_planned`/`weights_set`/`weights_skipped`/`weights_failed` |
 
-Each has `service_started`, `service_stopped` (with `reason`) and `service_misconfigured`.
+Each has `service_started`, `service_stopped` and `service_misconfigured`.
+The coordinator, benchmark worker and auditor also send heartbeats and `service_failed` on
+abnormal exit; their stop event records `outcome`. Other entry points record a stop `reason`.
 Warnings mark the miner's failures (a rejected proof, a crashing candidate); errors mark ours.
-The champion auditor sends nothing: its source file is part of its audit identity.
+The `torchlean-audit-worker` source reports audit outcomes and backlog warnings. Instrumenting
+its source changes its audit identity, so deployment backfills historical champions. See
+[Axiom monitoring](AXIOM-MONITORING.md) for event severities and monitor setup.

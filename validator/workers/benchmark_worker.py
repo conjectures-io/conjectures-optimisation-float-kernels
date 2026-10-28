@@ -19,7 +19,7 @@ from timing import supervisor_seconds
 from worker_credentials import load
 
 import db
-from axiom import get_events, init
+from axiom import get_events, observe_worker
 from db.jobs import WorkerDb
 
 
@@ -46,7 +46,28 @@ def report(job, error, seconds):
 def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
     lease = job.lease_seconds
     started = time.monotonic()
-    error = None
+    fields = {"job_id": job.id, "worker_id": owner}
+    events = get_events()
+    events.info("benchmark_claimed", **fields)
+
+    def fail(error):
+        if repo.fail(job.id, owner, job.token, error):
+            report(job, error, time.monotonic() - started)
+            kind = error.get("kind")
+            severity = (
+                "warning" if kind == "candidate" else "critical" if kind == "checksum" else "error"
+            )
+            events.emit(
+                severity,
+                "benchmark_failed",
+                **fields,
+                kind=kind,
+                reason=str(error.get("reason", ""))[:2000],
+                seconds=time.monotonic() - started,
+            )
+        else:
+            events.warning("benchmark_result_discarded", **fields, reason="lease lost")
+
     with tempfile.TemporaryDirectory(prefix="exact-job-") as tmp:
         path = Path(tmp)
         try:
@@ -77,21 +98,22 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
             )
             result = json.loads((path / "result.json").read_text())
             if "error" in result:
-                error = result["error"]
-                repo.fail(job.id, owner, job.token, error)
+                fail(result["error"])
             else:
-                repo.complete(job.id, owner, job.token, result["result"])
+                if repo.complete(job.id, owner, job.token, result["result"]):
+                    report(job, None, time.monotonic() - started)
+                    events.info("benchmark_completed", **fields, seconds=time.monotonic() - started)
+                else:
+                    events.warning("benchmark_result_discarded", **fields, reason="lease lost")
         except BudgetExceeded as exc:
             logger.warning("benchmark job {} ran out of time: {}", job.id, exc)
-            error = {"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"}
-            repo.fail(job.id, owner, job.token, error)
+            fail({"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"})
         except Exception as exc:
             logger.warning("exact job {} failed: {}", job.id, exc)
-            error = {"kind": "infrastructure", "reason": str(exc)}
-            repo.fail(job.id, owner, job.token, error)
-    report(job, error, time.monotonic() - started)
+            fail({"kind": "infrastructure", "reason": str(exc)})
 
 
+@observe_worker("competition-benchmark-worker")
 def main():
     install_signals()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -102,7 +124,6 @@ def main():
     )
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
-    events = init("competition-benchmark-worker")
     from sandbox import require_backend
 
     require_backend()
@@ -110,14 +131,12 @@ def main():
     args.environment = args.environment or os.environ.get("BENCHMARK_ENVIRONMENT")
     if not args.environment:
         message = "--environment or BENCHMARK_ENVIRONMENT is required"
-        events.error("service_misconfigured", error=message)
+        get_events().error("service_misconfigured", error=message)
         parser.error(message)
+    get_events().bind(benchmark_environment=args.environment)
     owner = f"{socket.gethostname()}:{__import__('os').getpid()}"
-    events.bind(environment=args.environment, worker=owner)
-    events.info("service_started", once=args.once)
     store = db.connect()
     repo = WorkerDb(store.sessions)
-    reason = "crashed"
     try:
         while True:
             # Lock before claiming so a job does not wait behind another timing process on a lease.
@@ -128,14 +147,9 @@ def main():
                 if job:
                     execute(repo, job, owner, lock.fileno(), build_lock.fileno())
             if args.once:
-                reason = "once"
                 return
             time.sleep(2)
-    except KeyboardInterrupt:
-        reason = "interrupted"
-        raise
     finally:
-        events.info("service_stopped", reason=reason)
         store.close()
 
 

@@ -50,4 +50,5 @@ affine operations and normalization have their own pinned rounding boundaries. T
 - [Kernel guide](docs/RUNTIME.md) and [contract](docs/CONTRACT.md): what to implement and prove.
 - [Public API](docs/API.md): board history, reports and source downloads.
 - [Operations](docs/OPERATIONS.md): run your own competition instance.
+- [Axiom monitoring](docs/AXIOM-MONITORING.md): worker events, heartbeat alerts and webhook notifications.
 - [Documentation index](docs/README.md): proofs, audits, workers and development tools.

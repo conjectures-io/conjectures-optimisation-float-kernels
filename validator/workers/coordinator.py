@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 import db
 import fingerprint
-from axiom import config_error, get_events, init
+from axiom import config_error, get_events, observe_worker
 from db.evaluations import EvaluationsDb
 
 
@@ -182,6 +182,7 @@ def report_publication(publication, previous):
             events.info("board_resumed", board=board)
 
 
+@observe_worker("competition-coordinator")
 def main():
     install_signals()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -192,7 +193,7 @@ def main():
         help="reconcile, plan and aggregate once; no proof subprocess",
     )
     args = parser.parse_args()
-    events = init("competition-coordinator")
+    events = get_events()
 
     def refuse(message):
         events.error("service_misconfigured", error=message)
@@ -217,14 +218,12 @@ def main():
         ):
             refuse("initial reference hash mismatch")
     events.bind(proof_identity=config.proof_identity, benchmark_identity=config.benchmark_identity)
-    events.info("service_started", boards=sorted(config.boards), once=args.once)
     store = db.connect()
     repo = EvaluationsDb(store.sessions)
     stop = threading.Event()
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = None
     owner = f"{socket.gethostname()}:{os.getpid()}"
-    reason = "crashed"
     try:
         with store.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as leader:
             if not leader.scalar(
@@ -250,13 +249,13 @@ def main():
                     finalized = repo.aggregate(config)
                     if planned or finalized:
                         logger.info("[coordinator] planned={} finalized={}", planned, finalized)
+                        events.info("evaluation_progress", planned=planned, finalized=finalized)
                     repo.publish(config)
                     publication = store.publications.publication()
                     if publication != published:
                         report_publication(publication, published)
                         published = publication
                     if args.once:
-                        reason = "once"
                         break
                     if future is not None and future.done():
                         future.result()
@@ -298,13 +297,9 @@ def main():
                     leader.execute(
                         text("SELECT pg_advisory_unlock(hashtextextended('tensor:coordinator',0))")
                     )
-    except KeyboardInterrupt:
-        reason = "interrupted"
-        raise
     finally:
         stop.set()
         pool.shutdown(wait=True, cancel_futures=True)
-        events.info("service_stopped", reason=reason)
         store.close()
 
 
