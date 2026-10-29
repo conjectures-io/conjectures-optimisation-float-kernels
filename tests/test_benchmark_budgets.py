@@ -136,6 +136,35 @@ def test_shared_round_deadline_blames_the_side_that_used_it(measurement, clock, 
     assert exc.value.kind == slow
 
 
+@pytest.mark.parametrize(
+    "slow, seconds, budget",
+    [
+        # Calibration 4s; then R2 C2.4 | C2.4 R2 | R2, and the candidate is stopped 0.7s in.
+        ("candidate", {"reference": 2, "candidate": 2.4}, 15.5),
+        # Calibration 4.8s; then R2.4 C2 | C2, and the reference is stopped 0.5s in.
+        ("reference", {"reference": 2.4, "candidate": 2}, 11.7),
+    ],
+)
+def test_a_side_with_one_more_finished_run_is_not_blamed_for_its_total(
+    measurement, clock, monkeypatch, slow, seconds, budget
+):
+    # When the deadline strikes, the faster side has finished one run more, so its total time is
+    # larger; per run it is still the faster one.
+    request, _ = measurement
+    request["timing"] = timing(rounds=3, benchmark_seconds=budget)
+    rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
+
+    def run(command, timeout, **kwargs):
+        cost = seconds[Path(command[-1]).name]
+        clock.advance(min(cost, timeout))
+        return (124, "") if cost > timeout else (0, rows)
+
+    monkeypatch.setattr(sandbox, "run", run)
+    with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout") as exc:
+        benchmark.measure(request, b"candidate", b"reference")
+    assert exc.value.kind == slow
+
+
 @pytest.mark.parametrize("side", ["candidate", "reference"])
 def test_per_run_timeout_is_explicit_and_preserves_responsible_side(monkeypatch, clock, side):
     request = {
