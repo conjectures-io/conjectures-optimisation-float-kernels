@@ -23,12 +23,23 @@ from axiom import get_events, observe_worker
 from db.jobs import WorkerDb
 
 
+def timed_out(error):
+    # A candidate that ran out of time is a measured result: too slow, not broken.
+    return error.get("kind") == "candidate" and isinstance(error.get("timeout"), dict)
+
+
 def report(job, error, seconds):
     # A candidate failure is the miner's result; reference, checksum and infrastructure ones are
     # ours. Telemetry must never fail the job, so optional fields are read defensively.
     events = get_events()
     kind = (error or {}).get("kind")
-    emit = events.info if error is None else events.warning if kind == "candidate" else events.error
+    emit = (
+        events.info
+        if error is None or timed_out(error)
+        else events.warning
+        if kind == "candidate"
+        else events.error
+    )
     emit(
         "benchmark_job_finished",
         job_id=job.id,
@@ -36,7 +47,7 @@ def report(job, error, seconds):
         seed=(job.request or {}).get("seed"),
         candidate_hash=getattr(job, "candidate_hash", None),
         reference_hash=getattr(job, "reference_hash", None),
-        outcome="completed" if error is None else "failed",
+        outcome="completed" if error is None else "timed-out" if timed_out(error) else "failed",
         error_kind=kind,
         reason=str((error or {}).get("reason") or "")[:2000] or None,
         seconds=round(seconds, 1),
@@ -53,6 +64,17 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
     def fail(error):
         if repo.fail(job.id, owner, job.token, error):
             report(job, error, time.monotonic() - started)
+            if timed_out(error):
+                events.info(
+                    "benchmark_timed_out",
+                    **fields,
+                    phase=error["timeout"].get("phase"),
+                    limit=error["timeout"].get("limit"),
+                    cell=error["timeout"].get("cell"),
+                    reason=str(error.get("reason", ""))[:2000],
+                    seconds=time.monotonic() - started,
+                )
+                return
             kind = error.get("kind")
             severity = (
                 "warning" if kind == "candidate" else "critical" if kind == "checksum" else "error"

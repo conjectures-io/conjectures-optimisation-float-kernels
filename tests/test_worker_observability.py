@@ -226,6 +226,44 @@ def test_benchmark_events_follow_fenced_writes(monkeypatch, error, saved, event,
     assert capture.events[-1]["severity"] == severity
 
 
+def test_a_candidate_timeout_is_reported_as_a_result_not_a_failure(monkeypatch):
+    capture = Capture()
+    axiom.init("torchlean-benchmark-worker", client=capture)
+    timing = dict(rounds=1, inner=1, cell_ms=1, run_seconds=1, build_seconds=1, benchmark_seconds=1)
+    job = SimpleNamespace(id=3, token="private-token", lease_seconds=30, request={"timing": timing})
+    saved = []
+    repo = SimpleNamespace(
+        sources=lambda _: (b"candidate", b"reference"),
+        fail=lambda *a: saved.append(a[-1]) or True,
+    )
+    error = {
+        "kind": "candidate",
+        "reason": "benchmark-timeout: candidate invocation exceeded its 1s time allowance",
+        "timeout": {"phase": "benchmark", "limit": "invocation", "cell": "s0|mlp:b1:normal"},
+        "partial": {"rounds": []},
+    }
+
+    def run(command, *args, **kwargs):
+        Path(command[command.index("--result") + 1]).write_text(json.dumps({"error": error}))
+
+    monkeypatch.setattr(benchmark_worker, "preparation_mode", lambda _: "cold")
+    monkeypatch.setattr(benchmark_worker, "supervised", run)
+    benchmark_worker.execute(repo, job, "host")
+    # The worker stores everything it measured, not just the kind and reason.
+    assert saved == [error]
+    finished, timed_out = capture.events[-2:]
+    assert (finished["event_type"], finished["details"]["outcome"], finished["severity"]) == (
+        "benchmark_job_finished",
+        "timed-out",
+        "info",
+    )
+    assert (timed_out["event_type"], timed_out["severity"]) == ("benchmark_timed_out", "info")
+    assert (timed_out["details"]["limit"], timed_out["details"]["cell"]) == (
+        "invocation",
+        "s0|mlp:b1:normal",
+    )
+
+
 def monitor_renderer():
     path = Path(__file__).resolve().parents[1] / "scripts/render-axiom-monitors.py"
     spec = importlib.util.spec_from_file_location("monitor_renderer", path)

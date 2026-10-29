@@ -129,6 +129,7 @@ EventType: TypeAlias = Literal[
     "benchmark_claimed",
     "benchmark_completed",
     "benchmark_failed",
+    "benchmark_timed_out",
     "benchmark_result_discarded",
     "benchmark_waiting",
     "proof_completed",

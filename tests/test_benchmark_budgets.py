@@ -1,6 +1,7 @@
 """Build time and calibration/measurement time have independent, bounded clocks."""
 
 import hashlib
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -151,6 +152,108 @@ def test_per_run_timeout_is_explicit_and_preserves_responsible_side(monkeypatch,
         )
     assert exc.value.kind == side
     assert "2s" in str(exc.value)
+
+
+def test_a_stopped_run_keeps_the_rows_it_finished_and_names_the_cell_it_was_on(monkeypatch, clock):
+    request = {
+        "timing": timing(run_seconds=2),
+        "cells": [CELL, "resnet:b1:normal"],
+        "seed": 42,
+        "workloads": workloads(42)[:1],
+    }
+    w = request["workloads"][0]["id"]
+    # Markers come from stderr, rows from stdout; the kill cut the second cell's row short.
+    output = "\n".join(
+        [f"{w}|{CELL} start", f"{w}|{CELL} true 100 123", f"{w}|cnn:b1:normal start", f"{w}|cnn:b1"]
+    )
+    monkeypatch.setattr(sandbox, "run", lambda command, timeout, **kw: (124, output))
+    with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout") as exc:
+        benchmark.run_binary(
+            Path("bench"), request, {}, 1, "candidate", benchmark.Deadline("benchmark", 10)
+        )
+    assert exc.value.error() == {
+        "kind": "candidate",
+        "reason": "benchmark-timeout: candidate invocation exceeded its 2s time allowance",
+        "timeout": {
+            "phase": "benchmark",
+            "limit": "invocation",
+            "side": "candidate",
+            "running": "candidate",
+            "budget_seconds": 10,
+            "elapsed_seconds": 0,
+            "allowance_seconds": 2,
+            "cell": f"{w}|resnet:b1:normal",
+            "cells_finished": 1,
+            "cells_total": 2,
+            "finished": {f"{w}|{CELL}": [100, 123]},
+        },
+    }
+
+
+def test_start_markers_are_not_rows(monkeypatch, clock):
+    request = {"timing": timing(), "cells": [CELL], "seed": 42, "workloads": workloads(42)}
+    output = "\n".join(
+        line
+        for w in workloads(42)
+        for line in (f"{w['id']}|{CELL} start", f"{w['id']}|{CELL} true 100 123")
+    )
+    monkeypatch.setattr(sandbox, "run", lambda command, timeout, **kw: (0, output))
+    rows = benchmark.run_binary(
+        Path("bench"), request, {}, 1, "reference", benchmark.Deadline("benchmark", 10)
+    )
+    assert rows == {f"{w['id']}|{CELL}": (100, 123) for w in workloads(42)}
+
+
+def test_a_timeout_keeps_what_the_measurement_had_reached(measurement, clock, monkeypatch):
+    # Round two runs the candidate first; the reference then runs out of the shared deadline,
+    # which the slower candidate used most of.
+    request, _ = measurement
+    request["timing"] = timing(rounds=2, benchmark_seconds=9.5)
+    rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
+
+    def run(command, timeout, **kwargs):
+        seconds = 3 if Path(command[-1]).name == "candidate" else 1
+        clock.advance(min(seconds, timeout))
+        return (124, "") if seconds > timeout else (0, rows)
+
+    monkeypatch.setattr(sandbox, "run", run)
+    with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout") as exc:
+        benchmark.measure(request, b"candidate", b"reference")
+    error = json.loads(json.dumps(exc.value.error()))
+    assert error["kind"] == "candidate"
+    timeout, partial = error["timeout"], error["partial"]
+    assert {k: timeout[k] for k in ("limit", "side", "running", "allowance_seconds")} == {
+        "limit": "budget",
+        "side": "candidate",
+        "running": "reference",
+        "allowance_seconds": 0.5,
+    }
+    assert timeout["used_seconds"] == {"reference": 1.5, "candidate": 6}
+    names = [f"{w['id']}|{CELL}" for w in workloads(42)]
+    assert partial["calibration"] == dict.fromkeys(names, 100)
+    assert set(partial["repetitions"]) == set(names)
+    assert [r["reference_first"] for r in partial["rounds"]] == [True]
+    assert partial["round_in_progress"] == {"candidate": {n: [100, 123] for n in names}}
+    assert partial["rounds_planned"] == 2
+    assert partial["build_seconds"] == 9 and partial["benchmark_seconds"] == 9.5
+    assert sandbox.WORK.read_bytes() == b"operator source"
+
+
+def test_a_crash_keeps_the_measurement_but_is_no_timeout(measurement, monkeypatch):
+    request, _ = measurement
+    rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
+
+    def run(command, timeout, **kwargs):
+        return (1, "panic") if Path(command[-1]).name == "candidate" else (0, rows)
+
+    monkeypatch.setattr(sandbox, "run", run)
+    with pytest.raises(benchmark.MeasurementFailure, match="bench exit 1") as exc:
+        benchmark.measure(request, b"candidate", b"reference")
+    error = exc.value.error()
+    assert error["kind"] == "candidate" and "timeout" not in error
+    assert error["partial"]["rounds"] == [] and set(error["partial"]["round_in_progress"]) == {
+        "reference"
+    }
 
 
 def test_reference_and_candidate_share_one_build_deadline(tmp_path, monkeypatch, clock):

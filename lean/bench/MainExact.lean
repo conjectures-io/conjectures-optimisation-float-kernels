@@ -2,7 +2,9 @@ import ExactSuite
 import Submission
 
 /-! Experimental multi-seed batch protocol. Every model is prepared outside inference timing.
-Each row is workload|cell true total_nanoseconds output_checksum.
+Each row is workload|cell true total_nanoseconds output_checksum, flushed as it finishes, and
+`workload|cell start` goes to stderr before each cell: a run stopped at its time limit still
+shows the rows it finished and the cell it was on.
 BENCH_WORKLOADS: id:UInt32seed:profile,...; BENCH_REPS: id|cell=count,... -/
 
 def parseReps (text : String) : List (String × Nat) :=
@@ -33,8 +35,9 @@ def main : IO UInt32 := do
   if selected.isEmpty then throw (IO.userError "empty cell selection")
   for (name,seed,profile) in workloads do
     for c in selected do
-      let prepared := ExactSuite.prepareProfile c seed profile
       let key := s!"{name}|{c.name}"
+      IO.eprintln s!"{key} start"
+      let prepared := ExactSuite.prepareProfile c seed profile
       let n := ((reps.find? (·.1 == key)).map (·.2)).getD 1
       if n == 0 then throw (IO.userError "repetitions must be positive")
       let mut best := 0
@@ -48,4 +51,5 @@ def main : IO UInt32 := do
         checksum := ExactSuite.hashArr output
         best := if best == 0 || t1 - t0 < best then t1 - t0 else best
       IO.println s!"{key} true {best} {checksum}"
+      (← IO.getStdout).flush
   return 0
