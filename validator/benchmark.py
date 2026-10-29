@@ -51,30 +51,40 @@ class Deadline:
     """One absolute wall-clock deadline shared by every command in a phase.
 
     Paired rounds give both sides the same deadline (`share`). When it runs out there, the side
-    that has run longer is at fault, not whichever was running at the time: otherwise a slow
+    whose runs take longer is at fault, not whichever was running at the time: otherwise a slow
     candidate's overrun lands on the reference half the time, and a reference failure is retried
-    as infrastructure, pausing the board, instead of deciding the evaluation.
+    as infrastructure, pausing the board, instead of deciding the evaluation. Sides are compared
+    per run, not by total time: when the deadline strikes, one side may have finished one run more
+    than the other, and its total would count that run against it.
     """
 
     def __init__(self, phase, seconds):
         self.phase, self.seconds = phase, seconds
         self.started = time.monotonic()
         self.end = self.started + seconds
-        self.used = None
+        self.runs = None
 
     def share(self):
-        # From here on each command is charged to its side, for `fail` to find the side at fault.
-        self.used = {}
+        # From here on each finished run is kept with its side, for `fail` to find who is at fault.
+        self.runs = {}
 
-    def charge(self, side, seconds):
-        if self.used is not None:
-            self.used[side] = self.used.get(side, 0.0) + seconds
+    def finished(self, side, seconds):
+        if self.runs is not None:
+            self.runs.setdefault(side, []).append(seconds)
 
-    def fail(self, side, detail=None, *, shared=True, limit=None, **evidence):
+    def at_fault(self, side, stopped_after=None):
+        """The side whose runs take longer, by its mean over the runs it finished. The run that was
+        stopped only bounds its own side's from below. A tie, or no evidence, stays with `side`,
+        the one that was running."""
+        estimate = {s: sum(runs) / len(runs) for s, runs in self.runs.items()}
+        if stopped_after is not None:
+            estimate[side] = max(estimate.get(side, 0.0), stopped_after)
+        return max(estimate, key=lambda s: (estimate[s], s == side), default=side)
+
+    def fail(self, side, detail=None, *, shared=True, stopped_after=None, limit=None, **evidence):
         running = side
-        if shared and self.used:
-            # Ties stay with the side that was running.
-            side = max(self.used, key=lambda s: (self.used[s], s == side))
+        if shared and self.runs is not None:
+            side = self.at_fault(side, stopped_after)
         detail = detail or f"exceeded {self.seconds:g}s {self.phase} budget"
         timeout = {
             "phase": self.phase,
@@ -84,8 +94,14 @@ class Deadline:
             "budget_seconds": self.seconds,
             "elapsed_seconds": round(self.elapsed(), 3),
         }
-        if self.used is not None:
-            timeout["used_seconds"] = {s: round(v, 3) for s, v in self.used.items()}
+        if stopped_after is not None:
+            timeout["stopped_after_seconds"] = round(stopped_after, 3)
+        if self.runs is not None:
+            # What blame was decided on: each side's finished runs, counted, and their mean.
+            timeout["runs"] = {
+                s: {"finished": len(runs), "mean_seconds": round(sum(runs) / len(runs), 3)}
+                for s, runs in self.runs.items()
+            }
         raise MeasurementFailure(side, f"{self.phase}-timeout: {detail}", timeout | evidence)
 
     def remaining(self, side):
@@ -304,19 +320,22 @@ def run_binary(binary, request, reps, inner, side, deadline):
         env_extra=extra,
         memory_mb=sandbox._BENCH_MEMORY_MB,
     )
-    deadline.charge(side, time.monotonic() - started)
+    seconds = time.monotonic() - started
     public = row_names(request)
     if code == 124:
-        # The per-run cap is this side's own; running out of the shared deadline is decided by use.
+        # The per-run cap is this side's own; running out of the shared deadline is decided by
+        # each side's time per run.
         shared = budget < request["timing"]["run_seconds"]
         deadline.fail(
             side,
             f"{side} invocation exceeded its {timeout:g}s time allowance",
             shared=shared,
+            stopped_after=seconds,
             limit="budget" if shared else "invocation",
             allowance_seconds=round(timeout, 3),
             **finished(output, public),
         )
+    deadline.finished(side, seconds)
     deadline.remaining(side)
     if code:
         raise MeasurementFailure(side, f"bench exit {code}: {output[-1000:]}")
