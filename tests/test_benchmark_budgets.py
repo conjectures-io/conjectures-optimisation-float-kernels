@@ -210,6 +210,7 @@ def test_a_stopped_run_keeps_the_rows_it_finished_and_names_the_cell_it_was_on(m
             "running": "candidate",
             "budget_seconds": 10,
             "elapsed_seconds": 0,
+            "stopped_after_seconds": 0,
             "allowance_seconds": 2,
             "cell": f"{w}|resnet:b1:normal",
             "cells_finished": 1,
@@ -257,7 +258,12 @@ def test_a_timeout_keeps_what_the_measurement_had_reached(measurement, clock, mo
         "running": "reference",
         "allowance_seconds": 0.5,
     }
-    assert timeout["used_seconds"] == {"reference": 1.5, "candidate": 6}
+    # Blame went by time per run: the candidate finished two at 3s, the reference one at 1s.
+    assert timeout["runs"] == {
+        "reference": {"finished": 1, "mean_seconds": 1},
+        "candidate": {"finished": 2, "mean_seconds": 3},
+    }
+    assert timeout["stopped_after_seconds"] == 0.5
     names = [f"{w['id']}|{CELL}" for w in workloads(42)]
     assert partial["calibration"] == dict.fromkeys(names, 100)
     assert set(partial["repetitions"]) == set(names)

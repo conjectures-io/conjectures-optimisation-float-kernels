@@ -18,6 +18,11 @@ TIMEOUT = {
     "running": "candidate",
     "budget_seconds": 1200,
     "elapsed_seconds": 512.5,
+    "stopped_after_seconds": 300.0,
+    "runs": {
+        "reference": {"finished": 2, "mean_seconds": 120.5},
+        "candidate": {"finished": 1, "mean_seconds": 290.1},
+    },
     "allowance_seconds": 300,
     "cell": "s0|mlp:b1:normal",
     "cells_finished": 3,
@@ -64,7 +69,6 @@ def test_a_candidate_timeout_is_timed_out_and_keeps_its_evidence(store, config, 
             "score": None,
             "timeout": {k: v for k, v in TIMEOUT.items() if k not in ("side", "finished")}
             | {
-                "used_seconds": None,
                 "environment": environment,
                 "seed": seed,
                 "rounds_completed": 1,
