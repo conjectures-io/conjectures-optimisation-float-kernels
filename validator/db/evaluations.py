@@ -29,6 +29,40 @@ def lock_board(session, board):
     session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended("tensor:" + board, 0))))
 
 
+# What a decision says about a timeout; the worker's full evidence stays with the failed job.
+TIMEOUT_FIELDS = (
+    "phase",
+    "limit",
+    "running",
+    "allowance_seconds",
+    "budget_seconds",
+    "elapsed_seconds",
+    "stopped_after_seconds",
+    "runs",
+    "cell",
+    "cells_finished",
+    "cells_total",
+)
+
+
+def failure_decision(error, environment, seed):
+    """The decision a candidate's failed job makes: out of time is `timed-out`, a measured result;
+    anything else, a crash, a failed build or invalid output, is `benchmark-failed`."""
+    decision = {"reason": error["reason"], "score": None}
+    timeout = error.get("timeout")
+    if not isinstance(timeout, dict):
+        return {"outcome": "benchmark-failed"} | decision
+    partial = error.get("partial") if isinstance(error.get("partial"), dict) else {}
+    rounds = partial.get("rounds")
+    summary = {k: timeout.get(k) for k in TIMEOUT_FIELDS} | {
+        "environment": environment,
+        "seed": seed,
+        "rounds_completed": len(rounds) if isinstance(rounds, list) else None,
+        "rounds_planned": partial.get("rounds_planned"),
+    }
+    return {"outcome": "timed-out"} | decision | {"timeout": summary}
+
+
 def job_query(eid):
     return select(m.BenchmarkJob).join(m.EvaluationJob).where(m.EvaluationJob.evaluation_id == eid)
 
@@ -332,7 +366,12 @@ class EvaluationsDb:
         with session_scope(self.sessions) as s:
             failed = list(
                 s.execute(
-                    select(m.Evaluation.id, m.BenchmarkJob.error)
+                    select(
+                        m.Evaluation.id,
+                        m.BenchmarkJob.error,
+                        m.EvaluationJob.environment,
+                        m.EvaluationJob.seed,
+                    )
                     .join(m.EvaluationJob, m.EvaluationJob.evaluation_id == m.Evaluation.id)
                     .join(m.BenchmarkJob, m.BenchmarkJob.id == m.EvaluationJob.job_id)
                     .where(
@@ -340,14 +379,11 @@ class EvaluationsDb:
                         m.BenchmarkJob.state == "failed",
                         m.BenchmarkJob.error["kind"].astext == "candidate",
                     )
+                    .order_by(m.BenchmarkJob.id)
                 )
             )
-        for eid, error in failed:
-            count += self.finalize(
-                eid,
-                config,
-                {"outcome": "benchmark-failed", "reason": error["reason"], "score": None},
-            )
+        for eid, error, environment, seed in failed:
+            count += self.finalize(eid, config, failure_decision(error, environment, seed))
         # Bootstrap holds no database connection.
         for e, pairs in self.ready():
             try:

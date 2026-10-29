@@ -33,6 +33,10 @@ submission_files or competition-side rate-limit table exists. The central API ow
 
 - Submission proof: submissions.state = queued/running/proved/rejected and proof_report JSON.
 - Evaluation outcomes: evaluations per submission/board/generation; raw jobs via evaluation_jobs.
+  Since `tensor_0003` a candidate that ran out of time is decided `timed-out`, with a `timeout`
+  summary in the decision; `benchmark-failed` is any other candidate failure. A failed job's
+  `error` keeps the worker's `timeout` and `partial` (calibration, repetitions, completed rounds,
+  the round in progress) besides `kind` and `reason`; it may say `truncated` instead.
 - History: promotions -> evaluations -> submissions -> sources. A baseline is a source,
   not a fabricated miner submission. Current champion is the latest eligible promotion: exclude both promotion-level disqualification
   and an active `source_disqualifications` row for its source hash.

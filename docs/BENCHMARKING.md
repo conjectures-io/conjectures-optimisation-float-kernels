@@ -67,6 +67,19 @@ is a one-sided bound, not a two-sided confidence interval. Proof acceptance and 
 separate decisions. Stored outcomes include `qualifies`, `above-bar`, `guard-failed` and
 `not-significant`; the report is authoritative for a particular evaluation.
 
+An entry that runs out of time is `timed-out`: either one run passed its own cap (`run_seconds`,
+`limit: "invocation"`), or the paired rounds used up the shared budget (`benchmark_seconds`,
+`limit: "budget"`) and the entry's runs took longer than the reference's. Sides are compared by
+mean time per finished run, not by total time, since one side may have finished one run more
+when the budget ran out; the stopped run only bounds its own side's time from below. That is a
+measured result, not an error. The decision's `timeout` names the phase, the limit, the
+allowance, the cell that was running, how many cells and rounds had finished, each side's
+finished runs with their mean time, and how long the stopped run had been going. The failed job
+keeps what the worker had measured by then: the calibration, the completed rounds, the round in
+progress and the stopped run's finished rows. A build that runs out of time is also `timed-out`,
+with `phase: "build"`. `benchmark-failed` is kept for everything else that stops an entry: a
+crash, a failed native build, or invalid output.
+
 ## Rewards
 
 Each of the six boards has a configurable reward allocation paid entirely to its current eligible

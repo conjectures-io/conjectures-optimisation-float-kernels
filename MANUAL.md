@@ -98,6 +98,8 @@ BENCH_INNER=3 BENCH_WORKLOADS=s0:42:typical lean/.lake/build/bin/benchExact
 ```
 
 Each output row contains a workload/cell name, success flag, elapsed nanoseconds and checksum.
+Before each cell, stderr gets a `workload|cell start` line, so a run you stop shows the cell it
+was on.
 This is a quick local measurement, not an official score: it has no reference calibration or
 paired statistical decision. To inspect layer costs:
 
