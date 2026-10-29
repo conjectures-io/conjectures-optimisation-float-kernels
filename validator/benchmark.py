@@ -54,7 +54,7 @@ class Deadline:
         self.runs = None
 
     def share(self):
-        # From here on each finished run is kept with its side, for `fail` to find the side at fault.
+        # From here on each finished run is kept with its side, for `fail` to find who is at fault.
         self.runs = {}
 
     def finished(self, side, seconds):
