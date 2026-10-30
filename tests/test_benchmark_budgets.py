@@ -251,6 +251,11 @@ def test_a_timeout_keeps_what_the_measurement_had_reached(measurement, clock, mo
         benchmark.measure(request, b"candidate", b"reference")
     error = json.loads(json.dumps(exc.value.error()))
     assert error["kind"] == "candidate"
+    # The reason names the side at fault, not the reference whose run was stopped.
+    assert error["reason"] == (
+        "benchmark-timeout: candidate runs take longer than the reference's, which was stopped "
+        "when the shared 9.5s benchmark budget ran out"
+    )
     timeout, partial = error["timeout"], error["partial"]
     assert {k: timeout[k] for k in ("limit", "side", "running", "allowance_seconds")} == {
         "limit": "budget",

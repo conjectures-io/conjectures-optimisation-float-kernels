@@ -85,6 +85,12 @@ class Deadline:
         running = side
         if shared and self.runs is not None:
             side = self.at_fault(side, stopped_after)
+        if side != running:
+            # `detail` describes the run that was stopped; the reason names the side at fault.
+            detail = (
+                f"{side} runs take longer than the {running}'s, which was stopped when the shared "
+                f"{self.seconds:g}s {self.phase} budget ran out"
+            )
         detail = detail or f"exceeded {self.seconds:g}s {self.phase} budget"
         timeout = {
             "phase": self.phase,

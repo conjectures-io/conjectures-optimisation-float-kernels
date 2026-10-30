@@ -36,7 +36,9 @@ END $$;
 -- Decisions taken before this recorded a candidate that ran out of time as `benchmark-failed`,
 -- with only the reason to say why. Relabel them `timed-out`, with what the reason and the failed
 -- job still show; what the worker measured before the timeout was never kept. The one decision an
--- operator wrote by hand names the exhausted budget instead of the usual reason.
+-- operator wrote by hand names the exhausted budget instead of the usual reason. A decision is only
+-- ever the candidate's, so one whose reason names the reference's stopped run had the shared budget
+-- blamed on the candidate: its reason now says so.
 WITH timed_out AS (
     SELECT e.id,
         coalesce(substring(e.decision->>'reason' from '^(benchmark|build)-timeout: '),
@@ -60,6 +62,12 @@ WITH timed_out AS (
 )
 UPDATE evaluations e SET decision = e.decision || jsonb_build_object(
     'outcome', 'timed-out',
+    'reason', CASE WHEN e.decision->>'reason' ~ '^benchmark-timeout: reference invocation '
+                        AND t.budget IS NOT NULL
+                   THEN format('benchmark-timeout: candidate runs take longer than the reference''s, '
+                               || 'which was stopped when the shared %ss benchmark budget ran out',
+                               t.budget)
+                   ELSE e.decision->>'reason' END,
     'timeout', jsonb_build_object(
         'phase', t.phase,
         'limit', CASE WHEN t.phase<>'benchmark' THEN NULL

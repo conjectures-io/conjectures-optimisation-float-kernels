@@ -175,3 +175,29 @@ def test_a_budget_timeout_from_the_old_reason_is_a_budget_limit(store, config, m
         assert decision["outcome"] == "timed-out"
         assert decision["timeout"]["limit"] == "budget"
         assert decision["timeout"]["allowance_seconds"] == 25.7093
+
+
+def test_a_reference_reason_on_a_candidate_decision_names_the_candidate(store, config, monkeypatch):
+    # The shared budget ran out while the reference ran, and was blamed on the slower candidate;
+    # the old reason still named the reference.
+    monkeypatch.setenv("DATABASE_URL", store.engine.url.render_as_string(hide_password=False))
+    cfg = migration_config()
+    command.downgrade(cfg, "tensor_0002")
+    try:
+        repo, worker = setup(store, config)
+        accepted(store, config)
+        repo.plan(config)
+        reason = "benchmark-timeout: reference invocation exceeded its 3.43003s time allowance"
+        fail_all(worker, {"kind": "candidate", "reason": reason})
+        assert repo.aggregate(config) == 2
+    finally:
+        command.upgrade(cfg, "head")
+    with db.session_scope(store.sessions) as s:
+        budget = s.scalars(select(m.BenchmarkJob)).first().request["timing"]["benchmark_seconds"]
+    for decision, _, _ in decisions(store).values():
+        assert decision["outcome"] == "timed-out"
+        assert decision["reason"] == (
+            "benchmark-timeout: candidate runs take longer than the reference's, which was "
+            f"stopped when the shared {budget:g}s benchmark budget ran out"
+        )
+        assert decision["timeout"]["limit"] == "budget"
