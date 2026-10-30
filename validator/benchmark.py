@@ -31,9 +31,20 @@ def lean_cell(cell):
 
 
 class MeasurementFailure(Exception):
-    def __init__(self, kind, reason):
+    def __init__(self, kind, reason, timeout=None):
         self.kind = kind
+        # What a timeout knew when it struck, and what the measurement had reached by then: the
+        # worker keeps both with the failed job, so a timeout is evidence, not just a reason.
+        self.timeout, self.partial = timeout, None
         super().__init__(reason)
+
+    def error(self):
+        value = {"kind": self.kind, "reason": str(self)}
+        if self.timeout is not None:
+            value["timeout"] = self.timeout
+        if self.partial is not None:
+            value["partial"] = self.partial
+        return value
 
 
 class Deadline:
@@ -70,16 +81,39 @@ class Deadline:
             estimate[side] = max(estimate.get(side, 0.0), stopped_after)
         return max(estimate, key=lambda s: (estimate[s], s == side), default=side)
 
-    def fail(self, side, detail=None, *, shared=True, stopped_after=None):
+    def fail(self, side, detail=None, *, shared=True, stopped_after=None, limit=None, **evidence):
+        running = side
         if shared and self.runs is not None:
             side = self.at_fault(side, stopped_after)
+        if side != running:
+            # `detail` describes the run that was stopped; the reason names the side at fault.
+            detail = (
+                f"{side} runs take longer than the {running}'s, which was stopped when the shared "
+                f"{self.seconds:g}s {self.phase} budget ran out"
+            )
         detail = detail or f"exceeded {self.seconds:g}s {self.phase} budget"
-        raise MeasurementFailure(side, f"{self.phase}-timeout: {detail}")
+        timeout = {
+            "phase": self.phase,
+            "limit": limit,
+            "side": side,
+            "running": running,
+            "budget_seconds": self.seconds,
+            "elapsed_seconds": round(self.elapsed(), 3),
+        }
+        if stopped_after is not None:
+            timeout["stopped_after_seconds"] = round(stopped_after, 3)
+        if self.runs is not None:
+            # What blame was decided on: each side's finished runs, counted, and their mean.
+            timeout["runs"] = {
+                s: {"finished": len(runs), "mean_seconds": round(sum(runs) / len(runs), 3)}
+                for s, runs in self.runs.items()
+            }
+        raise MeasurementFailure(side, f"{self.phase}-timeout: {detail}", timeout | evidence)
 
     def remaining(self, side):
         left = self.end - time.monotonic()
         if left <= 0:
-            self.fail(side)
+            self.fail(side, limit="budget")
         return left
 
     def elapsed(self):
@@ -227,6 +261,45 @@ def build(source, expected, side, deadline):
     return binary
 
 
+def row_names(request):
+    # Each row's name as the bench prints it -> its public name, in the order the bench runs them.
+    return {
+        f"{w['id']}|{lean_cell(c)}": f"{w['id']}|{c}"
+        for w in request["workloads"]
+        for c in request["cells"]
+    }
+
+
+def start_marker(line):
+    # The bench's `<row> start` marker, on stderr before each cell; not a result row.
+    fields = line.split()
+    return len(fields) == 2 and fields[1] == "start"
+
+
+def finished(output, public):
+    """What a killed run had done: the rows it printed in full, and the cell it was running.
+
+    The bench flushes each row as it finishes and marks each cell's start, so a kill loses only
+    the cell in progress; a cut-off last line is not a row.
+    """
+    rows, cell = {}, None
+    for line in output.splitlines():
+        fields = line.split()
+        if start_marker(line) and fields[0] in public:
+            cell = public[fields[0]]
+        elif len(fields) == 4 and fields[1] == "true" and fields[0] in public:
+            try:
+                rows[public[fields[0]]] = [int(fields[2]), int(fields[3])]
+            except ValueError:
+                pass
+    return {
+        "cell": cell if cell not in rows else None,
+        "cells_finished": len(rows),
+        "cells_total": len(public),
+        "finished": rows,
+    }
+
+
 def run_binary(binary, request, reps, inner, side, deadline):
     budget = deadline.remaining(side)
     timeout = min(request["timing"]["run_seconds"], budget)
@@ -254,26 +327,28 @@ def run_binary(binary, request, reps, inner, side, deadline):
         memory_mb=sandbox._BENCH_MEMORY_MB,
     )
     seconds = time.monotonic() - started
+    public = row_names(request)
     if code == 124:
         # The per-run cap is this side's own; running out of the shared deadline is decided by
         # each side's time per run.
+        shared = budget < request["timing"]["run_seconds"]
         deadline.fail(
             side,
             f"{side} invocation exceeded its {timeout:g}s time allowance",
-            shared=budget < request["timing"]["run_seconds"],
+            shared=shared,
             stopped_after=seconds,
+            limit="budget" if shared else "invocation",
+            allowance_seconds=round(timeout, 3),
+            **finished(output, public),
         )
     deadline.finished(side, seconds)
     deadline.remaining(side)
     if code:
         raise MeasurementFailure(side, f"bench exit {code}: {output[-1000:]}")
-    public = {
-        f"{w['id']}|{lean_cell(c)}": f"{w['id']}|{c}"
-        for w in request["workloads"]
-        for c in request["cells"]
-    }
     rows = {}
     for line in output.splitlines():
+        if start_marker(line):
+            continue
         fields = line.split()
         if len(fields) != 4 or fields[1] != "true" or public.get(fields[0]) in rows:
             raise MeasurementFailure("infrastructure", "invalid or duplicate benchmark row")
@@ -346,38 +421,52 @@ def measure(request, candidate, reference, mode=None):
             build_clock.remaining("infrastructure" if mode == "cached" else "candidate")
             build_seconds = build_clock.elapsed()
             benchmark_clock = Deadline("benchmark", request["timing"]["benchmark_seconds"])
-            initial = run_binary(ref, request, {}, 3, "reference", benchmark_clock)
-            reps = calibrated_counts(initial, request["timing"]["cell_ms"])
-            checked = run_binary(ref, request, reps, 3, "reference", benchmark_clock)
-            reps = calibrated_counts(checked, request["timing"]["cell_ms"], reps)
-            # Calibration runs only the reference; the rounds share what is left between both sides.
-            benchmark_clock.share()
+            # What the measurement has reached, kept with a failure that stops it partway.
             rounds = []
-            t0 = time.monotonic()
-            for i in range(request["timing"]["rounds"]):
-                sides = [("reference", ref), ("candidate", sub)]
-                if i % 2:
-                    sides.reverse()
-                observed = {
-                    side: run_binary(
-                        binary, request, reps, request["timing"]["inner"], side, benchmark_clock
-                    )
-                    for side, binary in sides
-                }
-                cells = {}
-                for c in reps:
-                    a, b = observed["reference"][c], observed["candidate"][c]
-                    if a[1] != b[1]:
-                        raise MeasurementFailure("checksum", f"output mismatch on {c}")
-                    cells[c] = {
-                        "reference_ns": a[0],
-                        "candidate_ns": b[0],
-                        "reference_checksum": a[1],
-                        "candidate_checksum": b[1],
-                    }
-                rounds.append({"reference_first": i % 2 == 0, "cells": cells})
-            round_seconds = time.monotonic() - t0
-            benchmark_clock.remaining("candidate")
+            partial = {
+                "build_seconds": build_seconds,
+                "rounds": rounds,
+                "rounds_planned": request["timing"]["rounds"],
+            }
+            try:
+                initial = run_binary(ref, request, {}, 3, "reference", benchmark_clock)
+                partial["calibration"] = {c: ns for c, (ns, _) in initial.items()}
+                reps = calibrated_counts(initial, request["timing"]["cell_ms"])
+                checked = run_binary(ref, request, reps, 3, "reference", benchmark_clock)
+                reps = calibrated_counts(checked, request["timing"]["cell_ms"], reps)
+                partial["repetitions"] = reps
+                # Calibration runs only the reference; the rounds share what is left between both
+                # sides.
+                benchmark_clock.share()
+                t0 = time.monotonic()
+                for i in range(request["timing"]["rounds"]):
+                    sides = [("reference", ref), ("candidate", sub)]
+                    if i % 2:
+                        sides.reverse()
+                    # A side that finished before the other was stopped is kept with the failure.
+                    observed = partial["round_in_progress"] = {}
+                    for side, binary in sides:
+                        observed[side] = run_binary(
+                            binary, request, reps, request["timing"]["inner"], side, benchmark_clock
+                        )
+                    cells = {}
+                    for c in reps:
+                        a, b = observed["reference"][c], observed["candidate"][c]
+                        if a[1] != b[1]:
+                            raise MeasurementFailure("checksum", f"output mismatch on {c}")
+                        cells[c] = {
+                            "reference_ns": a[0],
+                            "candidate_ns": b[0],
+                            "reference_checksum": a[1],
+                            "candidate_checksum": b[1],
+                        }
+                    rounds.append({"reference_first": i % 2 == 0, "cells": cells})
+                    del partial["round_in_progress"]
+                round_seconds = time.monotonic() - t0
+                benchmark_clock.remaining("candidate")
+            except MeasurementFailure as exc:
+                exc.partial = partial | {"benchmark_seconds": round(benchmark_clock.elapsed(), 3)}
+                raise
             if fingerprint.benchmark() != request["benchmark_identity"]:
                 raise MeasurementFailure("infrastructure", "checkout changed during benchmark")
             return {
@@ -392,7 +481,7 @@ def measure(request, candidate, reference, mode=None):
                     "candidate_binary": file_hash(sub),
                     "reference_binary": file_hash(ref),
                 },
-                "calibration": {c: ns for c, (ns, _) in initial.items()},
+                "calibration": partial["calibration"],
                 "repetitions": reps,
                 "rounds": rounds,
                 "timing_seconds": round_seconds,
@@ -441,7 +530,7 @@ def main():
             )
         }
     except MeasurementFailure as exc:
-        value = {"error": {"kind": exc.kind, "reason": str(exc)}}
+        value = {"error": exc.error()}
     except Exception as exc:
         value = {"error": {"kind": "infrastructure", "reason": str(exc)}}
     args.result.write_text(json.dumps(value))
