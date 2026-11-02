@@ -61,6 +61,12 @@ def test_an_unclosed_comment_or_a_quote_inside_one_cannot_hide_code():
     assert normalized("def f := 1 /- open") == "def f := 1"
 
 
+def test_comments_separate_tokens_and_escaped_literals_keep_their_contents():
+    assert normalized("def/- nested /- comment -/ here -/f := 1") == "def f := 1"
+    source = r'def s := "keep \" -- /- text"'
+    assert normalized(source) == source
+
+
 def test_copies_of_an_earlier_entry_are_rejected_before_the_proof(store, config):
     repo, _ = setup(store, config)
     first = upload(store, "first", ORIGINAL, 0)

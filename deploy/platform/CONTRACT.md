@@ -6,7 +6,12 @@ API and competition schema/grant releases must be deployed together.
 
 ## Intake
 
-One signed UTF-8 Kernel.lean, 1–256000 bytes. Use the existing five-line signature message with competition slug `torchlean`. Validate signature
+One signed UTF-8 Kernel.lean. The API defaults to a 1 MiB upload limit, configurable with
+`TORCHLEAN_MAX_SOURCE_BYTES` within 1–4,194,304 bytes. The body cap is twice that limit.
+`tensor_0004` raises the fixed database/worker ceiling to 4 MiB; migrate before enabling larger
+uploads. Workers and the CLI do not enforce the API's current policy, so previously accepted
+larger sources remain usable after it is lowered. Use the existing five-line signature
+message with competition slug `torchlean`. Validate signature
 age, current recorded membership and the configured registration cutoff in the central API.
 Retired competition databases are not queried.
 

@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir \
 # which also imports sibling modules: axiom (the event sink) and duplicates (the source
 # normalization submissions are checked with); standard library plus loguru.
 COPY validator/db ./validator/db
-COPY validator/axiom.py validator/duplicates.py ./validator/
+COPY validator/axiom.py validator/duplicates.py validator/source_limits.py ./validator/
 
 # Alembic config and revisions are ops artifacts, not part of any package.
 COPY deploy/migrate/alembic.ini ./alembic.ini

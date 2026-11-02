@@ -124,7 +124,7 @@ def test_malformed_signature_and_hotkey_are_rejected():
 
 @pytest.mark.parametrize(
     "content,reason",
-    [(b"", "empty"), (b"\xff", "UTF-8"), (b"x" * 256_001, "256000")],
+    [(b"", "empty"), (b"\xff", "UTF-8"), (b"x" * (4 * 1024 * 1024 + 1), "4194304")],
 )
 def test_invalid_source_is_refused_before_upload(tmp_path, monkeypatch, content, reason):
     submit = load("miner_submit_invalid", REPO / "miner" / "submit.py")

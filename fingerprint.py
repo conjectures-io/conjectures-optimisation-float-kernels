@@ -10,6 +10,7 @@ HERE = Path(__file__).resolve().parent
 COMMON = [
     "fingerprint.py",
     "validator/sandbox.py",
+    "validator/source_limits.py",
     "validator/duplicates.py",
     "validator/macos_worker.py",
     "lean/lakefile.lean",

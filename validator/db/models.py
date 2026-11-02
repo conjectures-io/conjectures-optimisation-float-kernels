@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from source_limits import MAX_SOURCE_BYTES
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -69,7 +70,9 @@ class Source(Base):
     created_at: Mapped[dt.datetime] = timestamp()
     __table_args__ = (
         CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_sources_hash"),
-        CheckConstraint("octet_length(content) BETWEEN 1 AND 256000", name="ck_sources_size"),
+        CheckConstraint(
+            f"octet_length(content) BETWEEN 1 AND {MAX_SOURCE_BYTES}", name="ck_sources_size"
+        ),
     )
 
 
