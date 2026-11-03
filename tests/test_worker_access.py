@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -240,6 +241,9 @@ def test_preflight_reads_only_and_checks_environment(store, config, logins, monk
 
 
 def test_expired_claim_reassigned_to_another_login(store, config, logins):
+    # The fixture retries after 100 ms, which can elapse while a loaded runner drains
+    # the ready jobs. Keep this retry deferred until we explicitly release it below.
+    config = replace(config, retry_seconds=3600)
     repo, _ = setup(store, config)
     accepted(store, config)
     repo.plan(config)

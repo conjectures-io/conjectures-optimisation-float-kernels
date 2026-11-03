@@ -37,8 +37,10 @@ Use your Bittensor hotkey JSON file; the client signs locally and sends the sign
 cp -r kernels/exact/incumbent my-entry
 ```
 
-Edit `my-entry/Kernel.lean`. It must be a nonempty UTF-8 file of at most **256,000 bytes**,
-import only `ContractExact`, and define:
+Edit `my-entry/Kernel.lean`. The public API accepts nonempty UTF-8 files up to **1 MiB
+(1,048,576 bytes) by default**; the operator can configure a different upload limit.
+The CLI and workers support a fixed ceiling of 4 MiB. Your file must import only
+`ContractExact` and define:
 
 ```lean
 namespace Submission

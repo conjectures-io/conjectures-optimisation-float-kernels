@@ -25,6 +25,24 @@ Use `./setup.sh --chain` when running the chain watcher or weight setter, `--ben
 on a remote timing host, and `--audit-worker` on an auditor. See [worker access](WORKER-DATABASE-ACCESS.md)
 for restricted credentials; keep administrator credentials off worker machines.
 
+## Source-size limits
+
+The central API defaults to accepting 1 MiB and reads `TORCHLEAN_MAX_SOURCE_BYTES` from its
+own environment (range 1–4,194,304). The competition DB, gate, auditor and miner CLI instead
+share a fixed 4 MiB safety ceiling, defined in `validator/source_limits.py`.
+
+Apply `tensor_0004` before accepting files above the previous 256,000-byte ceiling. This first
+rollout changes verifier/benchmark identities: update the coordinator, both benchmark workers
+and auditor together, refresh policy identities, and handle pending old-identity work without
+resetting champions/history. Native caches will be cold and audit coverage may backfill again.
+Use a controlled rollout; do not deploy the default 1 MiB API ahead of the worker/schema update.
+
+After that rollout, changing the API limit within 4 MiB requires only an API configuration
+change and restart. It does not change worker identities or require a DB migration, worker
+restart or champion re-audit. A downgrade of `tensor_0004` refuses while sources above
+256,000 bytes remain; it never truncates or deletes them. Build/runtime memory, time and output
+budgets are unchanged; support for a source size does not guarantee arbitrary code fits them.
+
 ## Configure and start
 
 ```bash

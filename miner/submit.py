@@ -12,12 +12,15 @@ from typing import cast
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validator"))
+from source_limits import MAX_SOURCE_BYTES  # noqa: E402 - shared fixed safety ceiling
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sig  # noqa: E402 - the miner's copy of the signing contract, pinned by test_miner_sig.py
 
 DEFAULT_URL = "https://conjectures.io"
 TIMEOUT = 60
-MAX_FILE_BYTES = 256_000
+MAX_FILE_BYTES = MAX_SOURCE_BYTES
 
 
 def base(url):

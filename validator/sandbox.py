@@ -13,8 +13,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from duplicates import normalized
+from duplicates import normalized, without_comments
 from loguru import logger
+from source_limits import MAX_SOURCE_BYTES
 
 HERE = Path(__file__).resolve().parents[1]
 LIB = HERE / "lean"
@@ -66,7 +67,7 @@ _BENCH_TIMEOUT = 300
 # The time an entry's own builds, kernel replays and bench runs may take in all; a full entry uses
 # about two minutes, and one that runs out is rejected and charged, so it cannot hold the gate free.
 _BUDGET_SECONDS = float(os.environ.get("GATE_BUDGET_SECONDS", "600"))
-_MAX_BYTES = 256_000
+_MAX_BYTES = MAX_SOURCE_BYTES
 # Memory and swap caps in MB for the systemd scope of every sandboxed command (builds peak near 1
 # GB, benches near 20 MB), so a runaway is killed rather than swapping; 0 lifts both.
 _BUILD_MEMORY_MB = int(os.environ.get("GATE_BUILD_MEMORY_MB", "4096"))
@@ -98,7 +99,10 @@ BANNED = re.compile(
     r"\b(sorry|admit|native_decide|axiom|implemented_by|extern|export|csimp|init|initialize"
     r"|builtin_initialize|run_cmd|run_elab|run_meta|macro|macro_rules|elab|elab_rules|syntax"
     r"|attribute|IO|include_str|include_bytes|includeStr|run_tac|declare_simp_like_tactic)\b"
-    r"|\w*simproc\w*|\bregister_\w+|\w+_elab\b|\w*_syntax_\w*|unsafe|Unchecked|dbg|#[a-z_]+"
+    # Start identifier scans only at word boundaries. Retrying greedy prefixes at every
+    # character of a long word makes even a harmless large comment quadratic to scan.
+    r"|\b\w*simproc\w*|\bregister_\w+|\b\w+_elab\b|\b\w*_syntax_\w*"
+    r"|unsafe|Unchecked|dbg|#[a-z_]+"
 )
 
 
@@ -426,7 +430,7 @@ def global_declarations(text: str) -> str | None:
     # Read with comments removed and whitespace collapsed, so none can hide in or between them.
     code = normalized(text)
     for m in GLOBAL.finditer(code):
-        if not code[: m.start()].endswith("local "):
+        if not code.endswith("local ", 0, m.start()):
             return f"{m.group(1)} without `local`: it would apply to the operator's bench and audit"
     return None
 
@@ -434,7 +438,9 @@ def global_declarations(text: str) -> str | None:
 def options(text: str) -> str | None:
     # Every set_option names an allowed option with a value in range, read with comments removed so
     # none can hide between them; one the reader cannot account for is refused, not skipped.
-    plain = re.sub(r"--[^\n]*", " ", re.sub(r"/-.*?-/", " ", text, flags=re.S))
+    # Share the linear, nested-comment-aware lexer with the declaration checks. A regex
+    # searching for a closing delimiter after every unmatched opener can be quadratic.
+    plain = without_comments(text, respect_strings=False)
     found = re.findall(r"\bset_option\s+(\S+)\s+(\S+)", plain)
     if len(found) != len(re.findall(r"\bset_option\b", text)):
         return "a set_option the policy cannot read (hidden in or between comments or strings)"

@@ -7,6 +7,7 @@ import hashlib
 import uuid
 
 from duplicates import normalized_digest
+from source_limits import MAX_SOURCE_BYTES
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -41,8 +42,8 @@ def storable(value):
 
 
 def put_source(session, content):
-    if not 0 < len(content) <= 256000:
-        raise ValueError("expected one UTF-8 source under 256 KB")
+    if not 0 < len(content) <= MAX_SOURCE_BYTES:
+        raise ValueError(f"expected one nonempty UTF-8 source of at most {MAX_SOURCE_BYTES} bytes")
     content.decode("utf-8")
     digest = hashlib.sha256(content).hexdigest()
     session.execute(insert(Source).values(sha256=digest, content=content).on_conflict_do_nothing())

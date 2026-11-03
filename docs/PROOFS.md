@@ -1,8 +1,11 @@
 # Proof checks and source policy
 
-One nonempty UTF-8 file, at most 256,000 bytes, imports only `ContractExact` and defines
+One nonempty UTF-8 file imports only `ContractExact` and defines
 `Submission.kernels` and `Submission.correct : ExactRuntime.Obligation Submission.kernels`.
 The obligation is equality with the complete pinned specification, for every input.
+Public uploads default to 1 MiB; the central API configures this policy. The gate, auditor,
+database and CLI support a fixed 4 MiB ceiling, including older sources after an upload-limit
+decrease. The shared ceiling is defined in `validator/source_limits.py`.
 
 ## Gate stages
 
