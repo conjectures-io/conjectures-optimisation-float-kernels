@@ -2368,13 +2368,14 @@ theorem maxW_spec (a b : Word) : ofW (maxW a b) = Model.maximum (ofW a) (ofW b) 
     cases compare (keyOf a) (keyOf b) <;> simp only [ofW_toWord]
 
 /-- `maxpoolSpec` with the running maximum kept as a word. -/
-def maxpoolW (c h w k : Nat) (inp : Array Word) : Array Word :=
-  Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-    let ch := q.val / (h / k * (w / k))
-    let y := q.val / (w / k) % (h / k)
-    let x := q.val % (w / k)
-    (List.range (k * k)).foldl (fun acc t => maxW acc (poolAt h w k inp ch y x t))
-      (poolAt h w k inp ch y x 0)
+def maxpoolW (s : PoolShape) (inp : Array Word) : Array Word :=
+  Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+    let ch := q.val / (s.ho * s.wo)
+    let y := q.val / s.wo % s.ho
+    let x := q.val % s.wo
+    let win := s.window y x
+    (List.range (win.rows * win.cols)).foldl (fun acc t => maxW acc (poolCell s inp ch win t))
+      (poolCell s inp ch win 0)
 
 theorem foldl_maxW (p : Nat → Word) (l : List Nat) (acc : Word) :
     l.foldl (fun m t => Model.maximum m (ofW (p t))) (ofW acc) =
@@ -2384,22 +2385,26 @@ theorem foldl_maxW (p : Nat → Word) (l : List Nat) (acc : Word) :
   | cons t l ih => simp only [List.foldl_cons, ← maxW_spec, ih]
 
 theorem maxpoolW_eq : maxpoolW = maxpoolSpec := by
-  funext c h w k inp
+  funext s inp
   simp only [maxpoolW, maxpoolSpec, foldl_maxW, toWord_ofW]
 
-/-- Materialize each input patch once, sharing it between output channels. -/
+/-- Materialize each group's input patch once, sharing it between that group's output
+channels. -/
 def convCached (s : ConvShape) (relu : Bool) (inp wts b : Array Word) : Array Word :=
-  let k := s.cin * s.kh * s.kw
-  let patches := Array.ofFn (n := s.ho) fun y =>
-    Array.ofFn (n := s.wo) fun x =>
-      Array.ofFn (n := k) fun t => windowAt s inp y.val x.val t.val
+  let k := s.taps
+  let patches := Array.ofFn (n := s.groups) fun g =>
+    Array.ofFn (n := s.ho) fun y =>
+      Array.ofFn (n := s.wo) fun x =>
+        Array.ofFn (n := k) fun t => windowAt s inp g.val y.val x.val t.val
   Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
     let o := q.val / (s.ho * s.wo)
     let y := q.val / s.wo % s.ho
     let x := q.val % s.wo
-    let patch := (patches[y]!)[x]!
+    let g := o / s.opg
     act relu <| dotFn (k + 1)
-      (fun t => if t < k then patch[t]! else oneW)
+      (fun t => if t < k then
+          (if g < s.groups then (((patches[g]!)[y]!)[x]!)[t]! else windowAt s inp g y x t)
+        else oneW)
       (fun t => if t < k then wts[o * k + t]! else b[o]!)
 
 theorem convCached_eq : convCached = conv2dWith dotFn := by
@@ -2419,31 +2424,32 @@ theorem convCached_eq : convCached = conv2dWith dotFn := by
   simp only [dotFn_eq_dotOf, dotOf]
   congr 3
   funext t
-  split_ifs with ht
-  · simp [getElem!_pos, Nat.mod_lt _ hwo,
-      Nat.mod_lt _ hho, ht]
+  split_ifs with ht hg
+  · simp [getElem!_pos, Nat.mod_lt _ hwo, Nat.mod_lt _ hho, ht, hg]
+  · rfl
   · rfl
 
-/-- A checked 1×1, stride-one, unpadded convolution avoids generic window indexing. -/
+/-- A 1×1, stride-one, unpadded convolution avoids generic window indexing. -/
 def pointwiseConv (s : ConvShape) (relu : Bool) (inp wts b : Array Word) : Array Word :=
-  if s.kh = 1 ∧ s.kw = 1 ∧ s.stride = 1 ∧ s.pad = 0 then
+  if s.kh = 1 ∧ s.kw = 1 ∧ s.strideH = 1 ∧ s.strideW = 1 ∧ s.padT = 0 ∧ s.padL = 0 then
     Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
       let o := q.val / (s.ho * s.wo)
       let y := q.val / s.wo % s.ho
       let x := q.val % s.wo
-      act relu <| dotFn (s.cin + 1)
-        (fun t => if t < s.cin then
-          if y ≥ s.h ∨ x ≥ s.w then 0 else inp[(t * s.h + y) * s.w + x]!
+      let c0 := o / s.opg * s.cpg
+      act relu <| dotFn (s.taps + 1)
+        (fun t => if t < s.taps then
+          if y ≥ s.h ∨ x ≥ s.w then 0 else inp[((c0 + t) * s.h + y) * s.w + x]!
           else oneW)
-        (fun t => if t < s.cin then wts[o * s.cin + t]! else b[o]!)
+        (fun t => if t < s.taps then wts[o * s.taps + t]! else b[o]!)
   else convCached s relu inp wts b
 
 theorem pointwiseConv_eq : pointwiseConv = conv2dWith dotFn := by
   funext s relu inp wts b
   unfold pointwiseConv
   split_ifs with h
-  · rcases h with ⟨hkh, hkw, hs, hp⟩
-    simp [conv2dWith, windowAt, hkh, hkw, hs, hp, Nat.mod_one]
+  · rcases h with ⟨hkh, hkw, hsh, hsw, hpt, hpl⟩
+    simp [conv2dWith, windowAt, hkh, hkw, hsh, hsw, hpt, hpl, Nat.mod_one]
   · exact congrFun (congrFun (congrFun (congrFun (congrFun convCached_eq s) relu) inp) wts) b
 
 
@@ -2460,13 +2466,13 @@ theorem addReluFast_eq : addReluFast = addReluSpec := by
 def kernels : Kernels where
   core := ⟨sumX, dotX⟩
   dense := ⟨linearWith dotFn, gemmWith dotFn⟩
-  conv := ⟨pointwiseConv, depthwiseWith dotFn⟩
+  conv := ⟨pointwiseConv, depthwiseWith dotFn, convTransposeWith dotFn⟩
   elem := ⟨avgpoolWith dotFn, maxpoolW, addReluFast, scaleShiftSpec⟩
   norm := ⟨rmsnormWith dotFn, FastNorm.layernormFastWith dotFn⟩
 
 theorem correct : Obligation kernels := by
   simp only [Obligation, kernels, specKernels, specCore, specDense, specConv, specElem, specNorm,
-    linearSpec, gemmSpec, conv2dSpec, depthwiseSpec, avgpoolSpec, rmsnormSpec, layernormSpec,
+    linearSpec, gemmSpec, conv2dSpec, depthwiseSpec, convTransposeSpec, avgpoolSpec, rmsnormSpec, layernormSpec,
     FastNorm.layernormFastWith_eq, pointwiseConv_eq, addReluFast_eq, maxpoolW_eq, dotFn_eq_dotOf, funext sumX_eq_spec, funext fun a => funext (dotX_eq_spec a)]
 
 end Submission

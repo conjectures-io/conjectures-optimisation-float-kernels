@@ -762,13 +762,14 @@ theorem maxW_spec (a b : Word) : ofW (maxW a b) = Model.maximum (ofW a) (ofW b) 
     cases compare (keyOf a) (keyOf b) <;> simp only [ofW_toWord]
 
 /-- `maxpoolSpec` with the running maximum kept as a word. -/
-def maxpoolW (c h w k : Nat) (inp : Array Word) : Array Word :=
-  Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-    let ch := q.val / (h / k * (w / k))
-    let y := q.val / (w / k) % (h / k)
-    let x := q.val % (w / k)
-    (List.range (k * k)).foldl (fun acc t => maxW acc (poolAt h w k inp ch y x t))
-      (poolAt h w k inp ch y x 0)
+def maxpoolW (s : PoolShape) (inp : Array Word) : Array Word :=
+  Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+    let ch := q.val / (s.ho * s.wo)
+    let y := q.val / s.wo % s.ho
+    let x := q.val % s.wo
+    let win := s.window y x
+    (List.range (win.rows * win.cols)).foldl (fun acc t => maxW acc (poolCell s inp ch win t))
+      (poolCell s inp ch win 0)
 
 theorem foldl_maxW (p : Nat → Word) (l : List Nat) (acc : Word) :
     l.foldl (fun m t => Model.maximum m (ofW (p t))) (ofW acc) =
@@ -778,7 +779,7 @@ theorem foldl_maxW (p : Nat → Word) (l : List Nat) (acc : Word) :
   | cons t l ih => simp only [List.foldl_cons, ← maxW_spec, ih]
 
 theorem maxpoolW_eq : maxpoolW = maxpoolSpec := by
-  funext c h w k inp
+  funext s inp
   simp only [maxpoolW, maxpoolSpec, foldl_maxW, toWord_ofW]
 
 /-! ## The entry -/
@@ -787,13 +788,13 @@ theorem maxpoolW_eq : maxpoolW = maxpoolSpec := by
 def kernels : Kernels where
   core := ⟨sumX, dotX⟩
   dense := ⟨linearWith dotFn, gemmWith dotFn⟩
-  conv := ⟨conv2dWith dotFn, depthwiseSpec⟩
+  conv := ⟨conv2dWith dotFn, depthwiseSpec, convTransposeWith dotFn⟩
   elem := ⟨avgpoolWith dotFn, maxpoolW, addReluSpec, scaleShiftSpec⟩
   norm := ⟨rmsnormWith dotFn, layernormWith dotFn⟩
 
 theorem correct : Obligation kernels := by
   simp only [Obligation, kernels, specKernels, specCore, specDense, specConv, specElem, specNorm,
-    linearSpec, gemmSpec, conv2dSpec, depthwiseSpec, avgpoolSpec, rmsnormSpec, layernormSpec,
+    linearSpec, gemmSpec, conv2dSpec, depthwiseSpec, convTransposeSpec, avgpoolSpec, rmsnormSpec, layernormSpec,
     maxpoolW_eq, dotFn_eq_dotOf, funext sumX_eq_spec, funext fun a => funext (dotX_eq_spec a)]
 
 end Submission

@@ -86,7 +86,9 @@ def gemmSpec := gemmWith dotOf
 
 /-! ## Convolution, NCHW, one image -/
 
-/-- A convolution's shape: input channels and size, output channels, filter size, stride, zero padding. -/
+/-- A convolution's shape: input channels and size, output channels, filter size, per-axis
+stride, zero padding on each side (top, left, bottom, right), per-axis dilation, and groups.
+The defaults give an ungrouped, undilated convolution with stride 1 and no padding. -/
 structure ConvShape where
   cin : Nat
   h : Nat
@@ -94,80 +96,242 @@ structure ConvShape where
   cout : Nat
   kh : Nat
   kw : Nat
-  stride : Nat
-  pad : Nat
+  strideH : Nat := 1
+  strideW : Nat := 1
+  padT : Nat := 0
+  padL : Nat := 0
+  padB : Nat := 0
+  padR : Nat := 0
+  dilH : Nat := 1
+  dilW : Nat := 1
+  groups : Nat := 1
 
+/-- The common case: square stride `stride` and the same `pad` on every side. -/
+def ConvShape.simple (cin h w cout kh kw stride pad : Nat) : ConvShape :=
+  { cin, h, w, cout, kh, kw, strideH := stride, strideW := stride,
+    padT := pad, padL := pad, padB := pad, padR := pad }
+
+/-- Height of the dilated filter, `dilH·(kh−1)+1`. -/
+def ConvShape.ekh (s : ConvShape) : Nat := s.dilH * (s.kh - 1) + 1
+/-- Width of the dilated filter, `dilW·(kw−1)+1`. -/
+def ConvShape.ekw (s : ConvShape) : Nat := s.dilW * (s.kw - 1) + 1
 /-- Output height. -/
-def ConvShape.ho (s : ConvShape) : Nat := (s.h + 2 * s.pad - s.kh) / s.stride + 1
+def ConvShape.ho (s : ConvShape) : Nat := (s.h + s.padT + s.padB - s.ekh) / s.strideH + 1
 /-- Output width. -/
-def ConvShape.wo (s : ConvShape) : Nat := (s.w + 2 * s.pad - s.kw) / s.stride + 1
+def ConvShape.wo (s : ConvShape) : Nat := (s.w + s.padL + s.padR - s.ekw) / s.strideW + 1
+/-- Input channels per group. -/
+def ConvShape.cpg (s : ConvShape) : Nat := s.cin / s.groups
+/-- Output channels per group. -/
+def ConvShape.opg (s : ConvShape) : Nat := s.cout / s.groups
+/-- Terms of one output's dot product (before the bias): one group's channels times the filter. -/
+def ConvShape.taps (s : ConvShape) : Nat := s.cpg * s.kh * s.kw
 
-/-- Element `t` of the input window of output `(y, x)`, in `(c, dy, dx)` order; zero outside the
-image. -/
-@[inline] def windowAt (s : ConvShape) (inp : Array Word) (y x t : Nat) : Word :=
-  let c := t / (s.kh * s.kw)
+/-- The same geometry as a depthwise convolution: one group per input channel, multiplier 1. -/
+def ConvShape.depthwise (s : ConvShape) : ConvShape := { s with cout := s.cin, groups := s.cin }
+
+/-- Element `t` of group `g`'s input window of output `(y, x)`, in `(c, dy, dx)` order with `c`
+counted within the group; zero in the padding. -/
+@[inline] def windowAt (s : ConvShape) (inp : Array Word) (g y x t : Nat) : Word :=
+  let c := g * s.cpg + t / (s.kh * s.kw)
   let dy := t / s.kw % s.kh
   let dx := t % s.kw
-  let yy := y * s.stride + dy
-  let xx := x * s.stride + dx
-  if yy < s.pad ∨ xx < s.pad ∨ yy - s.pad ≥ s.h ∨ xx - s.pad ≥ s.w then 0
-  else inp[(c * s.h + (yy - s.pad)) * s.w + (xx - s.pad)]!
+  let yy := y * s.strideH + dy * s.dilH
+  let xx := x * s.strideW + dx * s.dilW
+  if yy < s.padT ∨ xx < s.padL ∨ yy - s.padT ≥ s.h ∨ xx - s.padL ≥ s.w then 0
+  else inp[(c * s.h + (yy - s.padT)) * s.w + (xx - s.padL)]!
 
-/-- `out[o, y, x] = act(Σ_{c, dy, dx} in[c, …] · w[o, c, dy, dx] + b[o])`. -/
+/-- `out[o, y, x] = act(Σ_{c, dy, dx} in[g·cpg + c, …] · w[o, c, dy, dx] + b[o])`, where
+`g = o / opg` is the output channel's group; NCHW input, OIHW weights with `I = cin / groups`. -/
 @[specialize] def conv2dWith (dot : DotFn) (s : ConvShape) (relu : Bool) (inp wts b : Array Word) :
     Array Word :=
-  let k := s.cin * s.kh * s.kw
+  let k := s.taps
   Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
     let o := q.val / (s.ho * s.wo)
     let y := q.val / s.wo % s.ho
     let x := q.val % s.wo
-    act relu <| dot (k + 1) (fun t => if t < k then windowAt s inp y x t else oneW)
+    let g := o / s.opg
+    act relu <| dot (k + 1) (fun t => if t < k then windowAt s inp g y x t else oneW)
       (fun t => if t < k then wts[o * k + t]! else b[o]!)
 
 /-- The `conv2d` spec: `conv2dWith` run with FloatLib's dot product. -/
 def conv2dSpec := conv2dWith dotOf
 
-/-- Depthwise: channel `c` of the output uses only channel `c` of the input and its own filter
-(`cout` is ignored; the output has `cin` channels). -/
+/-- Depthwise: channel `c` of the output uses only channel `c` of the input and its own filter.
+It is `conv2d` with `groups = cout = cin`; the shape's own `cout` and `groups` are ignored. -/
 @[specialize] def depthwiseWith (dot : DotFn) (s : ConvShape) (relu : Bool)
     (inp wts b : Array Word) : Array Word :=
-  let k := s.kh * s.kw
-  Array.ofFn (n := s.cin * (s.ho * s.wo)) fun q =>
-    let c := q.val / (s.ho * s.wo)
-    let y := q.val / s.wo % s.ho
-    let x := q.val % s.wo
-    act relu <| dot (k + 1) (fun t => if t < k then windowAt s inp y x (c * k + t) else oneW)
-      (fun t => if t < k then wts[c * k + t]! else b[c]!)
+  conv2dWith dot s.depthwise relu inp wts b
 
 /-- The `depthwise` spec: `depthwiseWith` run with FloatLib's dot product. -/
 def depthwiseSpec := depthwiseWith dotOf
 
-/-! ## Element-wise and pooling (`c` channels of `h × w`, `k × k` windows, stride `k`) -/
+/-- A transposed convolution's shape: the convolution's fields read as in ONNX `ConvTranspose`
+(`cin, h, w` the input, padding removed from the output), plus extra output rows and columns. -/
+structure ConvTShape extends ConvShape where
+  outPadH : Nat := 0
+  outPadW : Nat := 0
 
-/-- Element `t` of the pooling window of output `(ch, y, x)`. -/
-@[inline] def poolAt (h w k : Nat) (inp : Array Word) (ch y x t : Nat) : Word :=
-  inp[(ch * h + y * k + t / k) * w + x * k + t % k]!
+/-- Output height: `strideH·(h−1) + outPadH + ekh − padT − padB`. -/
+def ConvTShape.ho (s : ConvTShape) : Nat :=
+  s.strideH * (s.h - 1) + s.outPadH + s.ekh - (s.padT + s.padB)
+/-- Output width: `strideW·(w−1) + outPadW + ekw − padL − padR`. -/
+def ConvTShape.wo (s : ConvTShape) : Nat :=
+  s.strideW * (s.w - 1) + s.outPadW + s.ekw - (s.padL + s.padR)
 
-/-- The window's exact sum, then FloatLib's `div` by `k²`. Global average pooling: `k = h = w`. -/
-@[specialize] def avgpoolWith (dot : DotFn) (c h w k : Nat) (inp : Array Word) : Array Word :=
-  Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-    let ch := q.val / (h / k * (w / k))
-    let y := q.val / (w / k) % (h / k)
-    let x := q.val % (w / k)
-    let s := dot (k * k) (poolAt h w k inp ch y x) (fun _ => oneW)
-    toWord (Model.div (ofW s) (ofW (natW (k * k))))
+/-- Input position `i` reaches output position `p` through filter tap `d` when
+`i·stride + d·dil = p + pad`; the input index, if there is one inside `[0, n)`. -/
+@[inline] def tapSource (p pad d dil stride n : Nat) : Option Nat :=
+  if p + pad < d * dil then none
+  else
+    let q := p + pad - d * dil
+    if q % stride = 0 ∧ q / stride < n then some (q / stride) else none
+
+/-- The taps `t < taps` (in `(c, dy, dx)` order) that reach output `(y, x)`. -/
+def convTTaps (s : ConvTShape) (y x : Nat) : Array Nat :=
+  (Array.range s.taps).filter fun t =>
+    (tapSource y s.padT (t / s.kw % s.kh) s.dilH s.strideH s.h).isSome &&
+      (tapSource x s.padL (t % s.kw) s.dilW s.strideW s.w).isSome
+
+/-- The input value tap `t` of group `g` brings to output `(y, x)` (only read for listed taps). -/
+@[inline] def convTInput (s : ConvTShape) (inp : Array Word) (g y x t : Nat) : Word :=
+  let c := g * s.cpg + t / (s.kh * s.kw)
+  let iy := (tapSource y s.padT (t / s.kw % s.kh) s.dilH s.strideH s.h).getD 0
+  let ix := (tapSource x s.padL (t % s.kw) s.dilW s.strideW s.w).getD 0
+  inp[(c * s.h + iy) * s.w + ix]!
+
+/-- The weight of tap `t` for output channel `o`; weights are `cin × (cout/groups) × kh × kw`. -/
+@[inline] def convTWeight (s : ConvTShape) (wts : Array Word) (o t : Nat) : Word :=
+  let g := o / s.opg
+  let c := g * s.cpg + t / (s.kh * s.kw)
+  wts[((c * s.opg + o % s.opg) * s.kh + t / s.kw % s.kh) * s.kw + t % s.kw]!
+
+/-- `out[o, y, x] = act(Σ in[c, iy, ix] · w[c, o mod opg, dy, dx] + b[o])` over exactly the taps
+with `iy·strideH + dy·dilH = y + padT` and `ix·strideW + dx·dilW = x + padL` inside the input,
+in `(c, dy, dx)` order, bias last, rounded once. Taps that reach no input are not terms, so they
+add no zero (and no `0·∞`). -/
+@[specialize] def convTransposeWith (dot : DotFn) (s : ConvTShape) (relu : Bool)
+    (inp wts b : Array Word) : Array Word :=
+  Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
+    let o := q.val / (s.ho * s.wo)
+    let y := q.val / s.wo % s.ho
+    let x := q.val % s.wo
+    let g := o / s.opg
+    let taps := convTTaps s y x
+    act relu <| dot (taps.size + 1)
+      (fun i => if i < taps.size then convTInput s inp g y x taps[i]! else oneW)
+      (fun i => if i < taps.size then convTWeight s wts o taps[i]! else b[o]!)
+
+/-- The `convTranspose` spec: `convTransposeWith` run with FloatLib's dot product. -/
+def convTransposeSpec := convTransposeWith dotOf
+
+/-! ## Pooling -/
+
+/-- A pooling shape: `c` channels of `h × w`, a `kh × kw` window, per-axis stride, padding on
+each side (top, left, bottom, right), the output size rule, and whether average pooling divides
+by the window's cells in the padded input (`countIncludePad`) or only its cells in the image. -/
+structure PoolShape where
+  c : Nat
+  h : Nat
+  w : Nat
+  kh : Nat
+  kw : Nat
+  strideH : Nat
+  strideW : Nat
+  padT : Nat := 0
+  padL : Nat := 0
+  padB : Nat := 0
+  padR : Nat := 0
+  ceilMode : Bool := false
+  countIncludePad : Bool := false
+
+/-- The original pooling: `k × k` windows with stride `k`, no padding. Global pooling of a square
+image is `square c n n n`. -/
+def PoolShape.square (c h w k : Nat) : PoolShape :=
+  { c, h, w, kh := k, kw := k, strideH := k, strideW := k }
+
+/-- Global pooling: one window covering the whole `h × w` image. -/
+def PoolShape.global (c h w : Nat) : PoolShape :=
+  { c, h, w, kh := h, kw := w, strideH := 1, strideW := 1 }
+
+/-- Output length along one axis of `n` cells, padding `lo`/`hi`, window `k`, stride `st`.
+Floor mode keeps whole windows of the padded input. Ceil mode also keeps a last, partial window,
+except one that would start in the bottom/right padding (ONNX Runtime's and PyTorch's rule). -/
+def poolOut (n lo hi k st : Nat) (ceil : Bool) : Nat :=
+  let span := n + lo + hi - k
+  if ceil then
+    let o := (span + st - 1) / st + 1
+    if (o - 1) * st ≥ n + lo then o - 1 else o
+  else span / st + 1
+
+/-- Output height. -/
+def PoolShape.ho (s : PoolShape) : Nat := poolOut s.h s.padT s.padB s.kh s.strideH s.ceilMode
+/-- Output width. -/
+def PoolShape.wo (s : PoolShape) : Nat := poolOut s.w s.padL s.padR s.kw s.strideW s.ceilMode
+
+/-- The rows (or columns) `[lo, hi)` of the image under window `i` along an axis: the window
+covers padded positions `[i·st, i·st + k)`, that is image positions from `i·st − pad`. -/
+@[inline] def poolSpan (i st pad k n : Nat) : Nat × Nat :=
+  (i * st - pad, min (i * st + k) (pad + n) - pad)
+
+/-- The number of the window's positions inside the padded input of `pad + n + padHi`. -/
+@[inline] def poolPadded (i st k pad n padHi : Nat) : Nat :=
+  min (i * st + k) (pad + n + padHi) - i * st
+
+/-- The image cells of output `(ch, y, x)`'s window form a rectangle `rows × cols` with corner
+`(y0, x0)`; cell `t` is at `(y0 + t / cols, x0 + t % cols)`. Padding cells are not cells. -/
+structure PoolWindow where
+  y0 : Nat
+  x0 : Nat
+  rows : Nat
+  cols : Nat
+
+/-- Output `(y, x)`'s window. -/
+@[inline] def PoolShape.window (s : PoolShape) (y x : Nat) : PoolWindow :=
+  let (y0, y1) := poolSpan y s.strideH s.padT s.kh s.h
+  let (x0, x1) := poolSpan x s.strideW s.padL s.kw s.w
+  ⟨y0, x0, y1 - y0, x1 - x0⟩
+
+/-- Cell `t` of channel `ch` in window `win`. -/
+@[inline] def poolCell (s : PoolShape) (inp : Array Word) (ch : Nat) (win : PoolWindow)
+    (t : Nat) : Word :=
+  inp[(ch * s.h + win.y0 + t / win.cols) * s.w + win.x0 + t % win.cols]!
+
+/-- Average pooling's divisor for output `(y, x)`: the window's cells in the image, or with
+`countIncludePad` its positions in the padded input (positions past it, from ceil mode, never
+count). -/
+@[inline] def PoolShape.divisor (s : PoolShape) (y x : Nat) : Nat :=
+  if s.countIncludePad then
+    poolPadded y s.strideH s.kh s.padT s.h s.padB * poolPadded x s.strideW s.kw s.padL s.w s.padR
+  else
+    let win := s.window y x
+    win.rows * win.cols
+
+/-- The exact sum of the window's image cells (row-major), then FloatLib's `div` by the divisor. -/
+@[specialize] def avgpoolWith (dot : DotFn) (s : PoolShape) (inp : Array Word) : Array Word :=
+  Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+    let ch := q.val / (s.ho * s.wo)
+    let y := q.val / s.wo % s.ho
+    let x := q.val % s.wo
+    let win := s.window y x
+    let total := dot (win.rows * win.cols) (poolCell s inp ch win) (fun _ => oneW)
+    toWord (Model.div (ofW total) (ofW (natW (s.divisor y x))))
 
 /-- The `avgpool` spec: `avgpoolWith` run with FloatLib's dot product. -/
 def avgpoolSpec := avgpoolWith dotOf
 
-/-- FloatLib's IEEE `maximum` over each window, left to right. -/
-def maxpoolSpec (c h w k : Nat) (inp : Array Word) : Array Word :=
-  Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-    let ch := q.val / (h / k * (w / k))
-    let y := q.val / (w / k) % (h / k)
-    let x := q.val % (w / k)
-    toWord <| (List.range (k * k)).foldl (fun acc t =>
-      Model.maximum acc (ofW (poolAt h w k inp ch y x t))) (ofW (poolAt h w k inp ch y x 0))
+/-- FloatLib's IEEE `maximum` over the window's image cells, row-major, starting from the first
+cell (which is also the first folded in, so a lone signalling NaN is quieted). Padding is not a
+value. -/
+def maxpoolSpec (s : PoolShape) (inp : Array Word) : Array Word :=
+  Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+    let ch := q.val / (s.ho * s.wo)
+    let y := q.val / s.wo % s.ho
+    let x := q.val % s.wo
+    let win := s.window y x
+    toWord <| (List.range (win.rows * win.cols)).foldl (fun acc t =>
+      Model.maximum acc (ofW (poolCell s inp ch win t))) (ofW (poolCell s inp ch win 0))
+
+/-! ## Element-wise -/
 
 /-- Residual add with optional ReLU. -/
 def addReluSpec (relu : Bool) (a b : Array Word) : Array Word :=
@@ -243,15 +407,16 @@ structure DenseKernels where
   linear : Nat → Nat → Nat → Bool → Array Word → Array Word → Array Word → Array Word
   gemm : Nat → Nat → Nat → Nat → Array Word → Array Word → Array Word
 
-/-- The convolution family: `conv2d` and `depthwise`. -/
+/-- The convolution family: `conv2d`, `depthwise` and `convTranspose`. -/
 structure ConvKernels where
   conv2d : ConvShape → Bool → Array Word → Array Word → Array Word → Array Word
   depthwise : ConvShape → Bool → Array Word → Array Word → Array Word → Array Word
+  convTranspose : ConvTShape → Bool → Array Word → Array Word → Array Word → Array Word
 
 /-- The element family: pooling, the residual add and batch norm. -/
 structure ElementKernels where
-  avgpool : Nat → Nat → Nat → Nat → Array Word → Array Word
-  maxpool : Nat → Nat → Nat → Nat → Array Word → Array Word
+  avgpool : PoolShape → Array Word → Array Word
+  maxpool : PoolShape → Array Word → Array Word
   addRelu : Bool → Array Word → Array Word → Array Word
   scaleShift : Bool → Nat → Nat → Array Word → Array Word → Array Word → Array Word
 
@@ -260,7 +425,7 @@ structure NormKernels where
   rmsnorm : Nat → Nat → Word → Array Word → Array Word → Array Word
   layernorm : Nat → Nat → Word → Array Word → Array Word → Array Word → Array Word
 
-/-- An entry's 12 kernels, by family. -/
+/-- An entry's 13 kernels, by family. -/
 structure Kernels where
   core : CoreKernels
   dense : DenseKernels
@@ -273,12 +438,12 @@ def specCore : CoreKernels := ⟨sumSpec, dotSpec⟩
 /-- The dense family's specs. -/
 def specDense : DenseKernels := ⟨linearSpec, gemmSpec⟩
 /-- The convolution family's specs. -/
-def specConv : ConvKernels := ⟨conv2dSpec, depthwiseSpec⟩
+def specConv : ConvKernels := ⟨conv2dSpec, depthwiseSpec, convTransposeSpec⟩
 /-- The element family's specs. -/
 def specElem : ElementKernels := ⟨avgpoolSpec, maxpoolSpec, addReluSpec, scaleShiftSpec⟩
 /-- The normalisation family's specs. -/
 def specNorm : NormKernels := ⟨rmsnormSpec, layernormSpec⟩
-/-- All 12 specs: what an entry's kernels must equal. -/
+/-- All 13 specs: what an entry's kernels must equal. -/
 def specKernels : Kernels := ⟨specCore, specDense, specConv, specElem, specNorm⟩
 
 /-- The obligation an entry proves: each of its kernels equals the spec. -/
@@ -313,9 +478,10 @@ inductive Layer where
   | gemm (m k n : Nat) (a : Array Word)       -- left-multiply the activation (`k × n`) by `a`
   | conv (s : ConvShape) (relu : Bool) (w b : Array Word)
   | depthwise (s : ConvShape) (relu : Bool) (w b : Array Word)
+  | convTranspose (s : ConvTShape) (relu : Bool) (w b : Array Word)
   | bn (relu : Bool) (c hw : Nat) (s t : Array Word)
-  | maxpool (c h w k : Nat)
-  | avgpool (c h w k : Nat)
+  | maxpool (s : PoolShape)
+  | avgpool (s : PoolShape)
   | rmsnorm (rows n : Nat) (eps : Word) (g : Array Word)
   | layernorm (rows n : Nat) (eps : Word) (g b : Array Word)
   | save                                      -- remember the activation
@@ -327,9 +493,10 @@ def Layer.apply (K : Kernels) : Layer → Array Word × Array Word → Array Wor
   | .gemm m k n a, (x, s) => (K.dense.gemm 1 m k n a x, s)
   | .conv sh relu w b, (x, s) => (K.conv.conv2d sh relu x w b, s)
   | .depthwise sh relu w b, (x, s) => (K.conv.depthwise sh relu x w b, s)
+  | .convTranspose sh relu w b, (x, s) => (K.conv.convTranspose sh relu x w b, s)
   | .bn relu c hw sc t, (x, s) => (K.elem.scaleShift relu c hw x sc t, s)
-  | .maxpool c h w k, (x, s) => (K.elem.maxpool c h w k x, s)
-  | .avgpool c h w k, (x, s) => (K.elem.avgpool c h w k x, s)
+  | .maxpool sh, (x, s) => (K.elem.maxpool sh x, s)
+  | .avgpool sh, (x, s) => (K.elem.avgpool sh x, s)
   | .rmsnorm rows n eps g, (x, s) => (K.norm.rmsnorm rows n eps x g, s)
   | .layernorm rows n eps g b, (x, s) => (K.norm.layernorm rows n eps x g b, s)
   | .save, (x, _) => (x, x)

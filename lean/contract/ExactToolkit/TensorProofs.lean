@@ -62,7 +62,10 @@ theorem conv_input_bound (s : ConvShape) (dw : Bool) (input w b : Array Word)
     (hv : ConvValid s dw input w b) (c y x : Nat)
     (hc : c < s.cin) (hy : y < s.h) (hx : x < s.w) :
     (c * s.h + y) * s.w + x < input.size := by
-  rw [hv.2.1]
+  have hsize : input.size = s.cin * s.h * s.w := by
+    unfold ConvValid at hv
+    cases dw <;> simpa [ConvShape.depthwise] using hv.2.1
+  rw [hsize]
   exact flat_lt (c * s.h + y) x (s.cin * s.h) s.w (flat_lt c y s.cin s.h hc hy) hx
 
 /-- Signed spatial coordinates express padding without saturating subtraction. -/
@@ -71,48 +74,56 @@ def paddedAt (s : ConvShape) (input : Array Word) (c : Nat) (y x : Int) : Word :
     input[(c * s.h + y.toNat) * s.w + x.toNat]!
   else 0
 
-theorem window_coordinates (s : ConvShape) (input : Array Word) (y x c dy dx : Nat)
+/-- Group `g`'s window element for channel `c`, filter row `dy`, column `dx` is the input at
+`(y·strideH + dy·dilH − padT, x·strideW + dx·dilW − padL)` of channel `g·cpg + c`, zero
+outside. -/
+theorem window_coordinates (s : ConvShape) (input : Array Word) (g y x c dy dx : Nat)
     (hdy : dy < s.kh) (hdx : dx < s.kw) :
-    windowAt s input y x ((c * s.kh + dy) * s.kw + dx) =
-      paddedAt s input c ((y * s.stride + dy : Nat) - (s.pad : Int))
-        ((x * s.stride + dx : Nat) - (s.pad : Int)) := by
+    windowAt s input g y x ((c * s.kh + dy) * s.kw + dx) =
+      paddedAt s input (g * s.cpg + c) ((y * s.strideH + dy * s.dilH : Nat) - (s.padT : Int))
+        ((x * s.strideW + dx * s.dilW : Nat) - (s.padL : Int)) := by
   have hp := flatten_pair (c * s.kh + dy) dx s.kw (by omega) hdx
   have hc := flatten_pair c dy s.kh (by omega) hdy
   have hchannel : ((c * s.kh + dy) * s.kw + dx) / (s.kh * s.kw) = c := by
     rw [Nat.mul_comm s.kh s.kw, ← Nat.div_div_eq_div_mul, hp.1, hc.1]
   simp only [windowAt, hp.1, hp.2, hc.2, hchannel, paddedAt]
-  by_cases hy : s.pad ≤ y * s.stride + dy
-  · by_cases hx : s.pad ≤ x * s.stride + dx
+  by_cases hy : s.padT ≤ y * s.strideH + dy * s.dilH
+  · by_cases hx : s.padL ≤ x * s.strideW + dx * s.dilW
     · have hy' := Int.ofNat_sub hy
       have hx' := Int.ofNat_sub hx
       simp only [← hy', ← hx', Int.natCast_nonneg, true_and, Int.toNat_natCast]
       simp only [Nat.not_lt.mpr hy, Nat.not_lt.mpr hx, false_or]
       split_ifs <;> simp_all <;> omega
-    · have hx' : (x * s.stride + dx : Int) - s.pad < 0 := by omega
+    · have hx' : (x * s.strideW + dx * s.dilW : Int) - s.padL < 0 := by omega
       simp [Nat.lt_of_not_ge hx]
       omega
-  · have hy' : (y * s.stride + dy : Int) - s.pad < 0 := by omega
+  · have hy' : (y * s.strideH + dy * s.dilH : Int) - s.padT < 0 := by omega
     simp [Nat.lt_of_not_ge hy]
     omega
 
-theorem pool_coordinates (h w k ch y x dy dx : Nat) (input : Array Word)
-    (hdy : dy < k) (hdx : dx < k) :
-    poolAt h w k input ch y x (dy * k + dx) =
-      input[(ch * h + y * k + dy) * w + x * k + dx]! := by
-  have hp := flatten_pair dy dx k (by omega) hdx
-  simp [poolAt, hp.1, hp.2]
+/-- Cell `(dy, dx)` of a pooling window is the input at its corner plus `(dy, dx)`. -/
+theorem pool_coordinates (s : PoolShape) (input : Array Word) (ch : Nat) (win : PoolWindow)
+    (dy dx : Nat) (hdx : dx < win.cols) :
+    poolCell s input ch win (dy * win.cols + dx) =
+      input[(ch * s.h + win.y0 + dy) * s.w + win.x0 + dx]! := by
+  have hp := flatten_pair dy dx win.cols (by omega) hdx
+  simp [poolCell, hp.1, hp.2, Nat.add_assoc]
 
-theorem pool_input_bound (c h w k ch y x dy dx : Nat) (input : Array Word)
-    (hv : PoolValid c h w k input) (hc : ch < c) (hy : y < h / k) (hx : x < w / k)
-    (hdy : dy < k) (hdx : dx < k) :
-    (ch * h + y * k + dy) * w + x * k + dx < input.size := by
-  have hyy : y * k + dy < h := lt_of_lt_of_le (flat_lt y dy (h / k) k hy hdy)
-    (Nat.div_mul_le_self h k)
-  have hxx : x * k + dx < w := lt_of_lt_of_le (flat_lt x dx (w / k) k hx hdx)
-    (Nat.div_mul_le_self w k)
-  rw [hv.2.2.2.2.2.2]
-  simpa [Nat.add_assoc] using flat_lt (ch * h + (y * k + dy)) (x * k + dx)
-    (c * h) w (flat_lt ch (y * k + dy) c h hc hyy) hxx
+/-- A window's cells lie in the image: its rectangle never reaches the padding. -/
+theorem pool_window_inside (s : PoolShape) (y x dy dx : Nat)
+    (hdy : dy < (s.window y x).rows) (hdx : dx < (s.window y x).cols) :
+    (s.window y x).y0 + dy < s.h ∧ (s.window y x).x0 + dx < s.w := by
+  simp only [PoolShape.window, poolSpan] at hdy hdx ⊢
+  constructor <;> omega
+
+theorem pool_input_bound (s : PoolShape) (input : Array Word) (hv : PoolValid s input)
+    (ch y x dy dx : Nat) (hc : ch < s.c)
+    (hdy : dy < (s.window y x).rows) (hdx : dx < (s.window y x).cols) :
+    (ch * s.h + (s.window y x).y0 + dy) * s.w + (s.window y x).x0 + dx < input.size := by
+  have hin := pool_window_inside s y x dy dx hdy hdx
+  rw [hv.2]
+  simpa [Nat.add_assoc] using flat_lt (ch * s.h + ((s.window y x).y0 + dy))
+    ((s.window y x).x0 + dx) (s.c * s.h) s.w (flat_lt ch _ s.c s.h hc hin.1) hin.2
 
 theorem triple_coordinates (batch row col rows cols : Nat) (hr : row < rows) (hc : col < cols) :
     ((batch * rows + row) * cols + col) / (rows * cols) = batch ∧
@@ -126,28 +137,48 @@ theorem triple_coordinates (batch row col rows cols : Nat) (hr : row < rows) (hc
 theorem conv2d_entry (s : ConvShape) (relu : Bool) (input w b : Array Word) (o y x : Nat)
     (ho : o < s.cout) (hy : y < s.ho) (hx : x < s.wo) :
     (conv2dSpec s relu input w b)[(o * s.ho + y) * s.wo + x]! =
-      act relu (dotOf (s.cin * s.kh * s.kw + 1)
-        (fun t => if t < s.cin * s.kh * s.kw then windowAt s input y x t else oneW)
-        (fun t => if t < s.cin * s.kh * s.kw then w[o * (s.cin * s.kh * s.kw) + t]!
-          else b[o]!)) := by
+      act relu (dotOf (s.taps + 1)
+        (fun t => if t < s.taps then windowAt s input (o / s.opg) y x t else oneW)
+        (fun t => if t < s.taps then w[o * s.taps + t]! else b[o]!)) := by
   have hp := triple_coordinates o y x s.ho s.wo hy hx
   have hflat := flat_lt (o * s.ho + y) x (s.cout * s.ho) s.wo
     (flat_lt o y s.cout s.ho ho hy) hx
   rw [getElem!_pos _ _ (by simpa [Nat.mul_assoc] using hflat)]
-  simp [conv2dSpec, conv2dWith, hp.1, hp.2.1, hp.2.2, Nat.mul_assoc]
+  simp [conv2dSpec, conv2dWith, hp.1, hp.2.1, hp.2.2]
+
+theorem depthwise_taps (s : ConvShape) (hc : 0 < s.cin) :
+    s.depthwise.taps = s.kh * s.kw ∧ s.depthwise.opg = 1 := by
+  simp [ConvShape.depthwise, ConvShape.taps, ConvShape.cpg, ConvShape.opg, Nat.div_self hc,
+    Nat.mul_assoc]
 
 theorem depthwise_entry (s : ConvShape) (relu : Bool) (input w b : Array Word) (c y x : Nat)
     (hc : c < s.cin) (hy : y < s.ho) (hx : x < s.wo) :
     (depthwiseSpec s relu input w b)[(c * s.ho + y) * s.wo + x]! =
       act relu (dotOf (s.kh * s.kw + 1)
-        (fun t => if t < s.kh * s.kw then windowAt s input y x (c * (s.kh * s.kw) + t)
-          else oneW)
+        (fun t => if t < s.kh * s.kw then windowAt s.depthwise input c y x t else oneW)
         (fun t => if t < s.kh * s.kw then w[c * (s.kh * s.kw) + t]! else b[c]!)) := by
-  have hp := triple_coordinates c y x s.ho s.wo hy hx
-  have hflat := flat_lt (c * s.ho + y) x (s.cin * s.ho) s.wo
-    (flat_lt c y s.cin s.ho hc hy) hx
-  rw [getElem!_pos _ _ (by simpa [Nat.mul_assoc] using hflat)]
-  simp [depthwiseSpec, depthwiseWith, hp.1, hp.2.1, hp.2.2]
+  have hd := depthwise_taps s (by omega)
+  have h := conv2d_entry s.depthwise relu input w b c y x
+    (by simpa [ConvShape.depthwise] using hc) (by simpa [ConvShape.depthwise, ConvShape.ho,
+      ConvShape.ekh] using hy) (by simpa [ConvShape.depthwise, ConvShape.wo, ConvShape.ekw] using hx)
+  rw [hd.1, hd.2, Nat.div_one] at h
+  simpa [depthwiseSpec, depthwiseWith, conv2dSpec, ConvShape.depthwise, ConvShape.ho,
+    ConvShape.wo, ConvShape.ekh, ConvShape.ekw] using h
+
+theorem convTranspose_entry (s : ConvTShape) (relu : Bool) (input w b : Array Word)
+    (o y x : Nat) (ho : o < s.cout) (hy : y < s.ho) (hx : x < s.wo) :
+    (convTransposeSpec s relu input w b)[(o * s.ho + y) * s.wo + x]! =
+      act relu (dotOf ((convTTaps s y x).size + 1)
+        (fun i => if i < (convTTaps s y x).size then
+          convTInput s input (o / s.opg) y x (convTTaps s y x)[i]! else oneW)
+        (fun i => if i < (convTTaps s y x).size then
+          convTWeight s w o (convTTaps s y x)[i]! else b[o]!)) := by
+  have hp := triple_coordinates o y x s.ho s.wo hy hx
+  have hflat := flat_lt (o * s.ho + y) x (s.cout * s.ho) s.wo
+    (flat_lt o y s.cout s.ho ho hy) hx
+  rw [getElem!_pos _ _ (by simpa [convTransposeSpec, convTransposeWith, Nat.mul_assoc]
+    using hflat)]
+  simp [convTransposeSpec, convTransposeWith, hp.1, hp.2.1, hp.2.2]
 
 theorem addRelu_entry (relu : Bool) (a b : Array Word) (i : Nat) (hi : i < a.size) :
     (addReluSpec relu a b)[i]! =
@@ -163,27 +194,26 @@ theorem scaleShift_entry (relu : Bool) (c hw ch t : Nat) (x s b : Array Word)
   rw [getElem!_pos _ _ (by simpa [scaleShiftSpec] using flat_lt ch t c hw hc ht)]
   simp [scaleShiftSpec, hp.1]
 
-theorem avgpool_entry (c h w k ch y x : Nat) (input : Array Word)
-    (hc : ch < c) (hy : y < h / k) (hx : x < w / k) :
-    (avgpoolSpec c h w k input)[(ch * (h / k) + y) * (w / k) + x]! =
+theorem avgpool_entry (s : PoolShape) (input : Array Word) (ch y x : Nat)
+    (hc : ch < s.c) (hy : y < s.ho) (hx : x < s.wo) :
+    (avgpoolSpec s input)[(ch * s.ho + y) * s.wo + x]! =
       toWord (Model.div
-        (ofW (dotOf (k * k) (poolAt h w k input ch y x) (fun _ => oneW)))
-        (ofW (natW (k * k)))) := by
-  have hp := triple_coordinates ch y x (h / k) (w / k) hy hx
-  have hflat := flat_lt (ch * (h / k) + y) x (c * (h / k)) (w / k)
-    (flat_lt ch y c (h / k) hc hy) hx
+        (ofW (dotOf ((s.window y x).rows * (s.window y x).cols)
+          (poolCell s input ch (s.window y x)) (fun _ => oneW)))
+        (ofW (natW (s.divisor y x)))) := by
+  have hp := triple_coordinates ch y x s.ho s.wo hy hx
+  have hflat := flat_lt (ch * s.ho + y) x (s.c * s.ho) s.wo (flat_lt ch y s.c s.ho hc hy) hx
   rw [getElem!_pos _ _ (by simpa [avgpoolSpec, avgpoolWith, Nat.mul_assoc] using hflat)]
   simp [avgpoolSpec, avgpoolWith, hp.1, hp.2.1, hp.2.2]
 
-theorem maxpool_entry (c h w k ch y x : Nat) (input : Array Word)
-    (hc : ch < c) (hy : y < h / k) (hx : x < w / k) :
-    (maxpoolSpec c h w k input)[(ch * (h / k) + y) * (w / k) + x]! =
-      toWord ((List.range (k * k)).foldl (fun acc t =>
-        Model.maximum acc (ofW (poolAt h w k input ch y x t)))
-        (ofW (poolAt h w k input ch y x 0))) := by
-  have hp := triple_coordinates ch y x (h / k) (w / k) hy hx
-  have hflat := flat_lt (ch * (h / k) + y) x (c * (h / k)) (w / k)
-    (flat_lt ch y c (h / k) hc hy) hx
+theorem maxpool_entry (s : PoolShape) (input : Array Word) (ch y x : Nat)
+    (hc : ch < s.c) (hy : y < s.ho) (hx : x < s.wo) :
+    (maxpoolSpec s input)[(ch * s.ho + y) * s.wo + x]! =
+      toWord ((List.range ((s.window y x).rows * (s.window y x).cols)).foldl (fun acc t =>
+        Model.maximum acc (ofW (poolCell s input ch (s.window y x) t)))
+        (ofW (poolCell s input ch (s.window y x) 0))) := by
+  have hp := triple_coordinates ch y x s.ho s.wo hy hx
+  have hflat := flat_lt (ch * s.ho + y) x (s.c * s.ho) s.wo (flat_lt ch y s.c s.ho hc hy) hx
   rw [getElem!_pos _ _ (by simpa [maxpoolSpec, Nat.mul_assoc] using hflat)]
   simp [maxpoolSpec, hp.1, hp.2.1, hp.2.2]
 
@@ -515,30 +545,33 @@ theorem sum_blocks (n k : Nat) (f : Nat → ℚ) :
   | zero => simp
   | succ n ih => rw [Nat.succ_mul, Finset.sum_range_add, ih, Finset.sum_range_succ]
 
+/-- What a convolution output means: the group's channel/filter sum plus bias, over the dilated,
+strided window in signed coordinates (zero outside the image). -/
 def convValue (s : ConvShape) (input w b : Array Word) (o y x : Nat) : ℚ :=
-  (∑ c ∈ Finset.range s.cin, ∑ dy ∈ Finset.range s.kh, ∑ dx ∈ Finset.range s.kw,
-    rationalWord (paddedAt s input c ((y * s.stride + dy : Nat) - (s.pad : Int))
-      ((x * s.stride + dx : Nat) - (s.pad : Int))) *
-        rationalWord w[((o * s.cin + c) * s.kh + dy) * s.kw + dx]!) + rationalWord b[o]!
+  (∑ c ∈ Finset.range s.cpg, ∑ dy ∈ Finset.range s.kh, ∑ dx ∈ Finset.range s.kw,
+    rationalWord (paddedAt s input ((o / s.opg) * s.cpg + c)
+      ((y * s.strideH + dy * s.dilH : Nat) - (s.padT : Int))
+      ((x * s.strideW + dx * s.dilW : Nat) - (s.padL : Int))) *
+        rationalWord w[((o * s.cpg + c) * s.kh + dy) * s.kw + dx]!) + rationalWord b[o]!
 
 /-- The flat convolution reduction is exactly the nested channel/filter sum plus bias. -/
 theorem conv_total (s : ConvShape) (input w b : Array Word) (o y x : Nat) :
-    (∑ t ∈ Finset.range (s.cin * s.kh * s.kw + 1),
-      rationalWord (if t < s.cin * s.kh * s.kw then windowAt s input y x t else oneW) *
-      rationalWord (if t < s.cin * s.kh * s.kw then w[o * (s.cin * s.kh * s.kw) + t]!
-        else b[o]!)) = convValue s input w b o y x := by
+    (∑ t ∈ Finset.range (s.taps + 1),
+      rationalWord (if t < s.taps then windowAt s input (o / s.opg) y x t else oneW) *
+      rationalWord (if t < s.taps then w[o * s.taps + t]! else b[o]!)) =
+        convValue s input w b o y x := by
   rw [Finset.sum_range_succ]
   simp only [lt_self_iff_false, ite_false, rational_one, one_mul, convValue]
   congr 1
-  have hinner : (∑ t ∈ Finset.range (s.cin * s.kh * s.kw),
-      rationalWord (if t < s.cin * s.kh * s.kw then windowAt s input y x t else oneW) *
-      rationalWord (if t < s.cin * s.kh * s.kw then w[o * (s.cin * s.kh * s.kw) + t]!
-        else b[o]!)) = ∑ t ∈ Finset.range (s.cin * s.kh * s.kw),
-          rationalWord (windowAt s input y x t) * rationalWord w[o * (s.cin * s.kh * s.kw) + t]! := by
+  have hinner : (∑ t ∈ Finset.range s.taps,
+      rationalWord (if t < s.taps then windowAt s input (o / s.opg) y x t else oneW) *
+      rationalWord (if t < s.taps then w[o * s.taps + t]! else b[o]!)) =
+        ∑ t ∈ Finset.range s.taps,
+          rationalWord (windowAt s input (o / s.opg) y x t) * rationalWord w[o * s.taps + t]! := by
     apply Finset.sum_congr rfl
     intro t ht
     simp only [if_pos (Finset.mem_range.mp ht)]
-  rw [hinner, Nat.mul_assoc, sum_blocks]
+  rw [hinner, ConvShape.taps, Nat.mul_assoc, sum_blocks]
   apply Finset.sum_congr rfl
   intro c hc
   rw [sum_blocks]
@@ -547,57 +580,45 @@ theorem conv_total (s : ConvShape) (input w b : Array Word) (o y x : Nat) :
   apply Finset.sum_congr rfl
   intro dx hdx
   have ht : c * (s.kh * s.kw) + (dy * s.kw + dx) = (c * s.kh + dy) * s.kw + dx := by ring
-  rw [ht, window_coordinates s input y x c dy dx (Finset.mem_range.mp hdy)
+  rw [ht, window_coordinates s input (o / s.opg) y x c dy dx (Finset.mem_range.mp hdy)
     (Finset.mem_range.mp hdx)]
-  have hw : o * (s.cin * (s.kh * s.kw)) + ((c * s.kh + dy) * s.kw + dx) =
-      ((o * s.cin + c) * s.kh + dy) * s.kw + dx := by ring
+  have hw : o * (s.cpg * (s.kh * s.kw)) + ((c * s.kh + dy) * s.kw + dx) =
+      ((o * s.cpg + c) * s.kh + dy) * s.kw + dx := by ring
   rw [hw]
 
+/-- What a depthwise output means: channel `c`'s window against its own filter, plus bias. -/
 def depthwiseValue (s : ConvShape) (input w b : Array Word) (c y x : Nat) : ℚ :=
   (∑ dy ∈ Finset.range s.kh, ∑ dx ∈ Finset.range s.kw,
-    rationalWord (paddedAt s input c ((y * s.stride + dy : Nat) - (s.pad : Int))
-      ((x * s.stride + dx : Nat) - (s.pad : Int))) *
+    rationalWord (paddedAt s input c ((y * s.strideH + dy * s.dilH : Nat) - (s.padT : Int))
+      ((x * s.strideW + dx * s.dilW : Nat) - (s.padL : Int))) *
         rationalWord w[(c * s.kh + dy) * s.kw + dx]!) + rationalWord b[c]!
 
-theorem depthwise_total (s : ConvShape) (input w b : Array Word) (c y x : Nat) :
+theorem depthwise_total (s : ConvShape) (input w b : Array Word) (c y x : Nat) (hc : 0 < s.cin) :
     (∑ t ∈ Finset.range (s.kh * s.kw + 1),
-      rationalWord (if t < s.kh * s.kw then windowAt s input y x (c * (s.kh * s.kw) + t)
-        else oneW) *
+      rationalWord (if t < s.kh * s.kw then windowAt s.depthwise input c y x t else oneW) *
       rationalWord (if t < s.kh * s.kw then w[c * (s.kh * s.kw) + t]! else b[c]!)) =
         depthwiseValue s input w b c y x := by
-  rw [Finset.sum_range_succ]
-  simp only [lt_self_iff_false, ite_false, rational_one, one_mul, depthwiseValue]
-  congr 1
-  have hinner : (∑ t ∈ Finset.range (s.kh * s.kw),
-      rationalWord (if t < s.kh * s.kw then windowAt s input y x (c * (s.kh * s.kw) + t)
-        else oneW) *
-      rationalWord (if t < s.kh * s.kw then w[c * (s.kh * s.kw) + t]! else b[c]!)) =
-        ∑ t ∈ Finset.range (s.kh * s.kw),
-          rationalWord (windowAt s input y x (c * (s.kh * s.kw) + t)) *
-            rationalWord w[c * (s.kh * s.kw) + t]! := by
-    apply Finset.sum_congr rfl
-    intro t ht
-    simp only [if_pos (Finset.mem_range.mp ht)]
-  rw [hinner, sum_blocks]
-  apply Finset.sum_congr rfl
-  intro dy hdy
-  apply Finset.sum_congr rfl
-  intro dx hdx
-  have ht : c * (s.kh * s.kw) + (dy * s.kw + dx) = (c * s.kh + dy) * s.kw + dx := by ring
-  rw [ht, window_coordinates s input y x c dy dx (Finset.mem_range.mp hdy)
-    (Finset.mem_range.mp hdx)]
+  have hd := depthwise_taps s hc
+  have h := conv_total s.depthwise input w b c y x
+  rw [hd.1, hd.2, Nat.div_one] at h
+  rw [h]
+  have hcpg : s.depthwise.cpg = 1 := by
+    simp [ConvShape.depthwise, ConvShape.cpg, Nat.div_self hc]
+  simp only [convValue, depthwiseValue, hcpg, hd.2, Nat.div_one, Finset.sum_range_one,
+    Nat.mul_one, Nat.add_zero]
+  rfl
 
-theorem pool_total (h w k ch y x : Nat) (input : Array Word) :
-    (∑ t ∈ Finset.range (k * k), rationalWord (poolAt h w k input ch y x t)) =
-      ∑ dy ∈ Finset.range k, ∑ dx ∈ Finset.range k,
-        rationalWord input[(ch * h + y * k + dy) * w + x * k + dx]! := by
+/-- A pooling window's sum is the sum over its rectangle of image cells. -/
+theorem pool_total (s : PoolShape) (input : Array Word) (ch : Nat) (win : PoolWindow) :
+    (∑ t ∈ Finset.range (win.rows * win.cols), rationalWord (poolCell s input ch win t)) =
+      ∑ dy ∈ Finset.range win.rows, ∑ dx ∈ Finset.range win.cols,
+        rationalWord input[(ch * s.h + win.y0 + dy) * s.w + win.x0 + dx]! := by
   rw [sum_blocks]
   apply Finset.sum_congr rfl
   intro dy hdy
   apply Finset.sum_congr rfl
   intro dx hdx
-  rw [pool_coordinates h w k ch y x dy dx input (Finset.mem_range.mp hdy)
-    (Finset.mem_range.mp hdx)]
+  rw [pool_coordinates s input ch win dy dx (Finset.mem_range.mp hdx)]
 
 theorem sum_total (x : Array Word) :
     exactDot x (Array.replicate x.size oneW) = ∑ j ∈ Finset.range x.size, rationalWord x[j]! := by
@@ -625,15 +646,16 @@ theorem maximum_fold_math (indices : List Nat) (f : Nat → Model Fmt) (initial 
       (Model.isNaN_maximum_eq_false_of_isNaN_eq_false _ _ hi (hf i (by simp)))]
     rw [Model.toEReal_maximum_eq_max initial (f i) hi (hf i (by simp))]
 
-theorem maxpool_math (c h w k ch y x : Nat) (input : Array Word)
-    (hc : ch < c) (hy : y < h / k) (hx : x < w / k) (hk : 0 < k)
-    (hf : ∀ t, t < k * k → Model.isNaN (ofW (poolAt h w k input ch y x t)) = false) :
-    Model.toEReal (ofW ((maxpoolSpec c h w k input)[(ch * (h / k) + y) * (w / k) + x]!)) =
-      (List.range (k * k)).foldl (fun acc t =>
-        max acc (Model.toEReal (ofW (poolAt h w k input ch y x t))))
-        (Model.toEReal (ofW (poolAt h w k input ch y x 0))) := by
-  rw [maxpool_entry c h w k ch y x input hc hy hx, model_roundtrip]
-  exact maximum_fold_math _ _ _ (by intro t ht; exact hf t (by simpa using ht))
-    (hf 0 (Nat.mul_pos hk hk))
+theorem maxpool_math (s : PoolShape) (input : Array Word) (ch y x : Nat)
+    (hc : ch < s.c) (hy : y < s.ho) (hx : x < s.wo)
+    (hk : 0 < (s.window y x).rows * (s.window y x).cols)
+    (hf : ∀ t, t < (s.window y x).rows * (s.window y x).cols →
+      Model.isNaN (ofW (poolCell s input ch (s.window y x) t)) = false) :
+    Model.toEReal (ofW ((maxpoolSpec s input)[(ch * s.ho + y) * s.wo + x]!)) =
+      (List.range ((s.window y x).rows * (s.window y x).cols)).foldl (fun acc t =>
+        max acc (Model.toEReal (ofW (poolCell s input ch (s.window y x) t))))
+        (Model.toEReal (ofW (poolCell s input ch (s.window y x) 0))) := by
+  rw [maxpool_entry s input ch y x hc hy hx, model_roundtrip]
+  exact maximum_fold_math _ _ _ (by intro t ht; exact hf t (by simpa using ht)) (hf 0 hk)
 
 end ExactRuntime.TensorMath
