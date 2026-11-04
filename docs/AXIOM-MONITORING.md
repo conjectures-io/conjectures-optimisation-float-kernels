@@ -56,6 +56,12 @@ The [monitor definitions](../deploy/axiom/monitors.json) cover:
 4. Missing auditor heartbeat for five minutes, pinned to a required hostname. It checks
    `count() < 1` without grouping, so a completely absent host still returns zero.
 
+Weight setting is watched by the platform's monitors (conjectures-validator
+`deploy/axiom/monitors.json`), not these: `weights-not-set` (no `weights_set` from
+`competition-weight-setter` in three hours), `weights-failed` and `weights-stalled`. A heartbeat
+cannot stand in for them. Heartbeats come from a background thread, so they keep arriving from a
+setter whose tick is stuck, as happened on 2026-11-03.
+
 Render ready-to-review Axiom v2 monitor bodies (no network calls):
 
 ```bash

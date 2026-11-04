@@ -117,6 +117,8 @@ EventType: TypeAlias = Literal[
     "weights_set",
     "weights_skipped",
     "weights_failed",
+    # A tick ran past WEIGHT_TICK_TIMEOUT_SECONDS; the setter exits for pm2 to restart it.
+    "weights_stalled",
     "log_error",
     "service_heartbeat",
     "service_failed",
