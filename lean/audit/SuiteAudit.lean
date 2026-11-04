@@ -2,22 +2,44 @@ import ExactSuite
 import ExactToolkit.ModelProofs
 import Lean
 
-/-! Structural audit of the actual generated arrays. No inference or timing. -/
+/-! Structural audit of the actual generated arrays. No inference or timing.
+
+Each layer's `dims`, in order (booleans as 0 or 1):
+* `linear`: rows, inner, outputs; `gemm`: m, k, n; `scaleShift`: channels, hw;
+  `rmsnorm`/`layernorm`: rows, n;
+* `conv2d`/`depthwise`: cin, h, w, cout, kh, kw, strideH, strideW, padT, padL, padB, padR,
+  dilH, dilW, groups (the shape as given; depthwise ignores its cout and groups);
+* `convTranspose`: the convolution's fifteen, then outPadH, outPadW;
+* `maxpool`/`avgpool`: c, h, w, kh, kw, strideH, strideW, padT, padL, padB, padR, ceilMode,
+  countIncludePad. -/
 open ExactRuntime ExactSuite Lean
+
+/-- A convolution shape's fields, in the order above. -/
+def convDims (s : ConvShape) : Array Nat :=
+  #[s.cin, s.h, s.w, s.cout, s.kh, s.kw, s.strideH, s.strideW, s.padT, s.padL, s.padB, s.padR,
+    s.dilH, s.dilW, s.groups]
+
+/-- A pooling shape's fields, in the order above. -/
+def poolDims (s : PoolShape) : Array Nat :=
+  #[s.c, s.h, s.w, s.kh, s.kw, s.strideH, s.strideW, s.padT, s.padL, s.padB, s.padR,
+    if s.ceilMode then 1 else 0, if s.countIncludePad then 1 else 0]
 
 def shapeRecord (l : Layer) (shape : Nat × Nat) : Json := Id.run do
   let (op, dims, weights, bias, finite, epsilon) := match l with
     | .linear r i o _ w b => ("linear", #[r,i,o], w.size, b.size,
         w.all finiteWord && b.all finiteWord, 0)
     | .gemm m k n a => ("gemm", #[m,k,n], a.size, 0, a.all finiteWord, 0)
-    | .conv s _ w b | .depthwise s _ w b =>
-      (if let .conv .. := l then "conv2d" else "depthwise",
-        #[s.cin,s.h,s.w,s.cout,s.kh,s.kw,s.stride,s.pad], w.size, b.size,
+    | .conv s _ w b => ("conv2d", convDims s, w.size, b.size,
+        w.all finiteWord && b.all finiteWord, 0)
+    | .depthwise s _ w b => ("depthwise", convDims s, w.size, b.size,
+        w.all finiteWord && b.all finiteWord, 0)
+    | .convTranspose s _ w b => ("convTranspose",
+        convDims s.toConvShape ++ #[s.outPadH, s.outPadW], w.size, b.size,
         w.all finiteWord && b.all finiteWord, 0)
     | .bn _ c hw s t => ("scaleShift", #[c,hw], s.size, t.size,
         s.all finiteWord && t.all finiteWord, 0)
-    | .maxpool c h w k => ("maxpool", #[c,h,w,k], 0, 0, true, 0)
-    | .avgpool c h w k => ("avgpool", #[c,h,w,k], 0, 0, true, 0)
+    | .maxpool s => ("maxpool", poolDims s, 0, 0, true, 0)
+    | .avgpool s => ("avgpool", poolDims s, 0, 0, true, 0)
     | .rmsnorm r n eps g => ("rmsnorm", #[r,n], g.size, 0,
         g.all finiteWord && finiteWord eps && rationalWord eps > 0, eps.toNat)
     | .layernorm r n eps g b => ("layernorm", #[r,n], g.size, b.size,

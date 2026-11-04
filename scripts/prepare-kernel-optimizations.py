@@ -8,18 +8,23 @@ OUT.mkdir(parents=True, exist_ok=True)
 base = (ROOT / "kernels/exact/incumbent/Kernel.lean").read_text()
 (OUT / "incumbent.lean").write_text(base)
 conv = """
-/-- Materialize each input patch once, sharing it between output channels. -/
+/-- Materialize each group's input patch once, sharing it between that group's output
+channels. -/
 def convCached (s : ConvShape) (relu : Bool) (inp wts b : Array Word) : Array Word :=
-  let k := s.cin * s.kh * s.kw
-  let patches := Array.ofFn (n := s.ho) fun y =>
-    Array.ofFn (n := s.wo) fun x =>
-      Array.ofFn (n := k) fun t => windowAt s inp y.val x.val t.val
+  let k := s.taps
+  let patches := Array.ofFn (n := s.groups) fun g =>
+    Array.ofFn (n := s.ho) fun y =>
+      Array.ofFn (n := s.wo) fun x =>
+        Array.ofFn (n := k) fun t => windowAt s inp g.val y.val x.val t.val
   Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
     let o := q.val / (s.ho * s.wo)
     let y := q.val / s.wo % s.ho
     let x := q.val % s.wo
+    let g := o / s.opg
     act relu <| dotFn (k + 1)
-      (fun t => if t < k then ((patches[y]!)[x]!)[t]! else oneW)
+      (fun t => if t < k then
+          (if g < s.groups then (((patches[g]!)[y]!)[x]!)[t]! else windowAt s inp g y x t)
+        else oneW)
       (fun t => if t < k then wts[o * k + t]! else b[o]!)
 
 theorem convCached_eq : convCached = conv2dWith dotFn := by
@@ -39,9 +44,9 @@ theorem convCached_eq : convCached = conv2dWith dotFn := by
   simp only [dotFn_eq_dotOf, dotOf]
   congr 3
   funext t
-  split_ifs with ht
-  · simp [getElem!_pos, Nat.mod_lt _ hwo,
-      Nat.mod_lt _ hho, ht]
+  split_ifs with ht hg
+  · simp [getElem!_pos, Nat.mod_lt _ hwo, Nat.mod_lt _ hho, ht, hg]
+  · rfl
   · rfl
 """
 linear = """
@@ -139,10 +144,9 @@ for name, code, old, new, lemma in [
 # A second iteration: capture the selected row/patch outside the dot-product closure.
 # The mathematical functions are definitionally unchanged; the compiler can now pass
 # the selected array directly rather than repeatedly selecting it inside the loop.
-conv_hoist = conv.replace(
-    "    act relu <| dotFn (k + 1)",
-    "    let patch := (patches[y]!)[x]!\n    act relu <| dotFn (k + 1)",
-).replace("((patches[y]!)[x]!)[t]!", "patch[t]!")
+# Grouped convolutions select a group's patch behind a bounds check inside the closure,
+# so the convolution keeps the cached form (as kernels/exact/cached-conv does).
+conv_hoist = conv
 linear_hoist = (
     linear.replace(
         "    act relu <| dotFn (inW + 1)",
@@ -170,26 +174,27 @@ for name, code, replacements, lemmas in [
     (OUT / f"{name}.lean").write_text(before + code + "\n/-! ## The entry -/" + entry)
 
 pointwise = """
-/-- A checked 1×1, stride-one, unpadded convolution avoids generic window indexing. -/
+/-- A 1×1, stride-one, unpadded convolution avoids generic window indexing. -/
 def pointwiseConv (s : ConvShape) (relu : Bool) (inp wts b : Array Word) : Array Word :=
-  if s.kh = 1 ∧ s.kw = 1 ∧ s.stride = 1 ∧ s.pad = 0 then
+  if s.kh = 1 ∧ s.kw = 1 ∧ s.strideH = 1 ∧ s.strideW = 1 ∧ s.padT = 0 ∧ s.padL = 0 then
     Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
       let o := q.val / (s.ho * s.wo)
       let y := q.val / s.wo % s.ho
       let x := q.val % s.wo
-      act relu <| dotFn (s.cin + 1)
-        (fun t => if t < s.cin then
-          if y ≥ s.h ∨ x ≥ s.w then 0 else inp[(t * s.h + y) * s.w + x]!
+      let c0 := o / s.opg * s.cpg
+      act relu <| dotFn (s.taps + 1)
+        (fun t => if t < s.taps then
+          if y ≥ s.h ∨ x ≥ s.w then 0 else inp[((c0 + t) * s.h + y) * s.w + x]!
           else oneW)
-        (fun t => if t < s.cin then wts[o * s.cin + t]! else b[o]!)
+        (fun t => if t < s.taps then wts[o * s.taps + t]! else b[o]!)
   else conv2dWith dotFn s relu inp wts b
 
 theorem pointwiseConv_eq : pointwiseConv = conv2dWith dotFn := by
   funext s relu inp wts b
   unfold pointwiseConv
   split_ifs with h
-  · rcases h with ⟨hkh, hkw, hs, hp⟩
-    simp [conv2dWith, windowAt, hkh, hkw, hs, hp, Nat.mod_one]
+  · rcases h with ⟨hkh, hkw, hsh, hsw, hpt, hpl⟩
+    simp [conv2dWith, windowAt, hkh, hkw, hsh, hsw, hpt, hpl, Nat.mod_one]
   · rfl
 """
 for name, code, function, lemmas in [

@@ -97,25 +97,38 @@ theorem mixer_outputShape (kind : String) (seed : UInt32) (T C classes saved : N
       (T * C, saved) = (classes, T * C) := by
   simp [mixerLayers, Layer.shapeStep]
 
+/-! `ConvShape.simple` and `PoolShape.square` unfold to these literals (stride, padding,
+dilation and groups as the suite uses them); their output sizes are the old square rules. -/
+
 @[simp] theorem conv3_ho (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.mk ci n n co 3 3 1 1).ho = n := by
-  simp only [ConvShape.ho, Nat.mul_one, Nat.div_one]
+    (ConvShape.mk ci n n co 3 3 1 1 1 1 1 1 1 1 1).ho = n := by
+  simp only [ConvShape.ho, ConvShape.ekh, Nat.div_one]
   omega
 
 @[simp] theorem conv3_wo (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.mk ci n n co 3 3 1 1).wo = n := by
-  simp only [ConvShape.wo, Nat.mul_one, Nat.div_one]
+    (ConvShape.mk ci n n co 3 3 1 1 1 1 1 1 1 1 1).wo = n := by
+  simp only [ConvShape.wo, ConvShape.ekw, Nat.div_one]
   omega
 
 @[simp] theorem conv1_ho (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.mk ci n n co 1 1 1 0).ho = n := by
-  simp only [ConvShape.ho, Nat.mul_zero, Nat.add_zero, Nat.div_one]
+    (ConvShape.mk ci n n co 1 1 1 1 0 0 0 0 1 1 1).ho = n := by
+  simp only [ConvShape.ho, ConvShape.ekh, Nat.div_one]
   omega
 
 @[simp] theorem conv1_wo (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.mk ci n n co 1 1 1 0).wo = n := by
-  simp only [ConvShape.wo, Nat.mul_zero, Nat.add_zero, Nat.div_one]
+    (ConvShape.mk ci n n co 1 1 1 1 0 0 0 0 1 1 1).wo = n := by
+  simp only [ConvShape.wo, ConvShape.ekw, Nat.div_one]
   omega
+
+@[simp] theorem square_ho (c n k : Nat) (hk : 0 < k) (hn : k ≤ n) :
+    (PoolShape.mk c n n k k k k 0 0 0 0 false false).ho = n / k := by
+  simp only [PoolShape.ho, poolOut, Nat.add_zero, Bool.false_eq_true, ite_false]
+  exact (Nat.div_eq_sub_div hk hn).symm
+
+@[simp] theorem square_wo (c n k : Nat) (hk : 0 < k) (hn : k ≤ n) :
+    (PoolShape.mk c n n k k k k 0 0 0 0 false false).wo = n / k := by
+  simp only [PoolShape.wo, poolOut, Nat.add_zero, Bool.false_eq_true, ite_false]
+  exact (Nat.div_eq_sub_div hk hn).symm
 
 theorem cnn_wellShaped (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat)
     (hi : 0 < ci) (hn : 2 ≤ n) (h1 : 0 < c1) (h2 : 0 < c2) (hc : 0 < classes) :
@@ -124,15 +137,18 @@ theorem cnn_wellShaped (kind : String) (seed : UInt32) (ci n c1 c2 classes saved
   have hn20 : 0 < n / 2 := by omega
   have hf : 3 ≤ n + 2 := by omega
   have hf2 : 3 ≤ n / 2 + 2 := by omega
-  simp [cnnLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.Valid,
-    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2, Nat.mul_assoc]
+  simp [cnnLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.simple,
+    ConvShape.Valid, ConvShape.Geometry, ConvShape.ekh, ConvShape.ekw, ConvShape.taps,
+    ConvShape.cpg, PoolShape.square, PoolShape.Valid,
+    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2, Nat.mul_assoc, Nat.mod_one]
 
 theorem cnn_outputShape (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat)
     (hn : 2 ≤ n) :
     (cnnLayers kind seed ci n c1 c2 classes).foldl (fun shape l => l.shapeStep shape)
       (ci * n * n, saved) = (classes, c1 * (n * n)) := by
   have hn0 : 0 < n := by omega
-  simp [cnnLayers, Layer.shapeStep, hn0]
+  have hn20 : 0 < n / 2 := by omega
+  simp [cnnLayers, Layer.shapeStep, ConvShape.simple, PoolShape.square, hn, hn0, hn20]
 
 theorem mnet_wellShaped (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat)
     (hi : 0 < ci) (hn : 2 ≤ n) (h1 : 0 < c1) (h2 : 0 < c2) (hc : 0 < classes) :
@@ -141,9 +157,11 @@ theorem mnet_wellShaped (kind : String) (seed : UInt32) (ci n c1 c2 classes save
   have hn20 : 0 < n / 2 := by omega
   have hf : 3 ≤ n + 2 := by omega
   have hf2 : 3 ≤ n / 2 + 2 := by omega
-  simp [mnetLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.Valid,
-    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2, Nat.mul_assoc]
-  exact ⟨hn0, hn20⟩
+  simp [mnetLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.simple,
+    ConvShape.depthwise, ConvShape.Valid, ConvShape.Geometry, ConvShape.ekh, ConvShape.ekw,
+    ConvShape.taps, ConvShape.cpg, PoolShape.square, PoolShape.Valid,
+    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2, Nat.mul_assoc, Nat.mod_one,
+    Nat.one_le_iff_ne_zero, Nat.pos_iff_ne_zero.mp hn0, Nat.pos_iff_ne_zero.mp hn20]
 
 theorem mnet_outputShape (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat) :
     (mnetLayers kind seed ci n c1 c2 classes).foldl (fun shape l => l.shapeStep shape)
