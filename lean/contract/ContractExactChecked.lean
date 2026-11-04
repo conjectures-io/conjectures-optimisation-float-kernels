@@ -13,28 +13,58 @@ def GemmValid (batch m k n : Nat) (a b : Array Word) : Prop :=
   batch > 0 ∧ m > 0 ∧ k > 0 ∧ n > 0 ∧
     a.size = batch * m * k ∧ b.size = batch * k * n
 
-def ConvShape.Valid (s : ConvShape) : Prop :=
+/-- Positive sizes, strides, dilations and groups; groups divide both channel counts. -/
+def ConvShape.Geometry (s : ConvShape) : Prop :=
   s.cin > 0 ∧ s.cout > 0 ∧ s.h > 0 ∧ s.w > 0 ∧ s.kh > 0 ∧ s.kw > 0 ∧
-    s.stride > 0 ∧ s.kh ≤ s.h + 2 * s.pad ∧ s.kw ≤ s.w + 2 * s.pad
+    s.strideH > 0 ∧ s.strideW > 0 ∧ s.dilH > 0 ∧ s.dilW > 0 ∧ s.groups > 0 ∧
+    s.cin % s.groups = 0 ∧ s.cout % s.groups = 0
 
+/-- A convolution whose dilated filter fits the padded input. -/
+def ConvShape.Valid (s : ConvShape) : Prop :=
+  s.Geometry ∧ s.ekh ≤ s.h + s.padT + s.padB ∧ s.ekw ≤ s.w + s.padL + s.padR
+
+/-- Weights are `cout × (cin / groups) × kh × kw`; depthwise uses `s.depthwise`'s geometry. -/
 def ConvValid (s : ConvShape) (depthwise : Bool) (x w b : Array Word) : Prop :=
-  s.Valid ∧ x.size = s.cin * s.h * s.w ∧
-    w.size = (if depthwise then s.cin else s.cout * s.cin) * s.kh * s.kw ∧
-    b.size = (if depthwise then s.cin else s.cout)
+  let s := if depthwise then s.depthwise else s
+  s.Valid ∧ x.size = s.cin * s.h * s.w ∧ w.size = s.cout * s.taps ∧ b.size = s.cout
 
-def PoolValid (c h w k : Nat) (x : Array Word) : Prop :=
-  c > 0 ∧ h > 0 ∧ w > 0 ∧ k > 0 ∧ k ≤ h ∧ k ≤ w ∧ x.size = c * h * w
+/-- A transposed convolution with at least one output row and column, and output padding below
+the stride or the dilation (PyTorch's rule; ONNX Runtime also requires it below the stride, so
+every model it runs is valid here). -/
+def ConvTShape.Valid (s : ConvTShape) : Prop :=
+  s.Geometry ∧
+    s.padT + s.padB < s.strideH * (s.h - 1) + s.outPadH + s.ekh ∧
+    s.padL + s.padR < s.strideW * (s.w - 1) + s.outPadW + s.ekw ∧
+    (s.outPadH < s.strideH ∨ s.outPadH < s.dilH) ∧ (s.outPadW < s.strideW ∨ s.outPadW < s.dilW)
+
+/-- Weights are `cin × (cout / groups) × kh × kw`. -/
+def ConvTValid (s : ConvTShape) (x w b : Array Word) : Prop :=
+  s.Valid ∧ x.size = s.cin * s.h * s.w ∧ w.size = s.cin * s.opg * s.kh * s.kw ∧
+    b.size = s.cout
+
+/-- Positive sizes and strides, a window that fits the padded input, and padding smaller than
+the window, so that every window holds at least one image cell. -/
+def PoolShape.Valid (s : PoolShape) : Prop :=
+  s.c > 0 ∧ s.h > 0 ∧ s.w > 0 ∧ s.kh > 0 ∧ s.kw > 0 ∧ s.strideH > 0 ∧ s.strideW > 0 ∧
+    s.kh ≤ s.h + s.padT + s.padB ∧ s.kw ≤ s.w + s.padL + s.padR ∧
+    s.padT < s.kh ∧ s.padB < s.kh ∧ s.padL < s.kw ∧ s.padR < s.kw
+
+def PoolValid (s : PoolShape) (x : Array Word) : Prop := s.Valid ∧ x.size = s.c * s.h * s.w
 
 instance (r i o : Nat) (x w b : Array Word) : Decidable (LinearValid r i o x w b) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
 instance (batch m k n : Nat) (a b : Array Word) : Decidable (GemmValid batch m k n a b) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
-instance (s : ConvShape) : Decidable s.Valid :=
-  inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
-instance (s : ConvShape) (dw : Bool) (x w b : Array Word) : Decidable (ConvValid s dw x w b) :=
-  inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _))
-instance (c h w k : Nat) (x : Array Word) : Decidable (PoolValid c h w k x) :=
-  inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
+instance (s : ConvShape) : Decidable s.Geometry := by unfold ConvShape.Geometry; infer_instance
+instance (s : ConvShape) : Decidable s.Valid := by unfold ConvShape.Valid; infer_instance
+instance (s : ConvShape) (dw : Bool) (x w b : Array Word) : Decidable (ConvValid s dw x w b) := by
+  unfold ConvValid; infer_instance
+instance (s : ConvTShape) : Decidable s.Valid := by unfold ConvTShape.Valid; infer_instance
+instance (s : ConvTShape) (x w b : Array Word) : Decidable (ConvTValid s x w b) := by
+  unfold ConvTValid; infer_instance
+instance (s : PoolShape) : Decidable s.Valid := by unfold PoolShape.Valid; infer_instance
+instance (s : PoolShape) (x : Array Word) : Decidable (PoolValid s x) := by
+  unfold PoolValid; infer_instance
 
 /-- A fast path can assume validity while the exposed function remains universally equal. -/
 def guarded {α β : Type} (valid : α → Prop) [DecidablePred valid]
@@ -55,8 +85,9 @@ def Layer.valid (l : Layer) (state : Array Word × Array Word) : Bool :=
     | .gemm m k n a => decide (GemmValid 1 m k n a x)
     | .conv s _ w b => decide (ConvValid s false x w b)
     | .depthwise s _ w b => decide (ConvValid s true x w b)
+    | .convTranspose s _ w b => decide (ConvTValid s x w b)
     | .bn _ c hw s t => c > 0 && hw > 0 && x.size == c * hw && s.size == c && t.size == c
-    | .maxpool c h w k | .avgpool c h w k => decide (PoolValid c h w k x)
+    | .maxpool s | .avgpool s => decide (PoolValid s x)
     | .rmsnorm r n eps g => stableNormDomain r n eps x g
     | .layernorm r n eps g b => stableNormDomain r n eps x g && b.size == n && b.all finiteWord
     | .save => true
@@ -96,7 +127,18 @@ theorem checked_layer_eq (K : Kernels) (l : Layer) (st out : Array Word × Array
 
 @[simp] theorem depthwiseSpec_size (s : ConvShape) (relu : Bool) (x w b : Array Word) :
     (depthwiseSpec s relu x w b).size = s.cin * (s.ho * s.wo) := by
-  simp [depthwiseSpec, depthwiseWith]
+  simp [depthwiseSpec, depthwiseWith, conv2dWith, ConvShape.depthwise, ConvShape.ho,
+    ConvShape.wo, ConvShape.ekh, ConvShape.ekw]
+
+@[simp] theorem convTransposeSpec_size (s : ConvTShape) (relu : Bool) (x w b : Array Word) :
+    (convTransposeSpec s relu x w b).size = s.cout * (s.ho * s.wo) := by
+  simp [convTransposeSpec, convTransposeWith]
+
+@[simp] theorem avgpoolSpec_size (s : PoolShape) (x : Array Word) :
+    (avgpoolSpec s x).size = s.c * (s.ho * s.wo) := by simp [avgpoolSpec, avgpoolWith]
+
+@[simp] theorem maxpoolSpec_size (s : PoolShape) (x : Array Word) :
+    (maxpoolSpec s x).size = s.c * (s.ho * s.wo) := by simp [maxpoolSpec]
 
 @[simp] theorem rmsnormSpec_size (r n : Nat) (eps : Word) (x g : Array Word) :
     (rmsnormSpec r n eps x g).size = r * n := by

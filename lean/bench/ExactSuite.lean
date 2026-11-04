@@ -67,14 +67,14 @@ def cnnLayers (kind : String) (seed : UInt32) (cin n c1 c2 classes : Nat) : List
   let w := wts kind seed
   let b := biases seed
   let bn (relu : Bool) (c hw k : Nat) : Layer := .bn relu c hw (scales c (seed + 7 * k.toUInt32)) (b k c)
-  [.conv ⟨cin, n, n, c1, 3, 3, 1, 1⟩ false (w 1 (cin * 9) (c1 * cin * 9)) (b 2 c1), bn true c1 (n * n) 3,
+  [.conv (.simple cin n n c1 3 3 1 1) false (w 1 (cin * 9) (c1 * cin * 9)) (b 2 c1), bn true c1 (n * n) 3,
    .save,
-   .conv ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 4 (c1 * 9) (c1 * c1 * 9)) (b 5 c1), bn true c1 (n * n) 6,
-   .conv ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 7 (c1 * 9) (c1 * c1 * 9)) (b 8 c1), bn false c1 (n * n) 9,
+   .conv (.simple c1 n n c1 3 3 1 1) false (w 4 (c1 * 9) (c1 * c1 * 9)) (b 5 c1), bn true c1 (n * n) 6,
+   .conv (.simple c1 n n c1 3 3 1 1) false (w 7 (c1 * 9) (c1 * c1 * 9)) (b 8 c1), bn false c1 (n * n) 9,
    .addSaved true,
-   .maxpool c1 n n 2,
-   .conv ⟨c1, n2, n2, c2, 3, 3, 1, 1⟩ false (w 10 (c1 * 9) (c2 * c1 * 9)) (b 11 c2), bn true c2 (n2 * n2) 12,
-   .avgpool c2 n2 n2 n2,
+   .maxpool (.square c1 n n 2),
+   .conv (.simple c1 n2 n2 c2 3 3 1 1) false (w 10 (c1 * 9) (c2 * c1 * 9)) (b 11 c2), bn true c2 (n2 * n2) 12,
+   .avgpool (.square c2 n2 n2 n2),
    .linear 1 c2 classes false (w 13 c2 (classes * c2)) (b 14 classes)]
 
 /-- MobileNet-style: depthwise 3×3 and pointwise 1×1 convolutions, average pooling. -/
@@ -83,13 +83,13 @@ def mnetLayers (kind : String) (seed : UInt32) (cin n c1 c2 classes : Nat) : Lis
   let w := wts kind seed
   let b := biases seed
   let bn (c hw k : Nat) : Layer := .bn true c hw (scales c (seed + 7 * k.toUInt32)) (b k c)
-  [.conv ⟨cin, n, n, c1, 3, 3, 1, 1⟩ false (w 1 (cin * 9) (c1 * cin * 9)) (b 2 c1), bn c1 (n * n) 3,
-   .depthwise ⟨c1, n, n, c1, 3, 3, 1, 1⟩ false (w 4 9 (c1 * 9)) (b 5 c1), bn c1 (n * n) 6,
-   .conv ⟨c1, n, n, c2, 1, 1, 1, 0⟩ false (w 7 c1 (c2 * c1)) (b 8 c2), bn c2 (n * n) 9,
-   .avgpool c2 n n 2,
-   .depthwise ⟨c2, n2, n2, c2, 3, 3, 1, 1⟩ false (w 10 9 (c2 * 9)) (b 11 c2), bn c2 (n2 * n2) 12,
-   .conv ⟨c2, n2, n2, c2, 1, 1, 1, 0⟩ false (w 13 c2 (c2 * c2)) (b 14 c2), bn c2 (n2 * n2) 15,
-   .avgpool c2 n2 n2 n2,
+  [.conv (.simple cin n n c1 3 3 1 1) false (w 1 (cin * 9) (c1 * cin * 9)) (b 2 c1), bn c1 (n * n) 3,
+   .depthwise (.simple c1 n n c1 3 3 1 1) false (w 4 9 (c1 * 9)) (b 5 c1), bn c1 (n * n) 6,
+   .conv (.simple c1 n n c2 1 1 1 0) false (w 7 c1 (c2 * c1)) (b 8 c2), bn c2 (n * n) 9,
+   .avgpool (.square c2 n n 2),
+   .depthwise (.simple c2 n2 n2 c2 3 3 1 1) false (w 10 9 (c2 * 9)) (b 11 c2), bn c2 (n2 * n2) 12,
+   .conv (.simple c2 n2 n2 c2 1 1 1 0) false (w 13 c2 (c2 * c2)) (b 14 c2), bn c2 (n2 * n2) 15,
+   .avgpool (.square c2 n2 n2 n2),
    .linear 1 c2 classes false (w 16 c2 (classes * c2)) (b 17 classes)]
 
 /-- An MLP with RMS norm and layer norm between its layers. -/

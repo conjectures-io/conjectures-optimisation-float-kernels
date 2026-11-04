@@ -13,8 +13,9 @@ def Layer.shapeStep (layer : Layer) (shape : Nat × Nat) : Nat × Nat :=
   | .gemm m _ n _ => (m * n, shape.2)
   | .conv s _ _ _ => (s.cout * (s.ho * s.wo), shape.2)
   | .depthwise s _ _ _ => (s.cin * (s.ho * s.wo), shape.2)
+  | .convTranspose s _ _ _ => (s.cout * (s.ho * s.wo), shape.2)
   | .bn _ c hw _ _ => (c * hw, shape.2)
-  | .maxpool c h w k | .avgpool c h w k => (c * (h / k * (w / k)), shape.2)
+  | .maxpool s | .avgpool s => (s.c * (s.ho * s.wo), shape.2)
   | .rmsnorm rows n _ _ | .layernorm rows n _ _ _ => (rows * n, shape.2)
   | .save => (shape.1, shape.1)
   | .addSaved _ => shape
@@ -23,7 +24,9 @@ theorem layer_shape (layer : Layer) (state : Array Word × Array Word) :
     arrayShape (layer.apply specKernels state) = layer.shapeStep (arrayShape state) := by
   cases layer <;>
     simp [arrayShape, Layer.apply, Layer.shapeStep, specKernels, specDense, specConv,
-      specElem, specNorm, avgpoolSpec, avgpoolWith, maxpoolSpec, scaleShiftSpec, addReluSpec]
+      specElem, specNorm, avgpoolSpec, avgpoolWith, maxpoolSpec, scaleShiftSpec, addReluSpec,
+      depthwiseSpec, depthwiseWith, conv2dWith, convTransposeSpec, convTransposeWith,
+      ConvShape.depthwise, ConvShape.ho, ConvShape.wo, ConvShape.ekh, ConvShape.ekw]
 
 theorem layers_shape (layers : List Layer) (state : Array Word × Array Word) :
     arrayShape (layers.foldl (fun st l => l.apply specKernels st) state) =
@@ -83,12 +86,13 @@ def Layer.acceptsShape (layer : Layer) (shape : Nat × Nat) : Prop :=
       r > 0 ∧ i > 0 ∧ o > 0 ∧ shape.1 = r * i ∧ w.size = o * i ∧ b.size = o
   | .gemm m k n a => m > 0 ∧ k > 0 ∧ n > 0 ∧ a.size = m * k ∧ shape.1 = k * n
   | .conv s _ w b => s.Valid ∧ shape.1 = s.cin * s.h * s.w ∧
-      w.size = s.cout * s.cin * s.kh * s.kw ∧ b.size = s.cout
-  | .depthwise s _ w b => s.Valid ∧ shape.1 = s.cin * s.h * s.w ∧
+      w.size = s.cout * s.taps ∧ b.size = s.cout
+  | .depthwise s _ w b => s.depthwise.Valid ∧ shape.1 = s.cin * s.h * s.w ∧
       w.size = s.cin * s.kh * s.kw ∧ b.size = s.cin
+  | .convTranspose s _ w b => s.Valid ∧ shape.1 = s.cin * s.h * s.w ∧
+      w.size = s.cin * s.opg * s.kh * s.kw ∧ b.size = s.cout
   | .bn _ c hw s t => c > 0 ∧ hw > 0 ∧ shape.1 = c * hw ∧ s.size = c ∧ t.size = c
-  | .maxpool c h w k | .avgpool c h w k =>
-      c > 0 ∧ h > 0 ∧ w > 0 ∧ k > 0 ∧ k ≤ h ∧ k ≤ w ∧ shape.1 = c * h * w
+  | .maxpool s | .avgpool s => s.Valid ∧ shape.1 = s.c * s.h * s.w
   | .rmsnorm r n _ g => r > 0 ∧ n > 0 ∧ shape.1 = r * n ∧ g.size = n
   | .layernorm r n _ g b => r > 0 ∧ n > 0 ∧ shape.1 = r * n ∧ g.size = n ∧ b.size = n
   | .save => True

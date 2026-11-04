@@ -169,6 +169,187 @@ def activate(w, relu):
     return 0 if relu and w & SIGN and not isnan(w) else w
 
 
+# Shapes travel to the Lean probe as flat `dims` lists, booleans as 0/1.
+CONV_FIELDS = "cin h w cout kh kw strideH strideW padT padL padB padR dilH dilW groups".split()
+CONVT_FIELDS = CONV_FIELDS + ["outPadH", "outPadW"]
+POOL_FIELDS = "c h w kh kw strideH strideW padT padL padB padR ceilMode countIncludePad".split()
+
+
+def _pair(v):
+    return (v, v) if isinstance(v, int) else tuple(v)
+
+
+def _sides(p):
+    """Padding as (top, left, bottom, right) from an int, (vertical, horizontal) or 4 sides."""
+    if isinstance(p, int):
+        return (p,) * 4
+    return (p[0], p[1], p[0], p[1]) if len(p) == 2 else tuple(p)
+
+
+def conv_dims(cin, h, w, cout, kh, kw, *, stride=1, pad=0, dil=1, groups=1, out_pad=None):
+    """Probe `dims` of a convolution, or of a transposed one when `out_pad` is given."""
+    dims = [cin, h, w, cout, kh, kw, *_pair(stride), *_sides(pad), *_pair(dil), groups]
+    return dims if out_pad is None else dims + list(_pair(out_pad))
+
+
+def pool_dims(c, h, w, kh, kw, *, stride=None, pad=0, ceil=False, count_include_pad=False):
+    """Probe `dims` of a pooling layer; the stride defaults to the window."""
+    stride = (kh, kw) if stride is None else _pair(stride)
+    return [c, h, w, kh, kw, *stride, *_sides(pad), int(ceil), int(count_include_pad)]
+
+
+class Shape:
+    """Named view of a flat `dims` list."""
+
+    def __init__(self, fields, dims):
+        assert len(dims) == len(fields), (fields, dims)
+        self.__dict__.update(zip(fields, dims))
+
+
+def conv_shape(op, dims):
+    s = Shape(CONVT_FIELDS if op == "convTranspose" else CONV_FIELDS, dims)
+    if op == "depthwise":
+        # One group per input channel, one filter each; the request's cout/groups are unused.
+        s.cout = s.groups = s.cin
+    return s
+
+
+def output_extent(n, k, dil, stride, lo, hi):
+    """Convolution output length: placements of the dilated filter inside the padded axis."""
+    return (n + lo + hi - (dil * (k - 1) + 1)) // stride + 1
+
+
+def conv2d(s, x, w, b, relu):
+    """Each output gathers its window from the zero-padded input (padding contributes +0 terms)
+    over its group's channels, then the bias, rounded once."""
+    ho = output_extent(s.h, s.kh, s.dilH, s.strideH, s.padT, s.padB)
+    wo = output_extent(s.w, s.kw, s.dilW, s.strideW, s.padL, s.padR)
+    per_group_in, per_group_out = s.cin // s.groups, s.cout // s.groups
+
+    def padded(channel, row, col):
+        inside = 0 <= row < s.h and 0 <= col < s.w
+        return x[(channel * s.h + row) * s.w + col] if inside else 0
+
+    out = []
+    for o in range(s.cout):
+        base = o // per_group_out * per_group_in
+        for oy in range(ho):
+            for ox in range(wo):
+                pairs = [
+                    (
+                        padded(
+                            base + c,
+                            oy * s.strideH - s.padT + ky * s.dilH,
+                            ox * s.strideW - s.padL + kx * s.dilW,
+                        ),
+                        w[((o * per_group_in + c) * s.kh + ky) * s.kw + kx],
+                    )
+                    for c in range(per_group_in)
+                    for ky in range(s.kh)
+                    for kx in range(s.kw)
+                ]
+                pairs.append((ONE, b[o]))
+                inputs = [a for a, _ in pairs]
+                weights = [c for _, c in pairs]
+                out.append(activate(dot(inputs, weights), relu))
+    return out
+
+
+def conv_transpose(s, x, w, b, relu):
+    """Scatter formulation: every input cell sends `x · w` through every filter tap to the
+    output position it lands on, after cropping the padding. Each output then sums exactly the
+    contributions it received, ordered by (input channel, tap row, tap column), bias last."""
+    full_h = s.strideH * (s.h - 1) + s.dilH * (s.kh - 1) + 1 + s.outPadH
+    full_w = s.strideW * (s.w - 1) + s.dilW * (s.kw - 1) + 1 + s.outPadW
+    ho, wo = full_h - s.padT - s.padB, full_w - s.padL - s.padR
+    per_group_in, per_group_out = s.cin // s.groups, s.cout // s.groups
+    received = {}
+    for c in range(s.cin):
+        group = c // per_group_in
+        for iy in range(s.h):
+            for ix in range(s.w):
+                source = x[(c * s.h + iy) * s.w + ix]
+                for j in range(per_group_out):
+                    o = group * per_group_out + j
+                    for ky in range(s.kh):
+                        oy = iy * s.strideH + ky * s.dilH - s.padT
+                        for kx in range(s.kw):
+                            ox = ix * s.strideW + kx * s.dilW - s.padL
+                            if 0 <= oy < ho and 0 <= ox < wo:
+                                weight = w[((c * per_group_out + j) * s.kh + ky) * s.kw + kx]
+                                received.setdefault((o, oy, ox), []).append(
+                                    ((c, ky, kx), source, weight)
+                                )
+    out = []
+    for o in range(s.cout):
+        for oy in range(ho):
+            for ox in range(wo):
+                terms = sorted(received.get((o, oy, ox), []), key=lambda term: term[0])
+                assert len({key for key, _, _ in terms}) == len(terms)
+                inputs = [source for _, source, _ in terms] + [ONE]
+                weights = [weight for _, _, weight in terms] + [b[o]]
+                out.append(activate(dot(inputs, weights), relu))
+    return out
+
+
+def window_starts(n, k, stride, lo, hi, ceil):
+    """Start of each pooling window in padded coordinates, enumerated one by one.
+
+    Floor mode: windows that lie wholly inside the padded axis. Ceil mode: keep adding windows
+    until one has reached the end of the padded axis, but never one starting in the trailing
+    padding (or beyond the image)."""
+    total = lo + n + hi
+    starts = []
+    while True:
+        start = len(starts) * stride
+        if ceil:
+            if starts and starts[-1] + k >= total:
+                break
+            if start >= lo + n:
+                break
+        elif start + k > total:
+            break
+        starts.append(start)
+    return starts
+
+
+def pooling(op, s, x):
+    """Explicit window coordinates: each window's image cells (row-major); padding is no cell."""
+    rows = window_starts(s.h, s.kh, s.strideH, s.padT, s.padB, s.ceilMode)
+    cols = window_starts(s.w, s.kw, s.strideW, s.padL, s.padR, s.ceilMode)
+
+    def image_range(start, k, lo, n):
+        return range(max(start - lo, 0), min(start - lo + k, n))
+
+    def padded_count(start, k, lo, n, hi):
+        return min(start + k, lo + n + hi) - start
+
+    out = []
+    for channel in range(s.c):
+        for top in rows:
+            for left in cols:
+                cells = [
+                    x[(channel * s.h + r) * s.w + q]
+                    for r in image_range(top, s.kh, s.padT, s.h)
+                    for q in image_range(left, s.kw, s.padL, s.w)
+                ]
+                assert cells, "every valid window holds an image cell"
+                if op == "maxpool":
+                    acc = cells[0]
+                    for word in cells:  # The first cell is folded in again, as specified.
+                        acc = maximum(acc, word)
+                    out.append(acc)
+                else:
+                    divisor = (
+                        padded_count(top, s.kh, s.padT, s.h, s.padB)
+                        * padded_count(left, s.kw, s.padL, s.w, s.padR)
+                        if s.countIncludePad
+                        else len(cells)
+                    )
+                    out.append(divide(dot(cells, [ONE] * len(cells)), round32(Q(divisor))))
+    return out
+
+
 def reference(r):
     op = r["op"]
     d, x, w, b = (r.get(k, []) for k in ("dims", "x", "w", "b"))
@@ -185,16 +366,8 @@ def reference(r):
         raw = dict(r, op=op.removeprefix("checked:"))
         return [0] + reference(raw) if valid_layer(raw) else [1]
     if op == "checkedConv":
-        ci, h, wi, co, kh, kw, stride, pad = d
-        valid = (
-            min(ci, h, wi, co, kh, kw, stride) > 0
-            and h + 2 * pad >= kh
-            and wi + 2 * pad >= kw
-            and len(x) == ci * h * wi
-            and len(w) == co * ci * kh * kw
-            and len(b) == co
-        )
-        return [0] + reference(dict(r, op="conv2d")) if valid else [1]
+        raw = dict(r, op="conv2d")
+        return [0] + reference(raw) if valid_layer(raw) else [1]
     if op == "checkedNorm":
         rows, n = d
         valid = (
@@ -233,46 +406,11 @@ def reference(r):
             for j in range(cols)
         ]
     if op in ("conv2d", "depthwise"):
-        cin, h, width, cout, kh, kw, stride, pad = d
-        ho, wo = (h + 2 * pad - kh) // stride + 1, (width + 2 * pad - kw) // stride + 1
-        out = []
-        for channel in range(cin if op == "depthwise" else cout):
-            for oy in range(ho):
-                for ox in range(wo):
-                    inputs, weights = [], []
-                    channels = [channel] if op == "depthwise" else range(cin)
-                    for ic in channels:
-                        for dy in range(kh):
-                            for dx in range(kw):
-                                iy, ix = oy * stride + dy - pad, ox * stride + dx - pad
-                                inputs.append(
-                                    x[(ic * h + iy) * width + ix]
-                                    if 0 <= iy < h and 0 <= ix < width
-                                    else 0
-                                )
-                                wi = channel if op == "depthwise" else channel * cin + ic
-                                weights.append(w[(wi * kh + dy) * kw + dx])
-                    out.append(activate(dot(inputs + [ONE], weights + [b[channel]]), relu))
-        return out
+        return conv2d(conv_shape(op, d), x, w, b, relu)
+    if op == "convTranspose":
+        return conv_transpose(conv_shape(op, d), x, w, b, relu)
     if op in ("avgpool", "maxpool"):
-        channels, h, width, k = d
-        out = []
-        for channel in range(channels):
-            for oy in range(h // k):
-                for ox in range(width // k):
-                    window = [
-                        x[(channel * h + oy * k + dy) * width + ox * k + dx]
-                        for dy in range(k)
-                        for dx in range(k)
-                    ]
-                    if op == "avgpool":
-                        out.append(divide(dot(window, [ONE] * len(window)), round32(Q(k * k))))
-                    else:
-                        acc = window[0]
-                        for word in window:
-                            acc = maximum(acc, word)
-                        out.append(acc)
-        return out
+        return pooling(op, Shape(POOL_FIELDS, d), x)
     if op == "addRelu":
         return [activate(add(a, bb), relu) for a, bb in zip(x, w)]
     if op == "scaleShift":
@@ -318,6 +456,54 @@ def reference(r):
     raise ValueError(op)
 
 
+def shape_ok(op, d):
+    """Geometry rules of the public boundary for convolution and pooling layers."""
+    if op in ("avgpool", "maxpool"):
+        s = Shape(POOL_FIELDS, d)
+        return (
+            min(s.c, s.h, s.w, s.kh, s.kw, s.strideH, s.strideW) > 0
+            # The window fits the padded image, and no window can lie wholly in padding.
+            and s.kh <= s.padT + s.h + s.padB
+            and s.kw <= s.padL + s.w + s.padR
+            and max(s.padT, s.padB) < s.kh
+            and max(s.padL, s.padR) < s.kw
+        )
+    s = conv_shape(op, d)
+    if not (
+        min(s.cin, s.cout, s.h, s.w, s.kh, s.kw, s.strideH, s.strideW, s.dilH, s.dilW, s.groups) > 0
+        and s.cin % s.groups == 0
+        and s.cout % s.groups == 0
+    ):
+        return False
+    span_h, span_w = s.dilH * (s.kh - 1) + 1, s.dilW * (s.kw - 1) + 1
+    if op != "convTranspose":
+        return span_h <= s.padT + s.h + s.padB and span_w <= s.padL + s.w + s.padR
+    return (
+        # At least one output row and column survives the cropping.
+        s.strideH * (s.h - 1) + s.outPadH + span_h > s.padT + s.padB
+        and s.strideW * (s.w - 1) + s.outPadW + span_w > s.padL + s.padR
+        # ONNX/PyTorch: output padding below the stride or the dilation.
+        and s.outPadH < max(s.strideH, s.dilH)
+        and s.outPadW < max(s.strideW, s.dilW)
+    )
+
+
+def layer_sizes(op, d):
+    """Expected (input, weight, bias) lengths of a convolution or pooling layer."""
+    if op in ("avgpool", "maxpool"):
+        s = Shape(POOL_FIELDS, d)
+        return s.c * s.h * s.w, 0, 0
+    s = conv_shape(op, d)
+    taps = s.kh * s.kw
+    if op == "convTranspose":
+        # Weights are cin × (cout / groups) × kh × kw.
+        filters = s.cin * (s.cout // s.groups if s.groups else 0)
+    else:
+        # Weights are cout × (cin / groups) × kh × kw.
+        filters = s.cout * (s.cin // s.groups if s.groups else 0)
+    return s.cin * s.h * s.w, filters * taps, s.cout
+
+
 def valid_layer(r):
     """Independent public-boundary rules; never execute a malformed raw request."""
     op = r["op"]
@@ -328,19 +514,8 @@ def valid_layer(r):
     if op == "gemm":
         batches, rows, inner, cols = d
         return min(d) > 0 and (len(x), len(w)) == (batches * rows * inner, batches * inner * cols)
-    if op in ("conv2d", "depthwise"):
-        ci, h, wi, co, kh, kw, stride, pad = d
-        channels = ci if op == "depthwise" else co
-        filters = ci if op == "depthwise" else co * ci
-        return (
-            min(ci, h, wi, co, kh, kw, stride) > 0
-            and kh <= h + 2 * pad
-            and kw <= wi + 2 * pad
-            and (len(x), len(w), len(b)) == (ci * h * wi, filters * kh * kw, channels)
-        )
-    if op in ("avgpool", "maxpool"):
-        c, h, wi, k = d
-        return min(d) > 0 and k <= min(h, wi) and len(x) == c * h * wi
+    if op in ("conv2d", "depthwise", "convTranspose", "avgpool", "maxpool"):
+        return shape_ok(op, d) and (len(x), len(w), len(b)) == layer_sizes(op, d)
     if op == "scaleShift":
         c, hw = d
         return min(d) > 0 and (len(x), len(w), len(b)) == (c * hw, c, c)
@@ -360,6 +535,53 @@ def valid_layer(r):
     raise ValueError(op)
 
 
+def random_geometry(rng, op):
+    """A random valid small shape for a convolution or pooling layer, drawing every feature:
+    groups, dilation, per-axis strides, four-sided padding, output padding, 1-D extents, ceil
+    mode and count_include_pad."""
+    while True:
+        if op in ("avgpool", "maxpool"):
+            h, w = rng.choice([1, 2, 3, 4, 5, 6]), rng.choice([1, 2, 3, 4, 5, 7])
+            if rng.random() < 0.15:
+                kh, kw, stride = h, w, 1  # Global pooling.
+            else:
+                kh, kw = rng.randrange(1, min(h, 3) + 2), rng.randrange(1, min(w, 3) + 2)
+                stride = (rng.randrange(1, 4), rng.randrange(1, 4))
+            pad = tuple(rng.randrange(0, k) for k in (kh, kw, kh, kw))
+            dims = pool_dims(
+                rng.randrange(1, 3),
+                h,
+                w,
+                kh,
+                kw,
+                stride=stride,
+                pad=pad if rng.random() < 0.7 else 0,
+                ceil=rng.random() < 0.5,
+                count_include_pad=rng.random() < 0.5,
+            )
+        else:
+            groups = rng.choice([1, 1, 2, 3])
+            dims = conv_dims(
+                groups * rng.randrange(1, 3),
+                rng.randrange(1, 6),
+                rng.randrange(1, 6),
+                groups * rng.randrange(1, 3),
+                rng.randrange(1, 4),
+                rng.randrange(1, 4),
+                stride=(rng.randrange(1, 4), rng.randrange(1, 4)),
+                pad=tuple(rng.choice([0, 0, 1, 2, 3]) for _ in range(4)),
+                dil=(rng.choice([1, 1, 2, 3]), rng.choice([1, 1, 2])),
+                groups=groups,
+                out_pad=(
+                    (rng.randrange(0, 3), rng.randrange(0, 3)) if op == "convTranspose" else None
+                ),
+            )
+            if op == "depthwise" and rng.random() < 0.3:
+                dims[3], dims[14] = rng.randrange(0, 5), rng.randrange(0, 5)  # Both unused.
+        if shape_ok(op, dims):
+            return dims
+
+
 def cases(seed, count):
     rng = random.Random(seed)
     out = []
@@ -372,6 +594,12 @@ def cases(seed, count):
 
     def finite():
         return (rng.randrange(255) << 23) | rng.getrandbits(23) | rng.choice([0, SIGN])
+
+    def moderate(n):
+        return [
+            (rng.randrange(112, 136) << 23) | rng.getrandbits(23) | rng.choice([0, SIGN])
+            for _ in range(n)
+        ]
 
     edges = [
         0,
@@ -405,10 +633,10 @@ def cases(seed, count):
         put("dot", x=a, w=b)
     put("sum", x=[ONE, 0x33800000, 0x33800000])
     put("sum", x=[])
-    put("checkedConv", dims=[1, 2, 2, 1, 5, 5, 1, 0])
-    put("checkedConv", dims=[1, 2, 2, 1, 1, 1, 0, 0])
-    put("checkedConv", dims=[1, 2, 2, 1, 1, 1, 1, 0], x=[ONE] * 4, w=[], b=[0])
-    put("checkedConv", dims=[1, 2, 2, 1, 1, 1, 1, 0], x=[ONE] * 4, w=[ONE], b=[0])
+    put("checkedConv", dims=conv_dims(1, 2, 2, 1, 5, 5))
+    put("checkedConv", dims=conv_dims(1, 2, 2, 1, 1, 1, stride=0))
+    put("checkedConv", dims=conv_dims(1, 2, 2, 1, 1, 1), x=[ONE] * 4, w=[], b=[0])
+    put("checkedConv", dims=conv_dims(1, 2, 2, 1, 1, 1), x=[ONE] * 4, w=[ONE], b=[0])
     for eps, x, w in [
         (0, [ONE], [ONE]),
         (NAN, [ONE], [ONE]),
@@ -459,21 +687,19 @@ def cases(seed, count):
             x=small(2 * rows * inner),
             w=small(2 * inner * cols),
         )
-        cin, h, width, cout = 2, 3, 5, 3
-        kh, kw, stride, pad = rng.choice([(2, 3, 1, 0), (3, 2, 2, 1), (1, 1, 1, 0)])
-        dims = [cin, h, width, cout, kh, kw, stride, pad]
-        for op in ("conv2d", "depthwise"):
-            filters = cout * cin if op == "conv2d" else cin
+        for op in ("conv2d", "depthwise", "convTranspose", "avgpool", "maxpool"):
+            dims = random_geometry(rng, op)
+            nx, nw, nb = layer_sizes(op, dims)
+            # Moderate weights make the exact sums need genuine rounding.
+            weights = rng.choice([small, moderate])
             put(
                 op,
                 dims=dims,
                 relu=rng.choice([True, False]),
-                x=small(cin * h * width),
-                w=small(filters * kh * kw),
-                b=small(cout if op == "conv2d" else cin),
+                x=small(nx),
+                w=weights(nw),
+                b=small(nb),
             )
-        for op in ("avgpool", "maxpool"):
-            put(op, dims=[2, 4, 5, 2], x=small(40))
         put("addRelu", relu=rng.choice([True, False]), x=small(7), w=small(7))
         put(
             "scaleShift",
@@ -495,6 +721,211 @@ def cases(seed, count):
             )
         put("model", x=small(4), w=small(4), b=small(2))
     return out
+
+
+# Boundary bases: every geometric field away from its default, so each rule can be broken.
+BOUNDARY_CONV = conv_dims(2, 2, 3, 4, 2, 3, stride=(2, 1), pad=(1, 0, 1, 2), groups=2)
+BOUNDARY_CONVT = conv_dims(
+    2, 2, 3, 4, 2, 3, stride=(2, 1), pad=(1, 0, 0, 1), dil=(1, 2), groups=2, out_pad=(1, 1)
+)
+BOUNDARY_POOL = pool_dims(
+    2, 3, 5, 2, 3, stride=(1, 2), pad=(1, 1, 0, 2), ceil=True, count_include_pad=True
+)
+BOUNDARY_MUTATIONS = {
+    "conv2d": [
+        dict(groups=3),  # Divides neither channel count.
+        dict(groups=4),  # Divides cout only.
+        dict(cout=3),  # Not a multiple of groups.
+        dict(dilH=3),  # Dilated filter of 4 rows fits exactly.
+        dict(dilH=4),  # One row too tall.
+        dict(dilW=2, padR=1),  # One column too wide.
+        dict(padT=0, padB=0, kh=3),
+    ],
+    "convTranspose": [
+        dict(outPadH=2),  # Not below stride 2 or dilation 1.
+        dict(outPadW=2),  # Not below stride 1 or dilation 2.
+        dict(outPadW=1, dilW=1),  # Not below stride 1 or dilation 1.
+        dict(outPadH=1, strideH=1, dilH=2),  # Allowed by the dilation alone.
+        dict(padT=4, padB=0),  # One output row survives (full height 5).
+        dict(padT=3, padB=2),  # None survives.
+        dict(padL=0, padR=7),  # One output column survives (full width 8).
+        dict(padL=4, padR=4),  # None survives.
+        dict(groups=3),
+        dict(cout=3),
+    ],
+    "maxpool": [
+        dict(padT=2),  # Padding as large as the window.
+        dict(padR=3),
+        dict(padB=1),  # Largest allowed.
+        dict(kh=6),  # Taller than the padded image (3 + 1 + 0).
+        dict(kh=4, padT=1),  # Exactly as tall as the padded image.
+        dict(ceilMode=2, countIncludePad=7),  # Flags are any nonzero value.
+    ],
+}
+BOUNDARY_MUTATIONS["avgpool"] = BOUNDARY_MUTATIONS["maxpool"]
+BOUNDARY_MUTATIONS["depthwise"] = []
+
+
+def feature_cases(put, rng, words):
+    """Each generalised geometry feature, with values chosen to expose term-set mistakes."""
+    conv_shapes = [
+        ("groups", conv_dims(4, 3, 3, 6, 2, 2, groups=2)),
+        ("groups", conv_dims(3, 3, 4, 3, 1, 3, groups=3)),
+        ("dilation", conv_dims(1, 5, 5, 2, 2, 2, dil=2)),
+        ("dilation", conv_dims(2, 4, 6, 1, 2, 3, dil=(1, 2))),
+        ("asymmetric-pads", conv_dims(1, 3, 3, 1, 2, 2, pad=(0, 1, 2, 0))),
+        ("asymmetric-pads", conv_dims(2, 2, 3, 2, 3, 1, pad=(2, 0, 1, 0))),
+        ("unequal-strides", conv_dims(1, 5, 6, 2, 2, 2, stride=(1, 3))),
+        ("unequal-strides", conv_dims(1, 6, 4, 1, 2, 1, stride=(3, 1), pad=(1, 0, 0, 0))),
+        ("1d", conv_dims(2, 1, 7, 2, 1, 3, stride=(1, 2), pad=(0, 1, 0, 1))),
+        ("1d", conv_dims(1, 6, 1, 1, 3, 1, dil=(2, 1))),
+        ("all-padding-windows", conv_dims(1, 1, 1, 1, 1, 1, pad=(2, 0, 0, 3))),
+        ("all-padding-windows", conv_dims(1, 2, 2, 2, 2, 2, stride=3, pad=3)),
+        (
+            "everything",
+            conv_dims(4, 4, 5, 2, 2, 3, stride=(2, 1), pad=(1, 0, 2, 3), dil=(2, 1), groups=2),
+        ),
+    ]
+    convt_shapes = [
+        ("gaps", conv_dims(1, 1, 3, 1, 1, 1, stride=(1, 3), out_pad=0)),
+        ("gaps-outpad", conv_dims(1, 2, 2, 1, 1, 1, stride=(3, 2), out_pad=(2, 1))),
+        ("dilation-gaps", conv_dims(1, 2, 2, 1, 2, 2, dil=(3, 2), out_pad=0)),
+        ("outpad-below-dilation", conv_dims(1, 2, 2, 1, 2, 2, dil=(3, 2), out_pad=(2, 1))),
+        ("groups", conv_dims(4, 2, 2, 6, 2, 2, stride=2, groups=2, out_pad=1)),
+        ("groups", conv_dims(3, 2, 3, 3, 2, 1, groups=3, out_pad=0)),
+        ("asymmetric-crop", conv_dims(1, 3, 3, 2, 3, 3, stride=2, pad=(0, 2, 3, 1), out_pad=0)),
+        ("crop-to-one", conv_dims(1, 2, 2, 1, 3, 3, pad=(2, 2, 1, 1), out_pad=0)),
+        ("1d", conv_dims(2, 1, 4, 2, 1, 3, stride=(1, 2), pad=(0, 1, 0, 0), out_pad=(0, 1))),
+        (
+            "unequal-strides",
+            conv_dims(2, 3, 2, 2, 2, 3, stride=(2, 3), pad=(1, 0, 0, 2), out_pad=0),
+        ),
+        (
+            "everything",
+            conv_dims(
+                4,
+                2,
+                3,
+                2,
+                3,
+                2,
+                stride=(3, 2),
+                pad=(2, 1, 0, 1),
+                dil=(1, 2),
+                groups=2,
+                out_pad=(2, 1),
+            ),
+        ),
+    ]
+    pool_shapes = [
+        ("rectangular", dict(c=1, h=4, w=6, kh=2, kw=3)),
+        ("global", dict(c=2, h=3, w=5, kh=3, kw=5, stride=1)),
+        ("overlapping", dict(c=1, h=5, w=5, kh=3, kw=2, stride=(1, 2))),
+        ("gaps", dict(c=1, h=5, w=7, kh=1, kw=2, stride=3)),
+        ("asymmetric-pads", dict(c=1, h=4, w=5, kh=3, kw=3, stride=2, pad=(1, 2, 2, 0))),
+        ("ceil-partial", dict(c=1, h=5, w=5, kh=2, kw=2, stride=2)),
+        ("ceil-drops-padding-start", dict(c=1, h=5, w=5, kh=2, kw=2, stride=2, pad=1)),
+        ("1d", dict(c=1, h=1, w=7, kh=1, kw=3, stride=(1, 2), pad=(0, 1, 0, 2))),
+        ("everything", dict(c=2, h=4, w=5, kh=3, kw=2, stride=(2, 3), pad=(2, 1, 1, 1))),
+    ]
+    # Specials (twice), signed zeros, subnormals, and overflowing or infinite values.
+    pools = [words, words, [0, SIGN], [1, SIGN | 1, 0x7FFFFF, SIGN | 0x400001]]
+    pools.append([MAX, MAX | SIGN, INF, INF | SIGN])
+    fills = [lambda n, pool=pool: rng.choices(pool, k=n) for pool in pools]
+    for op, shapes in [("conv2d", conv_shapes), ("depthwise", conv_shapes)]:
+        for feature, dims in shapes:
+            if op == "depthwise":
+                dims = list(dims)
+                dims[3], dims[14] = 0, 5  # Unused by depthwise; any value is accepted.
+            assert shape_ok(op, dims), (op, dims)
+            nx, nw, nb = layer_sizes(op, dims)
+            for fill in fills:
+                put(
+                    op,
+                    f"{op}-{feature}",
+                    dims=dims,
+                    x=fill(nx),
+                    w=fill(nw),
+                    b=fill(nb),
+                    relu=bool(rng.getrandbits(1)),
+                )
+            # Padding is a +0 term: 0·inf is NaN and +0 decides a zero sum's sign.
+            put(
+                op,
+                f"{op}-padding-terms",
+                dims=dims,
+                x=[ONE] * nx,
+                w=[INF] * nw,
+                b=[ONE] * nb,
+            )
+            put(
+                op,
+                f"{op}-padding-terms",
+                dims=dims,
+                x=[SIGN] * nx,
+                w=[ONE] * nw,
+                b=[SIGN] * nb,
+            )
+    for feature, dims in convt_shapes:
+        op = "convTranspose"
+        assert shape_ok(op, dims), dims
+        nx, nw, nb = layer_sizes(op, dims)
+        for fill in fills:
+            put(
+                op,
+                f"{op}-{feature}",
+                dims=dims,
+                x=fill(nx),
+                w=fill(nw),
+                b=fill(nb),
+                relu=bool(rng.getrandbits(1)),
+            )
+        # Taps that reach no input are not terms: no 0·inf, and no +0 to change a -0 bias.
+        put(op, f"{op}-absent-taps", dims=dims, x=[0] * nx, w=[INF] * nw, b=[ONE] * nb)
+        put(op, f"{op}-absent-taps", dims=dims, x=[SIGN] * nx, w=[ONE] * nw, b=[SIGN] * nb)
+        put(
+            op,
+            f"{op}-absent-taps",
+            dims=dims,
+            x=[ONE] * nx,
+            w=[NAN | 3] * nw,
+            b=[0x7F800001] * nb,
+        )
+    for feature, shape in pool_shapes:
+        for ceil in (False, True):
+            for count_include_pad in (False, True):
+                dims = pool_dims(**shape, ceil=ceil, count_include_pad=count_include_pad)
+                assert shape_ok("maxpool", dims), dims
+                nx = layer_sizes("maxpool", dims)[0]
+                for op in ("avgpool", "maxpool"):
+                    label = f"{op}-{feature}"
+                    for fill in fills:
+                        put(op, label, dims=dims, x=fill(nx))
+                    # Padding is not a value: a negative window's maximum stays negative.
+                    put(
+                        op,
+                        f"{op}-padding-not-a-value",
+                        dims=dims,
+                        x=[round32(Q(-1 - i, 4)) for i in range(nx)],
+                    )
+                    put(op, label, dims=dims, x=[round32(Q(i + 1)) for i in range(nx)])
+    # The first cell is folded twice: a lone signalling NaN comes out quiet.
+    put(
+        "maxpool",
+        "maxpool-lone-signalling-nan",
+        dims=pool_dims(1, 1, 4, 1, 1),
+        x=[0x7F800001, SIGN | 0x7F800002, NAN | 5, SIGN],
+    )
+    for first, second in [
+        (0, SIGN),
+        (SIGN, 0),
+        (SIGN, SIGN),
+        (0x7F800001, NAN | 9),
+        (NAN | 9, 0x7F800001),
+        (INF | SIGN, NAN | 1),
+        (1, SIGN | 1),
+    ]:
+        put("maxpool", "maxpool-pair-order", dims=pool_dims(1, 1, 2, 1, 2), x=[first, second])
 
 
 def edge_cases(seed):
@@ -535,7 +966,7 @@ def edge_cases(seed):
             for tail in ([0, SIGN], [INF, INF | SIGN], [NAN | 7, 0x7F800123]):
                 window = [a, b] + tail
                 for op in ("avgpool", "maxpool"):
-                    put(op, "pool-specials", dims=[1, 2, 2, 2], x=window)
+                    put(op, "pool-specials", dims=pool_dims(1, 2, 2, 2, 2), x=window)
     for _ in range(300):
         a, b = [rng.choices(words, k=8) for _ in range(2)]
         put("dot", "reduction-specials", x=a, w=b)
@@ -549,16 +980,16 @@ def edge_cases(seed):
             for q in [mid**2, mid**2 + Q(1, 2**1100), max(Q(0), mid**2 - Q(1, 2**1100))]:
                 put("sqrt", "sqrt-binade-midpoint", dims=[q.numerator, q.denominator])
     for _ in range(180):
-        ci, h, wi, co = rng.randrange(1, 4), rng.randrange(1, 5), rng.randrange(1, 6), 2
-        kh, kw, stride, pad = rng.choice([(1, 1, 1, 0), (2, 3, 2, 2), (3, 2, 3, 3)])
-        for op in ("conv2d", "depthwise"):
+        for op in ("conv2d", "depthwise", "convTranspose", "avgpool", "maxpool"):
+            dims = random_geometry(rng, op)
+            nx, nw, nb = layer_sizes(op, dims)
             put(
                 op,
-                "conv-layout-extremes",
-                dims=[ci, h, wi, co, kh, kw, stride, pad],
-                x=rng.choices(words, k=ci * h * wi),
-                w=rng.choices(words, k=(co * ci if op == "conv2d" else ci) * kh * kw),
-                b=rng.choices(words, k=co if op == "conv2d" else ci),
+                "conv-layout-extremes" if nw else "pool-layout-extremes",
+                dims=dims,
+                x=rng.choices(words, k=nx),
+                w=rng.choices(words, k=nw),
+                b=rng.choices(words, k=nb),
                 relu=bool(rng.getrandbits(1)),
             )
         put(
@@ -576,6 +1007,7 @@ def edge_cases(seed):
             w=rng.choices(words, k=12),
             b=rng.choices(words, k=4),
         )
+    feature_cases(put, rng, words)
     rows = [
         [0, SIGN, 0],
         [MAX] * 3,
@@ -611,10 +1043,26 @@ def edge_cases(seed):
     bases = [
         dict(op="linear", dims=[2, 3, 2], x=[ONE] * 6, w=[ONE] * 6, b=[0] * 2),
         dict(op="gemm", dims=[1, 2, 3, 2], x=[ONE] * 6, w=[ONE] * 6),
-        dict(op="conv2d", dims=[1, 2, 3, 2, 2, 3, 2, 1], x=[ONE] * 6, w=[ONE] * 12, b=[0] * 2),
-        dict(op="depthwise", dims=[2, 2, 3, 2, 2, 3, 2, 1], x=[ONE] * 12, w=[ONE] * 12, b=[0] * 2),
-        dict(op="maxpool", dims=[1, 3, 5, 2], x=[ONE] * 15),
-        dict(op="avgpool", dims=[1, 3, 5, 2], x=[ONE] * 15),
+        dict(
+            op="conv2d",
+            dims=conv_dims(1, 2, 3, 2, 2, 3, stride=2, pad=1),
+            x=[ONE] * 6,
+            w=[ONE] * 12,
+            b=[0] * 2,
+        ),
+        dict(op="conv2d", dims=BOUNDARY_CONV, x=[ONE] * 12, w=[ONE] * 24, b=[0] * 4),
+        dict(
+            op="depthwise",
+            dims=conv_dims(2, 2, 3, 2, 2, 3, stride=2, pad=1),
+            x=[ONE] * 12,
+            w=[ONE] * 12,
+            b=[0] * 2,
+        ),
+        dict(op="convTranspose", dims=BOUNDARY_CONVT, x=[ONE] * 12, w=[ONE] * 24, b=[0] * 4),
+        dict(op="maxpool", dims=pool_dims(1, 3, 5, 2, 2), x=[ONE] * 15),
+        dict(op="avgpool", dims=pool_dims(1, 3, 5, 2, 2), x=[ONE] * 15),
+        dict(op="maxpool", dims=BOUNDARY_POOL, x=[ONE] * 30),
+        dict(op="avgpool", dims=BOUNDARY_POOL, x=[ONE] * 30),
         dict(op="scaleShift", dims=[2, 3], x=[ONE] * 6, w=[ONE] * 2, b=[0] * 2),
         dict(op="rmsnorm", dims=[2, 3], x=[ONE] * 6, w=[ONE] * 3),
         dict(op="layernorm", dims=[2, 3], x=[ONE] * 6, w=[ONE] * 3, b=[0] * 3),
@@ -634,6 +1082,13 @@ def edge_cases(seed):
             for val in [0, 2**64 + 1]:
                 dims = list(base["dims"])
                 dims[index] = val
+                mutations.append(dict(base, dims=dims))
+        if base.get("dims") in (BOUNDARY_CONV, BOUNDARY_CONVT, BOUNDARY_POOL):
+            fields = POOL_FIELDS if base["dims"] == BOUNDARY_POOL else CONVT_FIELDS
+            for changes in BOUNDARY_MUTATIONS[base["op"]]:
+                dims = list(base["dims"])
+                for name, val in changes.items():
+                    dims[fields.index(name)] = val
                 mutations.append(dict(base, dims=dims))
         if base["op"] in ("rmsnorm", "layernorm"):
             for eps in [0, SIGN, ONE | SIGN, INF, NAN, 0x7F800123]:
@@ -675,8 +1130,12 @@ def main():
     # Keep separate from the independent finite-reference comparisons above.
     defaults = dict(dims=[], x=[], w=[], b=[], relu=False, eps=0x3727C5AC)
     diagnostics = [
-        dict(defaults, op="shape", dims=[1, 2, 2, 1, 5, 5, 1, 0]),
-        dict(defaults, op="shape", dims=[1, 3, 5, 1, 1, 1, 0, 0]),
+        # Natural-number truncation outside the validity rules (kernel too large, stride 0).
+        dict(defaults, op="shape", dims=conv_dims(1, 2, 2, 1, 5, 5)),
+        dict(defaults, op="shape", dims=conv_dims(1, 3, 5, 1, 1, 1, stride=0)),
+        dict(defaults, op="convTShape", dims=conv_dims(1, 2, 2, 1, 1, 1, pad=5, out_pad=0)),
+        dict(defaults, op="poolShape", dims=pool_dims(1, 2, 2, 5, 5)),
+        dict(defaults, op="poolShape", dims=pool_dims(1, 5, 5, 2, 2, pad=(0, 0, 1, 1), ceil=True)),
         dict(defaults, op="rmsnorm", dims=[1, 2], x=[0x5F800000] * 2, w=[ONE] * 2),
         dict(defaults, op="layernorm", dims=[1, 2], x=[MAX] * 2, w=[ONE] * 2, b=[0, 0]),
     ]
@@ -703,7 +1162,7 @@ def main():
     actual = [json.loads(line) for line in run.stdout.splitlines()]
     assert len(actual) == len(requests) + len(diagnostics) + len(suite_requests), len(actual)
     suites = actual[-len(suite_requests) :]
-    for suite, count in zip(suites, [15, 30]):
+    for suite, count in zip(suites, [18, 33]):
         assert isinstance(suite, list) and len(suite) == count, suite
     models = [model for suite in suites for model in suite]
     model_failures = []
