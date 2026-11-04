@@ -41,7 +41,8 @@ def main():
     parser.add_argument("--minutes", type=float, default=15)
     parser.add_argument("--reference", type=Path)
     parser.add_argument(
-        "--board", choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+        "--board",
+        choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer"),
     )
     args = parser.parse_args()
     out = args.output.resolve()

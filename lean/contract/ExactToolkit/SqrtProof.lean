@@ -112,7 +112,7 @@ theorem sqrtModel_correct (q : ℚ) (hq : 0 < q)
   have hr := Model.toReal_ofModel_roundWithAccuracy_eq_roundAt Fmt (by decide)
     .positive (sqrtLower (sqrtNumerator q) q.den) (-(sqrtShift q : Int))
     (sqrtAccuracy (sqrtNumerator q) q.den) (Real.sqrt ((sqrtNumerator q : ℝ) / q.den))
-    hroot hacc hstep hfinite
+    hacc hstep hfinite
   simpa only [sqrtModel, Model.modelSignBit, Bool.false_eq_true, ite_false, one_mul,
     sqrtScale_correct q hq] using hr
 

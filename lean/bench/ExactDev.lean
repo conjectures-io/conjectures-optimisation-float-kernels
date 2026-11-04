@@ -8,7 +8,7 @@ Times the entry in `work/Submission.lean` against FloatLib's kernels (the specs)
 `Float32`, and checks every output against the spec.
 
 * `exactDev`: `sum` and `dot` at three sizes and three data types;
-* `exactDev profile <model>`: one sample of a model (`mlp`, `cnn`, `mnet`, `nmlp`, `mixer`),
+* `exactDev profile <model>`: one sample of a model (`mlp`, `cnn`, `mnet`, `nmlp`, `mixer`, `tfm`),
   layer by layer;
 * `exactDev models`: the model suite against the spec kernels (slow: FloatLib's are ~50x slower).
 -/
@@ -74,6 +74,8 @@ def ExactRuntime.Layer.label : Layer → String
   | .layernorm rows n _ _ _ => s!"layernorm {rows}×{n}"
   | .save => "save"
   | .addSaved _ => "addRelu"
+  | .attention T heads d _ _ _ _ _ _ _ _ _ => s!"attention {T} tokens, {heads}×{d}"
+  | .silu => "silu"
 
 /-- One sample of a model, layer by layer. -/
 def profile (model : String) : IO Unit := do

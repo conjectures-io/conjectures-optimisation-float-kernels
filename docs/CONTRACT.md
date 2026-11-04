@@ -1,6 +1,6 @@
 # Kernel contract
 
-The [pinned contract](../lean/contract/ContractExact.lean) defines the 13 kernels, model execution
+The [pinned contract](../lean/contract/ContractExact.lean) defines the 17 kernels, model execution
 and `Obligation K := K = specKernels`. The [checked interface](../lean/contract/ContractExactChecked.lean)
 adds tensor shape/domain checks. Every submitted implementation must match the raw specification
 universally, including behavior outside the checked interface's accepted domain.
@@ -24,6 +24,15 @@ before that rounding. ReLU acts on the rounded output: negative non-NaNs, includ
 | `addRelu` | FloatLib addition per element, then optional ReLU. |
 | `scaleShift` | Channelwise FloatLib fused multiply-add: `x * scale + shift`, one rounding. |
 | `rmsnorm`, `layernorm` | Stable rational statistics with the boundaries below; specified fallback outside that domain. |
+| `scores` | Attention scores per head: exact dot of a query row and a key row; with `causal`, `−∞` above the diagonal. The `1/√d` scale belongs in the query weights. |
+| `mix` | Per head, exact dot of a row of attention weights and a column of values. |
+| `softmax` | Per row: IEEE maximum, `exp(x − max)`, the exact sum, then FloatLib division of each term by it. A masked (`−∞`) entry gives +0. |
+| `silu` | `x · (1 / (1 + exp(−x)))` in FloatLib's steps; `−x` flips the sign bit. |
+
+`exp` is FloatLib's correctly rounded binary32 exponential (`CorrectlyRounded.exp`): the
+nearest-even rounding of `e^x` for every input, proved in FloatLib. The `attn` family's field has
+a default, the specs, so an entry written before it existed still compiles and proves its
+obligation unchanged; its attention kernels are then the (slow) specs.
 
 This is not a claim that every operation has only one rounding. Average pooling and normalization
 explicitly have several fixed steps. NaNs, infinities, payload handling and signed zeros follow

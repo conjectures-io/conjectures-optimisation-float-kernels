@@ -78,7 +78,7 @@ theorem roundDyadic_jam (s : Bool) (m : Nat) (e : Int) (j : Nat) (h : j + 25 ≤
   have hm0 : m ≠ 0 := by rintro rfl; simp at h
   have hpow : 2 ^ m.log2 ≤ m := Nat.log2_self_le hm0
   have hm : 2 ^ (j + 1) ≤ m := le_trans (Nat.pow_le_pow_right (by norm_num) (by omega)) hpow
-  have hlog : (shiftRightJam m j).log2 = m.log2 - j := log2_shiftRightJam m j hm
+  have hlog : (shiftRightJam m j).log2 = m.log2 - j := log2_shiftRightJam m j
   have hne : shiftRightJam m j ≠ 0 :=
     shiftRightJam_ne_zero m j (le_trans (Nat.pow_le_pow_right (by norm_num) (by omega)) hm)
   rw [← Model.roundDyadicGeneral_eq_roundDyadic, ← Model.roundDyadicGeneral_eq_roundDyadic]
@@ -624,13 +624,14 @@ theorem dotFn_eq (n : Nat) (fa fb : Nat → UInt32) :
         (by intro k k1 k2; exact hall k k1 (by omega))
       exact this.trans (by rw [hLsize, hD])
     have hexact := Model.Reduction.Internal.dotState_exact_toRat
-      (destination := Fmt) L R hLR hLfin hRfin
-    unfold dotSpec Model.dot
+      (destination := Fmt) L R hLR
+    unfold dotSpec
+    rw [← Model.Reduction.map_value_dot]
     by_cases hS0 : acc.total = 0
     · have hz0 : (Model.Reduction.Internal.dotState L R hLR :
           Model.Reduction.Internal.State Fmt).exact.significand = 0 := by
         rw [← FloatLib.Numerics.Dyadic.toRat_eq_zero_iff, hexact, hslice, hS0]; simp
-      rw [Model.Reduction.dotWithStatus_eq_zero_of_finite Fmt L R .nearestEven hLR hLfin hRfin
+      rw [Model.Reduction.dot_status_eq_zero_of_finite Fmt L R .nearest hLR hLfin hRfin
         hz0, hS0, finishWord_zero]
       unfold Model.Reduction.Internal.dotState
       obtain ⟨h1, h2⟩ := dotStateLoop_flags A B {} 0 L.size (by simp [hL])
@@ -652,7 +653,7 @@ theorem dotFn_eq (n : Nat) (fa fb : Nat → UInt32) :
         injection h with h
         rw [hslice] at h
         simp at h; exact hS0 h
-      rw [Model.Reduction.dotWithStatus_eq_round_of_finite_nonzero Fmt L R .nearestEven hLR hLfin
+      rw [Model.Reduction.dot_status_eq_round_of_finite_nonzero Fmt L R .nearest hLR hLfin
         hRfin hnz]
       simp only [Except.map]
       exact finishWord_of_ne _ _ _ _ hS0 (by rw [hexact, hslice])
@@ -755,7 +756,7 @@ theorem maxW_spec (a b : Word) : ofW (maxW a b) = Model.maximum (ofW a) (ofW b) 
     rw [cmp_decodeD] at hc
     have hnone : Model.chooseNaN2 (ofW a) (ofW b) = none :=
       (Model.chooseNaN2_eq_none_iff _ _).2 ⟨hna, hnb⟩
-    unfold Model.maximum
+    unfold Model.maximum Model.Internal.Value.maximum
     rw [Model.withNaNSelection_of_none _ _ hnone]
     dsimp only
     rw [Model.compareNonNaN_eq_of_compare_eq_some _ _ _ _ hc]

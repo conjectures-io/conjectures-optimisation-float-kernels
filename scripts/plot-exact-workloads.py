@@ -14,7 +14,7 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/float-kernels-matplotlib")
 
 ROOT = Path(__file__).resolve().parents[1]
-MODELS = ["mlp", "cnn", "mnet", "nmlp", "mixer"]
+MODELS = ["mlp", "cnn", "mnet", "nmlp", "mixer", "tfm"]
 KINDS = ["normal", "wide", "sparse"]
 
 

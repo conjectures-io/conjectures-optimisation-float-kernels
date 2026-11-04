@@ -24,7 +24,7 @@ def plot(directory):
         return
     shutil.copy2(__file__, directory / "summaries/details-plot-source.py")
     manifest = json.loads((directory / "raw/manifest.json").read_text())
-    boards = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+    boards = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
     groups = sorted({(r["candidate"], r["reference"]) for r in rows})
     seeds = sorted({r["seed"] for r in rows})
     colours = dict(zip(seeds, plt.get_cmap("tab10").colors, strict=False))

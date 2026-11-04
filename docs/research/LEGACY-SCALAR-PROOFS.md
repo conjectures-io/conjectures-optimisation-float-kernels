@@ -29,9 +29,9 @@ infinities, subnormals, and signed zeros.
 positive zero outside the buffer. Every addition rounds, so reassociation and
 replacing separate multiply/add with a fused operation are not generally exact.
 
-The tensor rules are restated over FloatLib so the gate need not build TorchLean.
-[Stage2/Link.lean](../../lean/stage2/Stage2/Link.lean) proves their equality to the
-pinned TorchLean definitions; its build is checked separately.
+The tensor rules are restated over FloatLib so the gate need not build TorchLean. A proof of
+their equality to TorchLean's definitions (`lean/stage2/Stage2/Link.lean`) was removed with the move
+to FloatLib 3.0.0, which the TorchLean revision it used does not build against.
 
 ## Reusing existing proofs
 

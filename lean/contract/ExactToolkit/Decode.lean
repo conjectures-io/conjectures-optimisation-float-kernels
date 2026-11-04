@@ -13,7 +13,7 @@ namespace ExactRuntime
 open FloatLib.Floats.Formats.BinaryInterchange FloatLib.Floats
 
 /-- The competition's binary32 format descriptor. -/
-abbrev Fmt := ExecFloat.Binary.format (exponentBits := 8) (fractionBits := 23)
+abbrev Fmt := FloatFormat.binary32
 
 /-- Sign, biased exponent and fraction fields of a raw word. -/
 @[inline] def signOf (w : UInt32) : Bool := (w &&& 0x80000000) != 0
@@ -33,11 +33,6 @@ theorem ofUInt32_eq_ofFields (w : UInt32) :
   conv_lhs => rw [← Model.ofFields_signBit_expField_fracField (Model.ofUInt32 w : Model Fmt)]
   simp only [Model.signBit, Model.expField, Model.fracField, ofUInt32_bits]
   congr 1
-  unfold signOf
-  apply Bool.eq_iff_iff.mpr
-  simp only [bne_iff_ne, ne_eq]
-  rw [← UInt32.toBitVec_inj]
-  exact Iff.rfl
 
 end ExactRuntime
 

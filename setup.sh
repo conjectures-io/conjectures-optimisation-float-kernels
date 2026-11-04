@@ -62,7 +62,7 @@ if ! command -v lake >/dev/null 2>&1; then
 fi
 cd "$lean"
 log "toolchain $(cat lean-toolchain)"
-log "fetching FloatLib and TorchLean (pinned in lakefile.lean) and the Mathlib build cache"
+log "fetching FloatLib (pinned in lakefile.lean) and the Mathlib build cache"
 python3 "$here/scripts/fetch-pinned-deps.py"
 lake exe cache get
 log "building FloatLib, the contract and the bench against the incumbent"

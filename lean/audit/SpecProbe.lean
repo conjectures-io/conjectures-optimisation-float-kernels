@@ -79,6 +79,21 @@ def describeLayer (l : Layer) (x saved : Array Word) : Request :=
       {base with op := "layernorm", dims := #[r,n], eps := eps.toNat, w := words g, b := words b}
   | .save => {base with op := "save"}
   | .addSaved relu => {base with op := "addRelu", relu := relu, w := words saved}
+  | .attention T heads d causal wq bq wk bk wv bv wo bo =>
+    {base with
+      op := "attention", dims := #[T, heads, d, (if causal then 1 else 0)],
+      w := words (wq ++ wk ++ wv ++ wo), b := words (bq ++ bk ++ bv ++ bo)}
+  | .silu => {base with op := "silu"}
+
+/-- An `attention` layer from a request: `w` and `b` hold the four projections, Q, K, V, O, one
+after another (each `c × c` and `c`, with `c = heads · d`); the last part takes the rest, so the
+layer is valid exactly when the lengths are. -/
+def attentionOf (d : Array Nat) (w b : Array Word) : Layer :=
+  let c := d[1]! * d[2]!
+  let part (a : Array Word) (i n : Nat) := a.extract (i * n) ((i + 1) * n)
+  .attention d[0]! d[1]! d[2]! (d[3]! == 1) (part w 0 (c * c)) (part b 0 c) (part w 1 (c * c))
+    (part b 1 c) (part w 2 (c * c)) (part b 2 c) (w.extract (3 * (c * c)) w.size)
+    (b.extract (3 * c) b.size)
 
 /-- A probe-only model on a `2 × 5 × 5` input through every generalised geometry: a grouped,
 dilated, asymmetrically padded conv with unequal strides; a ceil-mode padded max pool; a grouped
@@ -123,13 +138,16 @@ def traceSuite (seed : UInt32) (boundaries : Bool := false) : Json := Id.run do
       ("nmlp-rows", ExactSuite.nmlpLayers kind seed 3 2 1 3 2, 6),
       ("mixer-min", ExactSuite.mixerLayers kind seed 1 1 1, 1),
       ("mixer-rect", ExactSuite.mixerLayers kind seed 3 2 3, 6),
-      ("general", generalLayers kind (seed + 1), 50)] else [
+      ("general", generalLayers kind (seed + 1), 50),
+      ("tfm-min", ExactSuite.tfmLayers kind seed 1 1 1 1, 1),
+      ("tfm-odd", ExactSuite.tfmLayers kind seed 3 1 3 2, 9)] else [
       ("mlp", ExactSuite.mlpLayers kind seed 2 [3,4,2], 6),
       ("cnn", ExactSuite.cnnLayers kind seed 1 4 2 3 2, 16),
       ("mnet", ExactSuite.mnetLayers kind seed 1 4 2 3 2, 16),
       ("nmlp", ExactSuite.nmlpLayers kind seed 2 3 4 3 2, 6),
       ("mixer", ExactSuite.mixerLayers kind seed 2 3 2, 6),
-      ("general", generalLayers kind seed, 50)]
+      ("general", generalLayers kind seed, 50),
+      ("tfm", ExactSuite.tfmLayers kind seed 3 2 2 2, 12)]
     for (name, layers, size) in builders do
       let input := ExactSuite.gen kind size (seed + 999)
       let mut state := (input, #[])
@@ -164,8 +182,10 @@ def evaluate (r : Request) : Array Word := Id.run do
       | "rmsnorm" => Layer.rmsnorm d[0]! d[1]! (UInt32.ofNat r.eps) w
       | "layernorm" => Layer.layernorm d[0]! d[1]! (UInt32.ofNat r.eps) w b
       | "addRelu" => Layer.addSaved r.relu
+      | "attention" => attentionOf d w b
+      | "silu" => Layer.silu
       | _ => panic! s!"unknown checked operation {op}"
-    let state := if op == "gemm" then (w, #[]) else (x, w)
+    let state := if op == "gemm" then (w, #[]) else if op == "addRelu" then (x, w) else (x, #[])
     match layer.checked specKernels state with
     | .error _ => return #[1]
     | .ok (out, _) => return #[0] ++ out
@@ -197,6 +217,12 @@ def evaluate (r : Request) : Array Word := Id.run do
   | "scaleShift" => return scaleShiftSpec r.relu d[0]! d[1]! x w b
   | "rmsnorm" => return rmsnormSpec d[0]! d[1]! (UInt32.ofNat r.eps) x w
   | "layernorm" => return layernormSpec d[0]! d[1]! (UInt32.ofNat r.eps) x w b
+  | "exp" => return x.map expW
+  | "scores" => return scoresSpec d[0]! d[1]! d[2]! (d[3]! == 1) x w
+  | "mix" => return mixSpec d[0]! d[1]! d[2]! x w
+  | "softmax" => return softmaxSpec d[0]! d[1]! x
+  | "silu" => return siluSpec x
+  | "attention" => return ((attentionOf d w b).apply specKernels (x, #[])).1
   | "model" =>
     -- Two samples; saved residual must be local to each sample.
     let layers := [Layer.save, .linear 1 2 2 false w b, .addSaved true]

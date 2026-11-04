@@ -12,12 +12,13 @@ champion; winning one board does not substitute individual kernels into another 
 | `mobilenet` | Depthwise/pointwise CNN | 1, 4 |
 | `normalized_mlp` | MLP with RMS and layer normalization | 1, 8 |
 | `mixer` | Token/channel mixing block | 1, 4 |
-| `overall` | Weighted combination of all five families | As above |
+| `transformer` | Pre-norm block: causal multi-head attention, SiLU MLP | 1, 4 |
+| `overall` | Weighted combination of all six families | As above |
 
 Each model/batch runs on normal, wide-exponent and sparse inputs: six cells per family,
-30 for overall. A root seed draws **six workloads**: two typical, two scale and two boundary
+36 for overall. A root seed draws **six workloads**: two typical, two scale and two boundary
 cases, with total profile weights **50/30/20%**. Shapes and values vary, including odd boundary
-sizes. This gives 36 workload/cell combinations per family, 180 for overall, per environment/root seed.
+sizes. This gives 36 workload/cell combinations per family, 216 for overall, per environment/root seed.
 The suite is synthetic inference, not trained-model accuracy or backpropagation.
 
 A kernel affects a score only through the models that call it. No current model uses

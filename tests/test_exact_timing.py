@@ -39,7 +39,7 @@ def collection(tmp_path, ratio):
     (raw / "sessions.json").write_text(json.dumps([session]))
     cells = [
         f"{model}:b{batch}:{kind}"
-        for model in ("mlp", "cnn", "mnet", "nmlp", "mixer")
+        for model in ("mlp", "cnn", "mnet", "nmlp", "mixer", "tfm")
         for batch in (1, 8)
         for kind in ("normal", "wide", "sparse")
     ]
@@ -79,7 +79,7 @@ def test_known_controls(tmp_path, ratio, promotes, guard):
     assert result["ci95"] == pytest.approx([ratio, ratio])
     assert result["would_promote"] is promotes
     assert result["guard"]["ok"] is guard
-    assert len(cells) == 150
+    assert len(cells) == 5 * 36
 
 
 @pytest.mark.parametrize("damage", ["repetitions", "checksum", "missing-cell"])

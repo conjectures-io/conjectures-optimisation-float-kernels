@@ -14,7 +14,7 @@ from pathlib import Path
 from multiseed import workloads
 from timing import DEFAULT_TIMING, build_defaults, validate_timing
 
-MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
 KINDS = ("normal", "wide", "sparse")
 VERSION = "exact-boards-v3-multiseed"

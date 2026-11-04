@@ -97,6 +97,17 @@ theorem mixer_outputShape (kind : String) (seed : UInt32) (T C classes saved : N
       (T * C, saved) = (classes, T * C) := by
   simp [mixerLayers, Layer.shapeStep]
 
+theorem tfm_wellShaped (kind : String) (seed : UInt32) (T heads d classes saved : Nat)
+    (ht : 0 < T) (hh : 0 < heads) (hd : 0 < d) (hcl : 0 < classes) :
+    ModelWellShaped (tfmLayers kind seed T heads d classes) (T * (heads * d), saved) := by
+  simp [tfmLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ht, hh, hd, hcl,
+    Nat.mul_comm, Nat.mul_left_comm]
+
+theorem tfm_outputShape (kind : String) (seed : UInt32) (T heads d classes saved : Nat) :
+    (tfmLayers kind seed T heads d classes).foldl (fun shape l => l.shapeStep shape)
+      (T * (heads * d), saved) = (classes, T * (heads * d)) := by
+  simp [tfmLayers, Layer.shapeStep]
+
 @[simp] theorem conv3_ho (ci n co : Nat) (hn : 0 < n) :
     (ConvShape.mk ci n n co 3 3 1 1).ho = n := by
   simp only [ConvShape.ho, Nat.mul_one, Nat.div_one]
@@ -209,6 +220,16 @@ theorem cellModel_valid (c : Cell) (seed : UInt32) (hb : 0 < c.batch) :
       nmlp_wellShaped _ _ _ _ _ _ _ _ hb (hp _ _ _ (by decide))
         (hp _ _ _ (by decide)) (hp _ _ _ (by decide)) (by decide), ?_⟩
     simp [modelOutputSize, nmlp_outputShape]
+  · change 0 < c.batch ∧ 0 < pick 6 8 9 * pick 7 2 3 * 16 ∧
+      ModelWellShaped (tfmLayers c.kind seed (pick 6 8 9) (pick 7 2 3) 16 10)
+        (pick 6 8 9 * pick 7 2 3 * 16, 0) ∧
+      c.batch * modelOutputSize (tfmLayers c.kind seed (pick 6 8 9) (pick 7 2 3) 16 10)
+        (pick 6 8 9 * pick 7 2 3 * 16) = c.batch * 10
+    rw [Nat.mul_assoc (pick 6 8 9)]
+    refine ⟨hb, Nat.mul_pos (hp _ _ _ (by decide)) (Nat.mul_pos (hp _ _ _ (by decide)) (by decide)),
+      tfm_wellShaped _ _ _ _ _ _ _ (hp _ _ _ (by decide)) (hp _ _ _ (by decide)) (by decide)
+        (by decide), ?_⟩
+    simp [modelOutputSize, tfm_outputShape]
   · change 0 < c.batch ∧ 0 < pick 6 8 9 * pick 7 16 33 ∧
       ModelWellShaped (mixerLayers c.kind seed (pick 6 8 9) (pick 7 16 33) 10)
         (pick 6 8 9 * pick 7 16 33, 0) ∧

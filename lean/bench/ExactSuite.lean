@@ -3,8 +3,8 @@ import ContractExact
 /-!
 # The exact-runtime suite: inputs and models, shared by the gate's bench and the dev bench
 
-Everything is drawn from a seed: data of one of three types, and the five models (MLP,
-ResNet-style CNN, MobileNet-style CNN, normalised MLP, Mixer-style block).
+Everything is drawn from a seed: data of one of three types, and the six models (MLP,
+ResNet-style CNN, MobileNet-style CNN, normalised MLP, Mixer-style block, transformer block).
 -/
 
 namespace ExactSuite
@@ -114,6 +114,21 @@ def mixerLayers (kind : String) (seed : UInt32) (T C classes : Nat) : List Layer
    .linear T (2 * C) C false (w 8 (2 * C) (C * 2 * C)) (b 9 C), .addSaved false,
    .linear 1 (T * C) classes false (w 10 (T * C) (classes * T * C)) (b 11 classes)]
 
+/-- A pre-norm transformer block on `T` tokens of `heads · d` channels: layer norm, causal
+multi-head attention, residual; RMS norm, SiLU MLP, residual; classifier. The query weights'
+larger fan-in stands in for the `1/√d` scale. -/
+def tfmLayers (kind : String) (seed : UInt32) (T heads d classes : Nat) : List Layer :=
+  let w := wts kind seed
+  let b := biases seed
+  let c := heads * d
+  [.save, .layernorm T c eps (scales c (seed + 1)) (b 2 c),
+   .attention T heads d true (w 3 (c * d) (c * c)) (b 4 c) (w 5 c (c * c)) (b 6 c)
+     (w 7 c (c * c)) (b 8 c) (w 9 c (c * c)) (b 10 c), .addSaved false,
+   .save, .rmsnorm T c eps (scales c (seed + 11)),
+   .linear T c (2 * c) false (w 12 c (2 * c * c)) (b 13 (2 * c)), .silu,
+   .linear T (2 * c) c false (w 14 (2 * c) (c * 2 * c)) (b 15 c), .addSaved false,
+   .linear 1 (T * c) classes false (w 16 (T * c) (classes * T * c)) (b 17 classes)]
+
 /-- A cell's checksum: an FNV-1a hash of its output words. -/
 def hashArr (v : Array UInt32) : UInt32 := v.foldl (fun h x => (h ^^^ x) * 16777619) 2166136261
 
@@ -143,12 +158,12 @@ structure Cell where
 /-- `model:batch:kind`, the name the gate reads. -/
 def Cell.name (c : Cell) : String := s!"{c.model}:b{c.batch}:{c.kind}"
 
-/-- The 30 cells: 5 models × 2 batch sizes × 3 data types. -/
+/-- The 36 cells: 6 models × 2 batch sizes × 3 data types. -/
 def cells : List Cell :=
   ["normal", "wide", "sparse"].flatMap fun kind =>
     [⟨"mlp", 1, kind⟩, ⟨"mlp", 8, kind⟩, ⟨"cnn", 1, kind⟩, ⟨"cnn", 4, kind⟩,
      ⟨"mnet", 1, kind⟩, ⟨"mnet", 4, kind⟩, ⟨"nmlp", 1, kind⟩, ⟨"nmlp", 8, kind⟩,
-     ⟨"mixer", 1, kind⟩, ⟨"mixer", 4, kind⟩]
+     ⟨"mixer", 1, kind⟩, ⟨"mixer", 4, kind⟩, ⟨"tfm", 1, kind⟩, ⟨"tfm", 4, kind⟩]
 
 /-- A cell's model, with sizes drawn from `seed`, and how to run it: the layers, the number of
 samples, the words per sample. -/
@@ -165,6 +180,10 @@ def cellModel (c : Cell) (seed : UInt32) : List Layer × Nat × Nat :=
   | "nmlp" =>
     let i := pick 0 128 385
     (nmlpLayers c.kind seed c.batch i (pick 1 64 193) (pick 2 32 97) 10, 1, c.batch * i)
+  | "tfm" =>
+    let T := pick 6 8 9
+    let heads := pick 7 2 3
+    (tfmLayers c.kind seed T heads 16 10, c.batch, T * heads * 16)
   | _ =>
     let T := pick 6 8 9
     let C := pick 7 16 33
@@ -217,6 +236,11 @@ def profileModel (c : Cell) (seed : UInt32) (profile : String) : List Layer × N
       let i := if boundary then edge ((16 + draw 0 49) * 8) 2
         else if scale then (4 + draw 0 45) * 16 else (16 + draw 0 49) * 8
       return (nmlpLayers c.kind seed c.batch i h h2 10, 1, c.batch * i)
+    | "tfm" =>
+      let tokens := if boundary then 9 + 2 * draw 6 5
+        else if scale then 24 + 8 * draw 6 3 else 8 + draw 6 9
+      let heads := if scale then 4 else 2 + draw 7 3
+      return (tfmLayers c.kind seed tokens heads 16 10, c.batch, tokens * heads * 16)
     | _ =>
       let tokens := if boundary then 9 + 2 * draw 6 5
         else if scale then 20 + 2 * draw 6 7 else 8 + draw 6 9

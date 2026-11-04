@@ -52,7 +52,7 @@ After setup, copy your entry to `lean/work/Submission.lean` and build the target
 |---|---|
 | `VerifyExact` | Check the complete correctness statement. |
 | `benchExact` | Native inference timings/checksums; see the manual. |
-| `exactDev profile mlp` | Layer costs; also accepts `cnn`, `mnet`, `nmlp`, `mixer`. |
+| `exactDev profile mlp` | Layer costs; also accepts `cnn`, `mnet`, `nmlp`, `mixer`, `tfm`. |
 | `exactDev` | Developer comparisons of exact reductions with reference/native arithmetic. |
 | `exactAudit --json 20 971` | Compare all kernels with their specs on generated and directed cases. |
 | `exactAudit --malformed 20 971` | Include arrays shorter than their declared shapes. |

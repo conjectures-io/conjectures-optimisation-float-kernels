@@ -62,7 +62,7 @@ def analyse(directory):
         scores, orders = [], []
         for r, pair in sorted(paired.items()):
             ref, sub = pair["reference"], pair["candidate"]
-            if len(ref["cells"]) != 30 or ref["cells"].keys() != sub["cells"].keys():
+            if len(ref["cells"]) != 36 or ref["cells"].keys() != sub["cells"].keys():
                 raise RuntimeError("missing cells")
             if (
                 ref["reps"] != sub["reps"]

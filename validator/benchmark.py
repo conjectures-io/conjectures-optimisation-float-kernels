@@ -22,7 +22,12 @@ from timing import preparation_seconds
 import fingerprint
 
 # The only translation of legacy Lean suite labels; persisted requests use public names.
-LEAN_MODELS = {"resnet": "cnn", "mobilenet": "mnet", "normalized_mlp": "nmlp"}
+LEAN_MODELS = {
+    "resnet": "cnn",
+    "mobilenet": "mnet",
+    "normalized_mlp": "nmlp",
+    "transformer": "tfm",
+}
 
 
 def lean_cell(cell):

@@ -24,6 +24,12 @@ def shapeRecord (l : Layer) (shape : Nat × Nat) : Json := Id.run do
         g.all finiteWord && b.all finiteWord && finiteWord eps && rationalWord eps > 0, eps.toNat)
     | .save => ("save", #[], 0, 0, true, 0)
     | .addSaved _ => ("addSaved", #[], 0, 0, true, 0)
+    | .attention T heads d _ wq bq wk bk wv bv wo bo =>
+      let ws : List (Array Word) := [wq, wk, wv, wo]
+      let bs : List (Array Word) := [bq, bk, bv, bo]
+      ("attention", #[T,heads,d], (ws.map Array.size).sum, (bs.map Array.size).sum,
+        ws.all (·.all finiteWord) && bs.all (·.all finiteWord), 0)
+    | .silu => ("silu", #[], 0, 0, true, 0)
   return Json.mkObj [("op", toJson op), ("dims", toJson dims),
     ("weights", toJson weights), ("bias", toJson bias), ("parameters_finite", toJson finite),
     ("eps", toJson epsilon), ("input", toJson shape.1), ("saved", toJson shape.2),

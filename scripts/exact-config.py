@@ -33,7 +33,8 @@ def main():
         help="development deployment only: also evaluate uploads the API tagged dev",
     )
     parser.add_argument(
-        "--board", choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+        "--board",
+        choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer"),
     )
     args = parser.parse_args()
     if args.output.exists():
@@ -77,15 +78,16 @@ def main():
         "",
         "[rewards.board_weights]",
     ]
-    names = ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"]
+    names = ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer"]
     selected = [args.board] if args.board else ["overall", *names]
     lines += [
-        f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.1}" for name in selected
+        f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.5 / len(names)}"
+        for name in selected
     ]
     for board in selected:
         lines += ["", f"[boards.{board}.models]"]
         lines += [
-            f"{name} = {0.2 if board == 'overall' else 1.0}"
+            f"{name} = {1 / len(names) if board == 'overall' else 1.0}"
             for name in (names if board == "overall" else [board])
         ]
         lines += [
