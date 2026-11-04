@@ -11,6 +11,14 @@ ORACLE = runpy.run_path(str(Path(__file__).parents[1] / "scripts/audit-exact-spe
 round32 = ORACLE["round32"]
 value = ORACLE["value"]
 reference = ORACLE["reference"]
+valid_layer = ORACLE["valid_layer"]
+conv_dims = ORACLE["conv_dims"]
+pool_dims = ORACLE["pool_dims"]
+NAN, INF, ONE, SIGN = 0x7FC00000, 0x7F800000, 0x3F800000, 0x80000000
+
+
+def words(xs):
+    return [round32(Fraction(x)) for x in xs]
 
 
 def test_rounding_boundaries():
@@ -55,19 +63,157 @@ def test_normalization_statistics_do_not_overflow_before_division():
 
 
 def test_asymmetric_convolution_has_hand_calculated_outputs():
-    def words(xs):
-        return [round32(Fraction(x)) for x in xs]
-
     actual = reference(
         dict(
             op="conv2d",
-            dims=[1, 3, 5, 1, 2, 3, 1, 0],
+            dims=conv_dims(1, 3, 5, 1, 2, 3),
             x=words(range(1, 16)),
             w=words(range(1, 7)),
             b=words([1]),
         )
     )
     assert actual == words([122, 143, 164, 227, 248, 269])
+
+
+def test_grouped_dilated_convolution_has_hand_calculated_outputs():
+    # Two 1-D groups of one channel each; the filter's two taps are two columns apart.
+    actual = reference(
+        dict(
+            op="conv2d",
+            dims=conv_dims(2, 1, 5, 2, 1, 2, dil=(1, 2), groups=2),
+            x=words([1, 2, 3, 4, 5, 10, 20, 30, 40, 50]),
+            w=words([1, 100, 1, -1]),
+            b=words([0, Fraction(1, 2)]),
+        )
+    )
+    assert actual == words([301, 402, 503, -19.5, -19.5, -19.5])
+
+
+def test_padded_strided_convolution_has_hand_calculated_outputs():
+    # Stride 2 down, 1 across; one padding row on top and one padding column on the right.
+    actual = reference(
+        dict(
+            op="conv2d",
+            dims=conv_dims(1, 3, 3, 1, 2, 2, stride=(2, 1), pad=(1, 0, 0, 1)),
+            x=words(range(1, 10)),
+            w=words([1, 2, 3, 4]),
+            b=words([0]),
+        )
+    )
+    assert actual == words([11, 18, 9, 67, 77, 33])
+
+
+def test_convolution_padding_is_a_zero_term():
+    dims = conv_dims(1, 1, 1, 1, 1, 1, pad=(1, 0, 0, 0))
+    # The padded output multiplies +0 by the weight: 0 * inf is NaN.
+    assert reference(dict(op="conv2d", dims=dims, x=[ONE], w=[INF], b=[0])) == [NAN, INF]
+    # +0 * 1 + -0 is +0, though the bias is -0.
+    assert reference(dict(op="conv2d", dims=dims, x=[SIGN], w=[ONE], b=[SIGN])) == [0, SIGN]
+
+
+def test_depthwise_ignores_requested_output_channels_and_groups():
+    request = dict(op="depthwise", x=words([1, 2, 3, 4]), w=words([2, 3]), b=words([0, 1]))
+    for cout, groups in [(2, 2), (0, 0), (7, 3)]:
+        request["dims"] = conv_dims(2, 1, 2, cout, 1, 1, groups=groups)
+        assert valid_layer(request)
+        assert reference(request) == words([2, 4, 10, 13])
+
+
+def test_transposed_convolution_sums_only_contributing_taps():
+    dims = conv_dims(1, 1, 3, 1, 1, 2, stride=(1, 3), out_pad=0)
+    # Columns 2 and 5 receive no tap: just the bias, here -0, with no +0 term to flip it.
+    assert reference(
+        dict(op="convTranspose", dims=dims, x=words([1, 2, 3]), w=words([10, 1]), b=[SIGN])
+    ) == words([10, 1]) + [SIGN] + words([20, 2]) + [SIGN] + words([30, 3])
+    # Absent taps never form 0 * inf.
+    assert reference(dict(op="convTranspose", dims=dims, x=[0] * 3, w=[INF] * 2, b=[ONE])) == [
+        NAN,
+        NAN,
+        ONE,
+        NAN,
+        NAN,
+        ONE,
+        NAN,
+        NAN,
+    ]
+    # Output padding adds bias-only columns; padding crops from the left.
+    cropped = conv_dims(1, 1, 3, 1, 1, 2, stride=(1, 3), pad=(0, 1, 0, 0), out_pad=(0, 2))
+    assert reference(
+        dict(op="convTranspose", dims=cropped, x=words([1, 2, 3]), w=words([10, 1]), b=[SIGN])
+    ) == words([1]) + [SIGN] + words([20, 2]) + [SIGN] + words([30, 3]) + [SIGN, SIGN]
+
+
+def test_grouped_transposed_convolution_has_hand_calculated_outputs():
+    # Weights are cin x (cout / groups) x kh x kw: input channel c feeds outputs 2c and 2c + 1.
+    actual = reference(
+        dict(
+            op="convTranspose",
+            dims=conv_dims(2, 1, 2, 4, 1, 2, groups=2, out_pad=0),
+            x=words([1, 10, 100, 1000]),
+            w=words(range(1, 9)),
+            b=words([0] * 4),
+        )
+    )
+    assert actual == words([1, 12, 20, 3, 34, 40, 500, 5600, 6000, 700, 7800, 8000])
+
+
+def test_pooling_output_size_and_divisor_rules():
+    x = words([1, 2, 3, 4, 5])
+
+    def pool(op, pad, ceil, count_include_pad, values=x):
+        dims = pool_dims(
+            1, 1, 5, 1, 2, stride=(1, 2), pad=pad, ceil=ceil, count_include_pad=count_include_pad
+        )
+        request = dict(op=op, dims=dims, x=values)
+        assert valid_layer(request)
+        return reference(request)
+
+    for cip in (False, True):
+        assert pool("avgpool", 0, False, cip) == words([1.5, 3.5])
+        # Ceil mode keeps the last, partial window.
+        assert pool("avgpool", 0, True, cip) == words([1.5, 3.5, 5])
+    # A trailing padding column completes the last window; only count_include_pad counts it.
+    assert pool("avgpool", (0, 0, 0, 1), False, True) == words([1.5, 3.5, 2.5])
+    assert pool("avgpool", (0, 0, 0, 1), False, False) == words([1.5, 3.5, 5])
+    # Ceil mode drops a window that would start in the trailing padding.
+    assert pool("avgpool", (0, 1, 0, 1), True, False) == words([1, 2.5, 4.5])
+    assert pool("avgpool", (0, 1, 0, 1), True, True) == words([0.5, 2.5, 4.5])
+    # Padding is not a value for maximum pooling.
+    assert pool("maxpool", (0, 1, 0, 1), True, False, words([-1, -2, -3, -4, -5])) == words(
+        [-1, -2, -4]
+    )
+    glob = dict(op="avgpool", dims=pool_dims(1, 2, 3, 2, 3, stride=1), x=words(range(1, 7)))
+    assert reference(glob) == words([3.5])
+
+
+def test_maxpool_folds_the_first_cell_twice():
+    one = pool_dims(1, 1, 1, 1, 1)
+    assert reference(dict(op="maxpool", dims=one, x=[0x7F800001])) == [0x7FC00001]
+    pair = pool_dims(1, 1, 2, 1, 2)
+    for window, expected in [([SIGN, 0], 0), ([0, SIGN], 0), ([SIGN, SIGN], SIGN)]:
+        assert reference(dict(op="maxpool", dims=pair, x=window)) == [expected]
+
+
+def test_generalised_shape_validity_rules():
+    def ok(op, dims):
+        nx, nw, nb = ORACLE["layer_sizes"](op, dims)
+        return valid_layer(dict(op=op, dims=dims, x=[0] * nx, w=[0] * nw, b=[0] * nb))
+
+    assert ok("conv2d", conv_dims(4, 3, 3, 6, 2, 2, groups=2))
+    assert not ok("conv2d", conv_dims(4, 3, 3, 6, 2, 2, groups=4))  # 6 % 4 != 0
+    assert ok("conv2d", conv_dims(1, 3, 3, 1, 2, 2, dil=2, pad=(0, 0, 0, 0)))
+    assert not ok("conv2d", conv_dims(1, 2, 2, 1, 2, 2, dil=2))  # Dilated filter is 3 wide.
+    # Output padding must be below the stride or the dilation.
+    assert ok("convTranspose", conv_dims(1, 2, 2, 1, 2, 2, stride=2, out_pad=1))
+    assert ok("convTranspose", conv_dims(1, 2, 2, 1, 2, 2, dil=3, out_pad=2))
+    assert not ok("convTranspose", conv_dims(1, 2, 2, 1, 2, 2, stride=2, dil=2, out_pad=2))
+    # At least one output must survive the cropping (full size 3 here).
+    assert ok("convTranspose", conv_dims(1, 2, 2, 1, 2, 2, pad=(2, 2, 0, 0), out_pad=0))
+    assert not ok("convTranspose", conv_dims(1, 2, 2, 1, 2, 2, pad=(2, 2, 1, 0), out_pad=0))
+    # Pooling padding must be smaller than the window.
+    assert ok("maxpool", pool_dims(1, 3, 3, 2, 2, pad=1))
+    assert not ok("maxpool", pool_dims(1, 3, 3, 2, 2, pad=(0, 0, 2, 0)))
+    assert not ok("avgpool", pool_dims(1, 2, 2, 4, 1, pad=(1, 0, 0, 0)))  # Taller than 3 rows.
 
 
 def test_special_values_and_nan_payload_selection():
@@ -86,7 +232,9 @@ def test_special_values_and_nan_payload_selection():
 
 def test_average_pooling_keeps_the_specified_two_rounding_steps():
     # The true average is max finite. The specified rounded SUM overflows first.
-    assert reference(dict(op="avgpool", dims=[1, 2, 2, 2], x=[0x7F7FFFFF] * 4)) == [0x7F800000]
+    assert reference(dict(op="avgpool", dims=pool_dims(1, 2, 2, 2, 2), x=[0x7F7FFFFF] * 4)) == [
+        0x7F800000
+    ]
 
 
 def test_shape_audit_detects_wiring_and_parameter_errors():
