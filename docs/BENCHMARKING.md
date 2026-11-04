@@ -20,6 +20,10 @@ cases, with total profile weights **50/30/20%**. Shapes and values vary, includi
 sizes. This gives 36 workload/cell combinations per family, 180 for overall, per environment/root seed.
 The suite is synthetic inference, not trained-model accuracy or backpropagation.
 
+A kernel affects a score only through the models that call it. No current model uses
+`convTranspose`, a convolution shape other than `ConvShape.simple`, or pooling other than
+`PoolShape.square`, so those paths do not change any board's score.
+
 Fresh-seed mode chooses a new root seed for an evaluation; retries retain the same workloads.
 Candidate and reference receive identical seeds, shapes, parameters and inputs. The required
 hardware environments and their weights are part of the published board configuration.

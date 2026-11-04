@@ -11,8 +11,8 @@ and follow the [manual](../MANUAL.md) to verify and submit it.
 |---|---|---|
 | `core` | `sum`, `dot` | Exact sum / sum of products, rounded once. |
 | `dense` | `linear`, `gemm` | Exact dot per output; linear includes bias before rounding and optional ReLU. |
-| `conv` | `conv2d`, `depthwise` | Exact window dot plus bias, rounded once; optional ReLU. |
-| `elem` | `avgpool`, `maxpool`, `addRelu`, `scaleShift` | Average/max pooling, residual addition, channelwise fused scale and shift. |
+| `conv` | `conv2d`, `depthwise`, `convTranspose` | Exact dot of the contributing taps plus bias, rounded once; optional ReLU. Grouped, dilated, strided and padded; depthwise is `conv2d` with one group per channel. |
+| `elem` | `avgpool`, `maxpool`, `addRelu`, `scaleShift` | Average/max pooling over `PoolShape` windows, residual addition, channelwise fused scale and shift. |
 | `norm` | `rmsnorm`, `layernorm` | Exact rational statistics with pinned denominator and output rounding. |
 
 The names of these proof/record families are **not** separate reward boards. Boards evaluate
@@ -35,7 +35,7 @@ proof passes.
 
 ## Proof structure
 
-`CoreObligation`, `DenseObligation`, `ConvObligation`, `ElemObligation` and `NormObligation`
+`CoreObligation`, `DenseObligation`, `ConvObligation`, `ElementObligation` and `NormObligation`
 allow family proofs to be composed with `obligation_of_families`. Alternatively, rewrite individual
 kernel equalities to prove `Obligation` directly, as the starting file does.
 

@@ -46,7 +46,7 @@ The CLI and workers support a fixed ceiling of 4 MiB. Your file must import only
 namespace Submission
 open ExactRuntime
 
-def kernels : Kernels := -- your complete set of 12 kernels
+def kernels : Kernels := -- your complete set of 13 kernels
   …
 
 theorem correct : Obligation kernels := by

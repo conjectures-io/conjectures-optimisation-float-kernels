@@ -1,7 +1,7 @@
 # TorchLean kernel competition
 
 Make CPU inference faster while proving that every output matches the pinned specification,
-bit for bit. Submit one Lean file containing all **12 kernels** and a correctness proof.
+bit for bit. Submit one Lean file containing all **13 kernels** and a correctness proof.
 You may improve any subset of the kernels; each submission is evaluated as a complete package.
 
 Five model-family boards—MLP, ResNet, MobileNet, normalized MLP and Mixer—and an overall

@@ -12,8 +12,8 @@ public fixes.
 
 | Piece | Where | Today |
 |---|---|---|
-| Specification | this repo, `lean/contract/ContractExact.lean` + `ExactToolkit/` | 12 kernels in 5 families; `Layer` (11 cases) and `runModel` (one activation + one saved slot) |
-| Competition | this repo, `validator/`, `lean/{verify,bench,audit}` | One submission implements all 12 kernels; boards are **model families** (`overall`, `mlp`, `resnet`, `mobilenet`, `normalized_mlp`, `mixer`), not kernels |
+| Specification | this repo, `lean/contract/ContractExact.lean` + `ExactToolkit/` | 13 kernels in 5 families since 15402ba (12 before); `Layer` (12 cases) and `runModel` (one activation + one saved slot) |
+| Competition | this repo, `validator/`, `lean/{verify,bench,audit}` | One submission implements all 13 kernels; boards are **model families** (`overall`, `mlp`, `resnet`, `mobilenet`, `normalized_mlp`, `mixer`), not kernels |
 | `exactrt` | `conjectures-io/exact-inference`, `runtime/` | Runs `runModel` with the champion's kernels; `spec/` is a copy synced from this repo by `runtime/sync.sh` |
 | `exact-c` | `exact-inference`, `c/` | Integer-only C99, tested bit for bit against `exactrt` |
 | `.exrt` v1, importer | `exact-inference`, `tools/` | Sequential layers, implicit activation chain, binary32 only; ONNX importer maps ~15 ops with tight restrictions |
@@ -116,10 +116,19 @@ Each kernel needs every item below. The file list comes from the repo survey.
 
 ### Kernels
 
+Status: P2.1 and P2.2 are implemented in 15402ba (contract, validity, toolkit lemmas, incumbent and
+fixtures; 13 kernels) and documented in `docs/CONTRACT.md`. Open follow-ups:
+
+- No benchmark model family uses `convTranspose` or the new conv/pool shapes yet (the builders
+  use `ConvShape.simple` and `PoolShape.square`), so these features earn nothing until a model
+  family that exercises them is added (D4/D5).
+- `exact-inference` is not updated: `.exrt` tags, `exact-c` kernels and the importer still have
+  the old conv/pool restrictions (Part 4).
+
 | # | Kernel | Spec notes |
 |---|---|---|
-| P2.1 | Convolution variants | Generalise `ConvShape` (`ContractExact.lean:90`): per-axis stride, dilation, 4-sided padding (SAME is resolved by the importer, not the spec), groups (depthwise becomes a special case; keep the field or derive it), 1-D as `h=1`. **ConvTranspose** is a new kernel: each output is one exact dot over the contributing taps. Keep the "bias inside the dot, one rounding" rule |
-| P2.2 | Pooling variants | `PoolShape` with kernel, stride, 4-sided padding, `ceil_mode`. Pin what padded cells are: max ignores them; for avg, decide `count_include_pad` (the divisor changes). GlobalMaxPool; non-square global average |
+| P2.1 | Convolution variants *(done, 15402ba)* | Generalise `ConvShape` (`ContractExact.lean:90`): per-axis stride, dilation, 4-sided padding (SAME is resolved by the importer, not the spec), groups (depthwise becomes a special case; keep the field or derive it), 1-D as `h=1`. **ConvTranspose** is a new kernel: each output is one exact dot over the contributing taps. Keep the "bias inside the dot, one rounding" rule |
+| P2.2 | Pooling variants *(done, 15402ba)* | `PoolShape` with kernel, stride, 4-sided padding, `ceil_mode`. Pin what padded cells are: max ignores them; for avg, decide `count_include_pad` (the divisor changes). GlobalMaxPool; non-square global average |
 | P2.3 | `exp`-family activations | Exp, Log, Tanh, Sigmoid, Softmax, LogSoftmax, SiLU, GELU (tanh form), Elu, Softplus, on D3's `exp`. Pin each composition's rounding points, e.g. Softmax = `e_i = exp(x_i − max)` rounded, `s` = exact sum rounded once, `y_i = div(e_i, s)` |
 | P2.4 | Attention | Scaled `QKᵀ` (scale folded into the exact dot, or applied after: pick one), mask (optional, later), Softmax from P2.3, then an exact dot with V. Q/K/V/output projections stay `linear`. Per head; multi-head is the graph's job |
 | P2.5 | int8 *(season 3?)* | QuantizeLinear, DequantizeLinear, QLinearConv, QLinearMatMul. Needs an int8 tensor type in the contract (today everything is `Word = UInt32` binary32) and in `.exrt` v2. Rescaling rule: an exact rational `(Σ(x−zx)(w−zw))·sx·sw/sy`, rounded half-even once, `+zy`, saturate. FloatLib has `Numerics/Quantization/Affine.lean` over ℚ to build on |
@@ -154,8 +163,8 @@ The benchmark harness runs `runModel`; it must run `runGraph` for the new famili
   `ExactToolkit/`.
 - API and dashboard (`conjectures-validator`, `conjectures-dashboard`): season label, archived
   boards. The central API moved to `conjectures-validator` (commit `69815cf`).
-- Miner-facing: `MANUAL.md`, `README.md`, `docs/BENCHMARKING.md` (all say "12 kernels" and list the
-  boards), and a migration note on carrying a Season 1 entry's kernels over.
+- Miner-facing: `MANUAL.md`, `README.md`, `docs/BENCHMARKING.md` (kernel count updated to 13 with
+  P2.1/P2.2; they still list the current boards), and a migration note on carrying a Season 1 entry's kernels over.
 - Rehearsal: the full local run in `docs/LOCAL-EXPERIMENTS.md` with the new contract, then a dev
   deployment, before the public merge.
 

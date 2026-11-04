@@ -45,10 +45,11 @@ File: `lean/contract/ExactToolkit/TensorProofs.lean`, namespace `ExactRuntime.Te
 | Sum | `sum_total`: dotting with ones is the ordinary rational sum. Together with the dot theorems, it establishes the sum's one-rounding and zero-sign behavior. |
 | Linear | `linear_entry`, `linear_total`, `linear_nonzero_math`: row-major input, output-major weight rows, exact row dot plus bias before rounding, then optional ReLU. |
 | GEMM | `gemm_entry`: each batch/output cell is the exact dot of its input row and weight column. The generic dot theorems supply its rational/rounding meaning. |
-| Convolution | `window_coordinates` uses signed coordinates to characterize zero padding. `conv2d_entry` and `conv_total` establish the nested channel/filter sum plus bias. This is NCHW/OIHW cross-correlation, without filter reversal. |
-| Depthwise | `depthwise_entry` and `depthwise_total`: only the matching input channel and its own filter contribute; multiplier one. |
-| Average pooling | `pool_coordinates`, `pool_total`, `avgpool_entry`: square non-overlapping windows, exact window sum rounded once, then FloatLib division by window size. This deliberately retains two rounding steps. |
-| Maximum pooling | `maxpool_entry` gives the bitwise ordered IEEE fold. `maxpool_math` proves it is a mathematical extended-real maximum on non-NaN windows, including infinities. |
+| Convolution | `window_coordinates` takes the group `g` and uses signed coordinates to characterize zero padding: tap `(c, dy, dx)` is channel `g·cpg + c` at `(y·strideH + dy·dilH − padT, x·strideW + dx·dilW − padL)`, zero outside the image. `conv2d_entry` and `conv_total` establish the nested sum over the group's channels and the filter, plus bias. This is NCHW/OIHW cross-correlation, without filter reversal. |
+| Depthwise | `depthwise_taps`: for `0 < cin`, the depthwise geometry has `kh·kw` taps and one output channel per group. `depthwise_entry` and `depthwise_total` (which needs `0 < cin`): only the matching input channel and its own filter contribute; multiplier one. |
+| Transposed convolution | `convTranspose_entry`: each output is the exact dot of the listed contributing taps (`convTTaps`), with `convTInput`/`convTWeight` as operands and the bias last, then optional ReLU. The generic dot theorems supply its rational/rounding meaning. |
+| Average pooling | `pool_coordinates`, `pool_window_inside`, `pool_total`, `avgpool_entry` on `PoolShape` windows: a window's cells are a rectangle of image cells that never reaches the padding; its exact sum is rounded once, then divided with FloatLib by `PoolShape.divisor`. This deliberately retains two rounding steps. |
+| Maximum pooling | `maxpool_entry` gives the bitwise ordered IEEE fold over the window's image cells. `maxpool_math` proves it is a mathematical extended-real maximum on nonempty non-NaN windows, including infinities. |
 | Elementwise operations | `addRelu_entry`, `scaleShift_entry`: pointwise FloatLib addition/FMA with the intended channel broadcasting. `relu_finite_math` proves finite ReLU is rational `max(0,x)`; `relu_preserves_nan` records its NaN behavior. |
 | Normalization | `rowMean_math`, `rowVariance_math`: ordinary indexed rational statistics. `centered_sum_zero`, `variance_nonneg`, `variance_second_moment`: centering, positivity and population-variance identity. `rmsnorm_entry`, `layernorm_entry` expose the chosen denominator and final rounding points. |
 
@@ -62,7 +63,8 @@ excludes NaNs, while its bitwise entry theorem still describes them. Signed-zero
 distinguishable in real arithmetic and are handled by the bitwise zero and entry theorems.
 
 `linear_input_bound`, `linear_weight_bound`, `conv_input_bound` and `pool_input_bound` prove
-array-index bounds under the corresponding validity predicates. Characterization theorems
+array-index bounds under the corresponding validity predicates; `pool_input_bound` uses
+`pool_window_inside`. Characterization theorems
 with row/column hypotheses use actual in-range outputs rather than out-of-bounds defaults.
 
 ## Arbitrary model composition
