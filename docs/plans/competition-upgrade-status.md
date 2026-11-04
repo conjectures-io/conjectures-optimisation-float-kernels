@@ -86,7 +86,7 @@ partial coverage from before this upgrade.
 | Shape and meaning proofs | ✅ (⏳ `convTranspose_total`) | `lean/contract/ExactToolkit/ModelProofs.lean`, `TensorProofs.lean` |
 | Incumbent and fixtures proved against the 13-kernel contract | ✅ | `kernels/exact/*/Kernel.lean`. The incumbent runs the spec's definitions with its fast dot product; it has no special fast paths for the new features, which leaves headroom for miners |
 | Independent oracle | ✅ | `lean/audit/SpecProbe.lean`, `scripts/audit-exact-spec.py`. Agrees on 16,883 cases and 51 models. Bit-identical to ONNX Runtime 1.31 for conv2d, depthwise, convTranspose and both pools |
-| Differential audit with planted mutants | ⏳ | `lean/audit/ExactAuditCore.lean`, `ExactAudit.lean` |
+| Differential audit with planted mutants | ✅ | `lean/audit/ExactAuditCore.lean`. 13 kernels; new valid-shape generators for every conv/pool feature; `--selftest` catches 57/57 mutants (20 new, e.g. convTranspose adding +0 for taps that reach no input, maxpool reading padding as +0, ceil mode without the last-window rule) and fails if a geometry feature goes untested; `exactAudit 20 42` passes on the incumbent (5,460 cases, 0 mismatches) |
 | Shape/workload audits, proof inventory, showcase, dev bench | ⏳ | `lean/audit/{SuiteAudit,WorkloadAudit,ValidateSuite,ExactSuiteProofs,SpecProofs}.lean`, `lean/showcase/`, `lean/bench/ExactDev.lean`, `scripts/audit-exact-models.py` and related scripts. These targets do not build on the branch until this lands |
 | Docs | ✅ | `docs/CONTRACT.md`, `RUNTIME.md`, `MATHEMATICAL-PROOFS.md`, `README.md`, `MANUAL.md` |
 | Benchmark model family using the new features | ❌ | Boards are model families, so these kernels earn nothing until a model uses them (plan D4/D5) |
