@@ -38,7 +38,7 @@ def foldDot : DotFn := fun n fa fb => Id.run do
 def foldKernels : Kernels where
   core := specCore
   dense := ⟨linearWith foldDot, gemmWith foldDot⟩
-  conv := ⟨conv2dWith foldDot, depthwiseWith foldDot⟩
+  conv := ⟨conv2dWith foldDot, depthwiseWith foldDot, convTransposeWith foldDot⟩
   elem := ⟨avgpoolWith foldDot, maxpoolSpec, addReluSpec, scaleShiftSpec⟩
   norm := ⟨rmsnormWith foldDot, layernormWith foldDot⟩
 
@@ -52,30 +52,34 @@ def nativeDot : DotFn := fun n fa fb => Id.run do
     acc := acc + f32 (fa t) * f32 (fb t)
   return acc.toBits
 
-/-- Native max pooling. -/
-def nativeMaxpool (c h w k : Nat) (inp : Array Word) : Array Word :=
-  Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-    let ch := q.val / (h / k * (w / k))
-    let y := q.val / (w / k) % (h / k)
-    let x := q.val % (w / k)
-    let m := (List.range (k * k)).foldl (fun acc t =>
-      let v := f32 (poolAt h w k inp ch y x t)
-      if acc < v then v else acc) (f32 (poolAt h w k inp ch y x 0))
+/-- Native max pooling over each window's image cells. -/
+def nativeMaxpool (s : PoolShape) (inp : Array Word) : Array Word :=
+  Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+    let ch := q.val / (s.ho * s.wo)
+    let y := q.val / s.wo % s.ho
+    let x := q.val % s.wo
+    let win := s.window y x
+    let m := (List.range (win.rows * win.cols)).foldl (fun acc t =>
+      let v := f32 (poolCell s inp ch win t)
+      if acc < v then v else acc) (f32 (poolCell s inp ch win 0))
     m.toBits
 
-/-- Native average pooling: a native sum, then a native divide. -/
-def nativeAvgpool (c h w k : Nat) (inp : Array Word) : Array Word :=
-  Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-    let ch := q.val / (h / k * (w / k))
-    let y := q.val / (w / k) % (h / k)
-    let x := q.val % (w / k)
-    (f32 (nativeDot (k * k) (poolAt h w k inp ch y x) (fun _ => oneW)) / (k * k).toFloat32).toBits
+/-- Native average pooling: a native sum of the window's image cells, then a native divide by
+the spec's divisor. -/
+def nativeAvgpool (s : PoolShape) (inp : Array Word) : Array Word :=
+  Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+    let ch := q.val / (s.ho * s.wo)
+    let y := q.val / s.wo % s.ho
+    let x := q.val % s.wo
+    let win := s.window y x
+    (f32 (nativeDot (win.rows * win.cols) (poolCell s inp ch win) (fun _ => oneW)) /
+      (s.divisor y x).toFloat32).toBits
 
 /-- Hardware `Float32` through the same model code (norms keep the runtime's specs; unused here). -/
 def nativeKernels : Kernels where
   core := specCore
   dense := ⟨linearWith nativeDot, gemmWith nativeDot⟩
-  conv := ⟨conv2dWith nativeDot, depthwiseWith nativeDot⟩
+  conv := ⟨conv2dWith nativeDot, depthwiseWith nativeDot, convTransposeWith nativeDot⟩
   elem := ⟨nativeAvgpool, nativeMaxpool,
     fun relu a b => Array.ofFn (n := a.size) fun i => act relu (f32 a[i] + f32 b[i.val]!).toBits,
     fun relu c hw x s t => Array.ofFn (n := c * hw) fun i =>
@@ -104,8 +108,8 @@ def mlpLayers (t : Array (Array Word)) : List Layer :=
 
 /-- The trained CNN: conv 1 → 8, max pool, conv 8 → 16, global average, linear. -/
 def cnnLayers (t : Array (Array Word)) : List Layer :=
-  [.conv ⟨1, 8, 8, 8, 3, 3, 1, 1⟩ true t[6]! t[7]!, .maxpool 8 8 8 2,
-   .conv ⟨8, 4, 4, 16, 3, 3, 1, 1⟩ true t[8]! t[9]!, .avgpool 16 4 4 4,
+  [.conv (.simple 1 8 8 8 3 3 1 1) true t[6]! t[7]!, .maxpool (.square 8 8 8 2),
+   .conv (.simple 8 4 4 16 3 3 1 1) true t[8]! t[9]!, .avgpool (.square 16 4 4 4),
    .linear 1 16 10 false t[10]! t[11]!]
 
 /-! ## Measures -/
