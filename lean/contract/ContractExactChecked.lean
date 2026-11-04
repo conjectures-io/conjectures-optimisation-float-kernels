@@ -29,7 +29,8 @@ def ConvValid (s : ConvShape) (depthwise : Bool) (x w b : Array Word) : Prop :=
   s.Valid ∧ x.size = s.cin * s.h * s.w ∧ w.size = s.cout * s.taps ∧ b.size = s.cout
 
 /-- A transposed convolution with at least one output row and column, and output padding below
-the stride or the dilation (as ONNX and PyTorch require). -/
+the stride or the dilation (PyTorch's rule; ONNX Runtime also requires it below the stride, so
+every model it runs is valid here). -/
 def ConvTShape.Valid (s : ConvTShape) : Prop :=
   s.Geometry ∧
     s.padT + s.padB < s.strideH * (s.h - 1) + s.outPadH + s.ekh ∧

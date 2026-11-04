@@ -137,8 +137,8 @@ normalization retains its pinned staged FloatLib fallback; the checked interface
   `cout` and `groups` are not checked. Weights `cin·kh·kw`, bias `cin`.
 - Transposed convolution: the same positive sizes and divisibility; at least one output row and
   column (`padT + padB < strideH·(h−1) + outPadH + ekh`, likewise for columns); per axis, output
-  padding below the stride or below the dilation (`outPadH < strideH ∨ outPadH < dilH`), as ONNX
-  and PyTorch require. Input `cin·h·w`, weights `cin·(cout/groups)·kh·kw`, bias `cout`.
+  padding below the stride or below the dilation (`outPadH < strideH ∨ outPadH < dilH`), PyTorch's
+  rule. ONNX Runtime is stricter (below the stride), so every model it runs is valid here. Input `cin·h·w`, weights `cin·(cout/groups)·kh·kw`, bias `cout`.
 - Pooling: positive `c`, `h`, `w`, `kh`, `kw` and strides; the window fits the padded input
   (`kh ≤ h + padT + padB`, `kw ≤ w + padL + padR`); each side's padding is smaller than the window
   along that axis (`padT, padB < kh`; `padL, padR < kw`), so every window holds at least one image
