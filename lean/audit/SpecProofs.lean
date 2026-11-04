@@ -31,6 +31,9 @@ end ExactRuntime.Audit
 #print axioms ExactRuntime.sqrtLower_bounds
 #print axioms ExactRuntime.guarded_eq
 #print axioms ExactRuntime.checked_layer_eq
+#print axioms ExactRuntime.convTransposeSpec_size
+#print axioms ExactRuntime.avgpoolSpec_size
+#print axioms ExactRuntime.maxpoolSpec_size
 #print axioms ExactRuntime.Audit.rowVariance_nonneg
 #print axioms ExactRuntime.Audit.checked_model_eq
 #print axioms ExactRuntime.sqrtAccuracy_correct
@@ -38,8 +41,13 @@ end ExactRuntime.Audit
 #print axioms ExactRuntime.TensorMath.linear_entry
 #print axioms ExactRuntime.TensorMath.gemm_entry
 #print axioms ExactRuntime.TensorMath.window_coordinates
+#print axioms ExactRuntime.TensorMath.pool_coordinates
+#print axioms ExactRuntime.TensorMath.pool_window_inside
+#print axioms ExactRuntime.TensorMath.pool_input_bound
 #print axioms ExactRuntime.TensorMath.conv2d_entry
+#print axioms ExactRuntime.TensorMath.depthwise_taps
 #print axioms ExactRuntime.TensorMath.depthwise_entry
+#print axioms ExactRuntime.TensorMath.convTranspose_entry
 #print axioms ExactRuntime.TensorMath.avgpool_entry
 #print axioms ExactRuntime.TensorMath.maxpool_entry
 #print axioms ExactRuntime.TensorMath.addRelu_entry

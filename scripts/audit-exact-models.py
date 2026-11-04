@@ -14,6 +14,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def conv_geometry(d):
+    """Check a convolution's sizes, strides, dilations and groups; its dilated filter extents."""
+    ci, h, w, co, kh, kw, sh, sw, _, _, _, _, dh, dw, groups = d
+    assert min(ci, h, w, co, kh, kw, sh, sw, dh, dw, groups) > 0
+    assert ci % groups == 0 and co % groups == 0
+    return dh * (kh - 1) + 1, dw * (kw - 1) + 1
+
+
+def pool_extent(n, lo, hi, k, stride, ceil):
+    """Output length of one pooling axis (PyTorch/ONNX Runtime rule for ceil mode)."""
+    span = n + lo + hi - k
+    if not ceil:
+        return span // stride + 1
+    out = -(-span // stride) + 1
+    # A last window may not start in the bottom/right padding.
+    return out - 1 if (out - 1) * stride >= n + lo else out
+
+
 def shape_step(layer, shape):
     """Derive sizes from ordinary tensor rules, independently of Lean's shapeStep."""
     op, d = layer["op"], layer["dims"]
@@ -29,20 +47,35 @@ def shape_step(layer, shape):
         assert min(d) > 0 and size == inner * cols and weights == rows * inner
         size = rows * cols
     elif op in ("conv2d", "depthwise"):
-        ci, h, w, co, kh, kw, stride, pad = d
-        assert min(ci, h, w, co, kh, kw, stride) > 0
-        assert kh <= h + 2 * pad and kw <= w + 2 * pad
-        channels = ci if op == "depthwise" else co
-        assert size == ci * h * w and bias == channels
-        assert weights == channels * kh * kw * (1 if op == "depthwise" else ci)
-        size = channels * ((h + 2 * pad - kh) // stride + 1) * ((w + 2 * pad - kw) // stride + 1)
+        d = list(d)
+        if op == "depthwise":
+            d[3] = d[14] = d[0]  # one group per input channel, one output each
+        ci, h, w, co, kh, kw, sh, sw, pt, pl, pb, pr, _, _, groups = d
+        ekh, ekw = conv_geometry(d)
+        assert ekh <= h + pt + pb and ekw <= w + pl + pr
+        assert size == ci * h * w and bias == co
+        assert weights == co * (ci // groups) * kh * kw
+        size = co * ((h + pt + pb - ekh) // sh + 1) * ((w + pl + pr - ekw) // sw + 1)
+    elif op == "convTranspose":
+        ci, h, w, co, kh, kw, sh, sw, pt, pl, pb, pr, dh, dw, groups, oph, opw = d
+        ekh, ekw = conv_geometry(d[:15])
+        assert (oph < sh or oph < dh) and (opw < sw or opw < dw)
+        height = sh * (h - 1) + oph + ekh - pt - pb
+        width = sw * (w - 1) + opw + ekw - pl - pr
+        assert height > 0 and width > 0
+        assert size == ci * h * w and bias == co
+        assert weights == ci * (co // groups) * kh * kw
+        size = co * height * width
     elif op == "scaleShift":
         c, hw = d
         assert min(d) > 0 and size == c * hw and weights == bias == c
     elif op in ("maxpool", "avgpool"):
-        c, h, w, k = d
-        assert min(d) > 0 and k <= min(h, w) and size == c * h * w
-        size = c * (h // k) * (w // k)
+        c, h, w, kh, kw, sh, sw, pt, pl, pb, pr, ceil, include_pad = d
+        assert min(c, h, w, kh, kw, sh, sw) > 0 and ceil in (0, 1) and include_pad in (0, 1)
+        assert kh <= h + pt + pb and kw <= w + pl + pr
+        assert max(pt, pb) < kh and max(pl, pr) < kw  # every window holds an image cell
+        assert size == c * h * w and weights == bias == 0
+        size = c * pool_extent(h, pt, pb, kh, sh, ceil) * pool_extent(w, pl, pr, kw, sw, ceil)
     elif op in ("rmsnorm", "layernorm"):
         rows, n = d
         assert min(d) > 0 and size == rows * n and weights == n
