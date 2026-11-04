@@ -118,6 +118,15 @@ The setter applies the configured competition allocation to the published board/
 Missing or ineligible recipients go to treasury. Audits are report-only; they do not automatically
 hold rewards or demote a champion.
 
+A healthy setter logs `[weights] set` once an epoch, about every 72 minutes. A tick (or the startup
+connection) that runs past `WEIGHT_TICK_TIMEOUT_SECONDS` (300) writes every thread's stack to the
+pm2 log, sends `weights_stalled` and exits with code 75 for pm2 to restart it on a new connection.
+To see where a running setter is without stopping it, `kill -USR1 <pid>` writes the same stacks.
+Check the validator's `LastUpdate` on chain before anything else: past the subnet's activity cutoff
+(5000 blocks, about 16.7 hours) its weights stop counting. `requirements/chain.txt` keeps
+`websockets` below 17.3, whose sync client can block for good on a dead Finney connection; rebuild
+the chain venv (`./setup.sh --chain`) after changing it.
+
 ## Monitoring and changes
 
 Use `pm2 status` and `pm2 logs tensor-coordinator --lines 50`, or the corresponding process name.
@@ -145,7 +154,7 @@ Without them nothing is sent. ERROR logs and uncaught exceptions arrive as `log_
 | `competition-coordinator` | `proof_checked` (proved, rejected, or retry when the infrastructure failed), `evaluation_planned`, `evaluation_decided`, `evaluation_quarantined` (unreadable results; never the miner's fault), `champion_promoted`, `rewards_published`, `board_paused`/`board_resumed`, `benchmark_stalled`; from the operator tools, `promotion_disqualified` and `source_disqualification_set` |
 | `competition-benchmark-worker` | `benchmark_job_finished` per job, tagged with the worker's environment; a host needs the token to report |
 | `competition-chain-watcher` | `registrations_recorded`, `chain_read_failed` |
-| `competition-weight-setter` | `weights_planned`/`weights_set`/`weights_skipped`/`weights_failed` |
+| `competition-weight-setter` | `weights_planned`/`weights_set`/`weights_skipped`/`weights_failed`; `weights_stalled` (error) before it exits on a stuck tick |
 
 Each has `service_started`, `service_stopped` and `service_misconfigured`.
 The coordinator, benchmark worker and auditor also send heartbeats and `service_failed` on

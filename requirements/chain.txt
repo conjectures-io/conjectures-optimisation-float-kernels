@@ -1,3 +1,8 @@
 # The chain watcher and the weight setter (./setup.sh --chain); nothing else imports it.
 # Bounded because bittensor 11.x removed Subtensor.get_uid_for_hotkey_on_subnet.
 bittensor>=10.4.1,<11
+# Below 17.3: from 17.3 (still in 17.4) the sync client closes a socket without shutting it down,
+# so a receive thread blocked in a TLS read on a dead Finney connection never wakes, and every
+# call joining it blocks for good. 17.2 and earlier raised TimeoutError and reconnected. The SDK
+# needs >=14.1; the floatlib and DEFLATE setters ran 17.2 and 17.1 without a stall.
+websockets>=14.1,<17.3
