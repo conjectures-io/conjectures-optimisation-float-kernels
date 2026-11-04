@@ -170,8 +170,9 @@ def cellModel (c : Cell) (seed : UInt32) : List Layer × Nat × Nat :=
     let C := pick 7 16 33
     (mixerLayers c.kind seed T C 10, c.batch, T * C)
 
-/-- Run one cell with kernels `K`; the output's hash. `rep` (the repetition number) only reaches
-the input through `touch`, so repeated runs are really run. -/
+/-- A cell's model, ready to run: the layers, the number of samples, the words per sample and
+an input. The timed bench draws a fresh input for every call (`callInput`); the dev bench and the
+audits use `input`. -/
 structure PreparedCell where
   layers : List Layer
   samples : Nat
@@ -187,6 +188,34 @@ def runPrepared (K : Kernels) (p : PreparedCell) (rep : Nat) : Array Word :=
 
 def runCell (K : Kernels) (c : Cell) (seed : UInt32) (rep : Nat := 0) : UInt32 :=
   hashArr (runPrepared K (prepareCell c seed) rep)
+
+/-! ## A fresh input for every timed call
+
+The timed bench gives every call its own input, never one it has seen before in the process.
+`touch` only stops the compiler hoisting a call out of the loop. A kernel that keeps results
+across calls (a global table of `Thunk`s, or a global mutable cell) would otherwise answer every
+repeat from memory, and the timing would measure the lookup instead of the inference.
+Weights, shapes and the input distribution are the cell's own; only the input values change. -/
+
+/-- MurmurHash3's finaliser: a bijection on 32-bit words that spreads every input bit. -/
+def fmix (h : UInt32) : UInt32 :=
+  let h := (h ^^^ (h >>> 16)) * 0x85EBCA6B
+  let h := (h ^^^ (h >>> 13)) * 0xC2B2AE35
+  h ^^^ (h >>> 16)
+
+/-- The input seed of timed call `k` of a workload. Distinct `k` below 2^32 give distinct seeds:
+`k ↦ seed + 999 + k * 0x9E3779B9` is injective there (the multiplier is odd) and `fmix` is a
+bijection. -/
+def callSeed (seed : UInt32) (k : Nat) : UInt32 :=
+  fmix (seed + 999 + k.toUInt32 * 0x9E3779B9)
+
+/-- The input of timed call `k`: the cell's kind and size, drawn from `callSeed seed k`. -/
+def callInput (c : Cell) (p : PreparedCell) (seed : UInt32) (k : Nat) : Array Word :=
+  gen c.kind (p.samples * p.size) (callSeed seed k)
+
+/-- Run a prepared cell's model on input `x`. -/
+def runOn (K : Kernels) (p : PreparedCell) (x : Array Word) : Array Word :=
+  runModel K p.layers p.samples p.size x
 
 
 /-- Experimental shape profiles, chosen outside measured inference. Legacy remains unchanged. -/

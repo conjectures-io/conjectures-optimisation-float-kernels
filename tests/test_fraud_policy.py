@@ -51,6 +51,12 @@ REFUSED = {
     "dbg_trace": 'def f (x : Nat) : Nat := dbg_trace "x"; x',
     "include_str": 'def f : String := include_str "/etc/passwd"',
     "other import": "import Lean",
+    # Keep state across calls, so a repeated call is answered from memory: a global `ST.Ref`
+    # made with a fabricated world token (submissions 147 and 148 did this).
+    "global ST ref": "def store : ST.Ref Unit Nat := (ST.Prim.mkRef 0 (Void.mk ())).val",
+    "world token quoted": "def w : «Void» Unit := «Void».mk ()",
+    "opened ST": "open ST in\ndef r (w : Void Unit) : Nat := (Prim.Ref.get default w).val",
+    "lifted mkRef": "def r : ST Unit (ST.Ref Unit Nat) := ST.mkRef 0",
     # Change what the operator's bench or audit computes or prints: they import this module, and a
     # global instance or notation applies to their code too.
     "global instance": 'instance (priority := high) : ToString Nat := ⟨fun _ => "1"⟩',
@@ -72,6 +78,9 @@ ALLOWED = {
     "attributes": "@[inline] def f (x : Nat) : Nat := x\n@[simp] theorem f_eq : f 1 = 1 := rfl",
     "deriving on own type": "structure P where\n  x : Nat\nderiving Repr, BEq",
     "instance in a word": "def useInstance : Inhabited Nat := inferInstance",
+    "names that contain a banned word": "def primeVoidance (mkRefs primary : Nat) : Nat := mkRefs",
+    "local mutation": "def total (a : Array Nat) : Nat := Id.run do\n"
+    "  let mut s := 0\n  for x in a do s := s + x\n  return s",
 }
 
 

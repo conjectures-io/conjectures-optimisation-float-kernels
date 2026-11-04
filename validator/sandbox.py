@@ -94,11 +94,15 @@ ATTRIBUTES = {
     "reducible",
     "irreducible",
 }
-# Names that escape the proof, or run miner code at elaboration or start-up time.
+# Names that escape the proof, run miner code at elaboration or start-up time, or keep state across
+# calls. `Void.mk` makes the world token every `ST`/`EST` action needs (`runST` uses it inside), so
+# with it a top-level definition can create a global `ST.Ref` and a kernel can answer repeated
+# calls from memory; `Prim` and `mkRef` name the reference primitives themselves.
 BANNED = re.compile(
     r"\b(sorry|admit|native_decide|axiom|implemented_by|extern|export|csimp|init|initialize"
     r"|builtin_initialize|run_cmd|run_elab|run_meta|macro|macro_rules|elab|elab_rules|syntax"
-    r"|attribute|IO|include_str|include_bytes|includeStr|run_tac|declare_simp_like_tactic)\b"
+    r"|attribute|IO|include_str|include_bytes|includeStr|run_tac|declare_simp_like_tactic"
+    r"|Void|Prim|mkRef)\b"
     # Start identifier scans only at word boundaries. Retrying greedy prefixes at every
     # character of a long word makes even a harmless large comment quadratic to scan.
     r"|\b\w*simproc\w*|\bregister_\w+|\b\w+_elab\b|\b\w*_syntax_\w*"

@@ -33,7 +33,12 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
    reference use the same repetition counts for every workload/cell.
 3. Run paired rounds, alternating which binary runs first and using one CPU affinity where supported.
    Each reported duration is the best of the configured inner repetitions.
-4. Require matching output checksums. Model/input preparation and output hashing are outside timing.
+4. Give every timed call its own input. Weights and shapes stay fixed for a workload/cell, but
+   each call's input is drawn fresh from the cell's distribution (`ExactSuite.callInput`), and no
+   two calls in a process share one. A kernel that keeps results across calls cannot answer a
+   repeat from memory: there are no repeats. Both sides draw the same inputs in the same order.
+5. Require matching output checksums; the checksum folds every call's output. Model/input
+   preparation and output hashing are outside timing.
 
 The development config generator uses **11 rounds, best of 3, 50 ms cells**. These are local
 configuration defaults, not a promise about production. Read `/v1/competitions/torchlean/boards`

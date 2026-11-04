@@ -20,7 +20,8 @@ outputs and resource limits. Native benchmarking is a separate operation and doe
 correctness. A statistical rejection does not invalidate a proved implementation.
 
 The policy rejects `sorry`, extra axioms, native-decision proof shortcuts, external/unsafe code,
-custom macros/elaborators, startup commands and other escapes. Only explicitly allowed options
+custom macros/elaborators, startup commands, global mutable state (`ST` references made outside
+`runST`) and other escapes. Only explicitly allowed options
 and attributes are accepted. The exact allowlist, limits and token checks are in
 [validator/sandbox.py](../validator/sandbox.py); avoid relying on incidental parser tricks.
 
