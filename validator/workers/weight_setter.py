@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import dataclasses as dc
+import faulthandler
 import os
+import signal
 import sys
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NoReturn, TypeVar
 
 from loguru import logger
 
@@ -36,6 +41,11 @@ from treasury import (  # noqa: E402
 )
 
 Action = Literal["wait", "skip", "set", "failed"]
+T = TypeVar("T")
+
+# EX_TEMPFAIL. pm2 restarts the setter on any exit; the code only tells a stall from a crash in
+# `pm2 describe`.
+EXIT_STALLED = 75
 
 
 def _flag(name: str, value: str) -> bool:
@@ -69,6 +79,10 @@ class WeightSetterConfig:
     set_margin: int = 12
     # Idle sleep between ticks; about one block.
     poll_seconds: float = 12.0
+    # Longest a tick (or the startup connection) may take before the setter exits for pm2 to
+    # restart. A setting tick is a metagraph read and an extrinsic waited to inclusion, well under a
+    # minute; the bound only has to be far below the 72-min epoch and the ~16.7 h activity cutoff.
+    tick_timeout_seconds: float = 300.0
     # Compute and record the vector without submitting it, on unless WEIGHT_DRY_RUN=0.
     dry_run: bool = True
     # Off mainnet only: where the treasury share goes (default: the burn uid).
@@ -93,6 +107,8 @@ class WeightSetterConfig:
             raise ValueError("set_margin must be >= 0")
         if self.poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
+        if self.tick_timeout_seconds <= 0:
+            raise ValueError("WEIGHT_TICK_TIMEOUT_SECONDS must be positive")
 
     @property
     def treasury_uid(self) -> int:
@@ -121,6 +137,9 @@ class WeightSetterConfig:
             burn_mode=_flag("WEIGHT_BURN_MODE", env.get("WEIGHT_BURN_MODE", "0")),
             set_margin=int(env.get("WEIGHT_SET_MARGIN", str(d.set_margin))),
             poll_seconds=float(env.get("WEIGHT_POLL_SECONDS", str(d.poll_seconds))),
+            tick_timeout_seconds=float(
+                env.get("WEIGHT_TICK_TIMEOUT_SECONDS", str(d.tick_timeout_seconds))
+            ),
             dry_run=_flag("WEIGHT_DRY_RUN", env.get("WEIGHT_DRY_RUN", "1")),
             treasury_override=int(treasury_uid) if treasury_uid else None,
             treasury_hotkey=env.get("WEIGHT_TREASURY_HOTKEY", "").strip() or None,
@@ -283,22 +302,76 @@ def emit_plan(
     )
 
 
-def run(chain, store, config, *, sleep=time.sleep):
+class TickStalled(RuntimeError):
+    """A tick ran past its deadline. Its thread is stuck inside a call nothing here can cancel."""
+
+
+class TickRunner:
+    """Run each tick on one long-lived thread, and stop waiting for it after a deadline.
+
+    The SDK's own timeouts do not cover every path. On 2026-11-03 a websocket thread blocked in a
+    TLS read on a socket closed under it (websockets 17.3 no longer shuts a socket down before
+    closing it), and the tick waiting to join it blocked for 17 hours without raising: the setter
+    stayed "online" in pm2 while the validator fell past the activity cutoff. A stuck thread cannot
+    be stopped from outside, so the caller's only safe move on `TickStalled` is to exit and let pm2
+    start a fresh process. One thread, not one per tick, so every SDK call still comes from the
+    same thread.
+    """
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.timeout_seconds = timeout_seconds
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weights-tick")
+
+    def call(self, fn: Callable[[], T], what: str = "tick") -> T:
+        future = self._pool.submit(fn)
+        try:
+            return future.result(timeout=self.timeout_seconds)
+        except TimeoutError:
+            if future.done():
+                raise  # the call itself raised TimeoutError: an ordinary failed tick
+            raise TickStalled(f"{what} did not return within {self.timeout_seconds:g}s") from None
+
+
+def run(chain, store, config, *, sleep=time.sleep, runner: TickRunner | None = None):
+    # Tick until interrupted; a stalled tick raises TickStalled out of the loop for main() to exit.
     logger.info(
         "[weights] netuid={} dry_run={} coordinator board/rank publication",
         config.netuid,
         config.dry_run,
     )
+    runner = runner or TickRunner(config.tick_timeout_seconds)
     ticks = TickLog()
     try:
         while True:
             try:
-                ticks.report(step(chain, store, config))
+                ticks.report(runner.call(partial(step, chain, store, config)))
+            except TickStalled:
+                raise
             except Exception as exc:
                 logger.exception("[weights] tick failed: {}", exc)
             sleep(config.poll_seconds)
     except KeyboardInterrupt:
         logger.info("[weights] interrupted")
+
+
+def exit_stalled(
+    events, exc: TickStalled, config: WeightSetterConfig, *, exit=os._exit
+) -> NoReturn:
+    # Record where the tick is stuck, flush the events, and leave without interpreter shutdown,
+    # whose atexit hooks (the executor's join among them) would block on the stuck thread.
+    logger.bind(axiom_event=True).error(
+        f"[weights] {exc}; exiting for pm2 to restart the setter with a new chain connection"
+    )
+    try:
+        faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+    except Exception:  # noqa: BLE001 - the stacks are a diagnostic; writing them must not keep
+        pass  # a stuck setter alive
+    events.error("weights_stalled", reason=str(exc), timeout_seconds=config.tick_timeout_seconds)
+    events.info("service_stopped", reason="stalled")
+    events.close()
+    sys.stderr.flush()
+    exit(EXIT_STALLED)
+    raise AssertionError("unreachable")  # only a test's fake exit returns
 
 
 def human(seconds: float) -> str:
@@ -346,6 +419,8 @@ def main() -> None:
     from chain.finney import BittensorWeightChain
 
     log.setup()
+    # `kill -USR1 <pid>` writes every thread's stack to the pm2 log without stopping the setter.
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
     events = init("competition-weight-setter")
     try:
         config = WeightSetterConfig.from_env()
@@ -360,15 +435,26 @@ def main() -> None:
         treasury_uid=config.treasury_uid,
         competition_share=config.competition_share,
     )
-    chain = BittensorWeightChain(
-        network=config.network,
-        wallet_name=config.wallet_name,
-        wallet_hotkey=config.wallet_hotkey,
-        wallet_path=config.wallet_path,
-    )
+    runner = TickRunner(config.tick_timeout_seconds)
+    try:
+        # Connected on the tick thread too: opening the websocket can hang like any call on it.
+        chain = runner.call(
+            partial(
+                BittensorWeightChain,
+                network=config.network,
+                wallet_name=config.wallet_name,
+                wallet_hotkey=config.wallet_hotkey,
+                wallet_path=config.wallet_path,
+            ),
+            what="connecting to the chain",
+        )
+    except TickStalled as exc:
+        exit_stalled(events, exc, config)
     store = db.connect()
     try:
-        run(chain, store, config)
+        run(chain, store, config, runner=runner)
+    except TickStalled as exc:
+        exit_stalled(events, exc, config)
     finally:
         events.info("service_stopped", reason="interrupted")
         store.close()
