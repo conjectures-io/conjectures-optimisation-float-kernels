@@ -608,6 +608,185 @@ theorem depthwise_total (s : ConvShape) (input w b : Array Word) (c y x : Nat) (
     Nat.mul_one, Nat.add_zero]
   rfl
 
+/-- `tapSource` returns exactly the input index `i < n` with `i·stride + d·dil = p + pad`
+(there is at most one, since `stride > 0`). -/
+theorem tapSource_eq_some_iff (p pad d dil stride n i : Nat) (hs : 0 < stride) :
+    tapSource p pad d dil stride n = some i ↔ i < n ∧ i * stride + d * dil = p + pad := by
+  simp only [tapSource]
+  split_ifs with h1 h2
+  · simp only [false_iff, not_and]
+    intro _ h
+    omega
+  · simp only [Option.some.injEq]
+    constructor
+    · rintro rfl
+      refine ⟨h2.2, ?_⟩
+      have := Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero h2.1)
+      omega
+    · rintro ⟨_, h⟩
+      have : p + pad - d * dil = i * stride := by omega
+      rw [this, Nat.mul_div_cancel _ hs]
+  · simp only [false_iff, not_and]
+    intro hi h
+    apply h2
+    have : p + pad - d * dil = i * stride := by omega
+    rw [this, Nat.mul_mod_left, Nat.mul_div_cancel _ hs]
+    exact ⟨rfl, hi⟩
+
+theorem tapSource_isSome_iff (p pad d dil stride n : Nat) (hs : 0 < stride) :
+    (tapSource p pad d dil stride n).isSome ↔ ∃ i < n, i * stride + d * dil = p + pad := by
+  rw [Option.isSome_iff_exists]
+  simp only [tapSource_eq_some_iff _ _ _ _ _ _ _ hs]
+
+/-- Summing over input positions picks out the unique source `tapSource` finds, if any. -/
+theorem sum_tapSource (p pad d dil stride n : Nat) (hs : 0 < stride) (g : Nat → ℚ) :
+    (∑ i ∈ Finset.range n, if i * stride + d * dil = p + pad then g i else 0) =
+      if (tapSource p pad d dil stride n).isSome then
+        g ((tapSource p pad d dil stride n).getD 0) else 0 := by
+  cases h : tapSource p pad d dil stride n with
+  | none =>
+    simp only [Option.isSome_none, Bool.false_eq_true, ite_false]
+    apply Finset.sum_eq_zero
+    intro i hi
+    rw [if_neg]
+    intro he
+    have := (tapSource_eq_some_iff p pad d dil stride n i hs).mpr ⟨Finset.mem_range.mp hi, he⟩
+    rw [h] at this
+    exact absurd this (by simp)
+  | some i0 =>
+    have h0 := (tapSource_eq_some_iff p pad d dil stride n i0 hs).mp h
+    simp only [Option.isSome_some, ite_true, Option.getD_some]
+    rw [Finset.sum_eq_single i0]
+    · rw [if_pos h0.2]
+    · intro i hi hne
+      rw [if_neg]
+      intro he
+      have := (tapSource_eq_some_iff p pad d dil stride n i hs).mpr ⟨Finset.mem_range.mp hi, he⟩
+      rw [h] at this
+      exact hne (Option.some.inj this).symm
+    · intro hn
+      exact absurd (Finset.mem_range.mpr h0.1) hn
+
+theorem sum_list_getElem (l : List Nat) (f : Nat → ℚ) :
+    (∑ i ∈ Finset.range l.length, f l[i]!) = (l.map f).sum := by
+  induction l with
+  | nil => simp
+  | cons a l ih =>
+    rw [List.length_cons, Finset.sum_range_succ', List.map_cons, List.sum_cons, ← ih, add_comm]
+    simp
+
+theorem sum_array_getElem (a : Array Nat) (f : Nat → ℚ) :
+    (∑ i ∈ Finset.range a.size, f a[i]!) = (a.toList.map f).sum := by
+  rcases a with ⟨l⟩
+  rw [← sum_list_getElem]
+  simp
+
+theorem sum_list_filter_range (n : Nat) (p : Nat → Bool) (f : Nat → ℚ) :
+    (((List.range n).filter p).map f).sum =
+      ∑ t ∈ (Finset.range n).filter (fun t => p t = true), f t := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    rw [List.range_succ, List.filter_append, List.map_append, List.sum_append, ih,
+      Finset.range_add_one, Finset.filter_insert]
+    by_cases hp : p n = true
+    · rw [if_pos hp, Finset.sum_insert (by simp), add_comm]
+      simp [hp]
+    · rw [if_neg hp]
+      simp [hp]
+
+/-- Summing over a filtered `Array.range` by position is summing over the filtered `Finset`. -/
+theorem sum_filter_range (n : Nat) (p : Nat → Bool) (f : Nat → ℚ) :
+    (∑ i ∈ Finset.range ((Array.range n).filter p).size, f ((Array.range n).filter p)[i]!) =
+      ∑ t ∈ (Finset.range n).filter (fun t => p t = true), f t := by
+  rw [← sum_list_filter_range, sum_array_getElem]
+  congr 2
+  simp
+
+/-- Tap `(c, dy, dx)` of a transposed convolution is flat tap `(c·kh + dy)·kw + dx`. -/
+theorem tap_coordinates (kh kw c dy dx : Nat) (hdy : dy < kh) (hdx : dx < kw) :
+    ((c * kh + dy) * kw + dx) / (kh * kw) = c ∧ ((c * kh + dy) * kw + dx) / kw % kh = dy ∧
+      ((c * kh + dy) * kw + dx) % kw = dx := by
+  have hp := flatten_pair (c * kh + dy) dx kw (by omega) hdx
+  have hc := flatten_pair c dy kh (by omega) hdy
+  refine ⟨?_, by rw [hp.1, hc.2], hp.2⟩
+  rw [Nat.mul_comm kh kw, ← Nat.div_div_eq_div_mul, hp.1, hc.1]
+
+/-- What a transposed-convolution output means (ONNX `ConvTranspose`): the bias plus, over the
+group's input channels `c` and filter taps `(dy, dx)`, every input position `(iy, ix)` inside the
+image with `iy·strideH + dy·dilH = y + padT` and `ix·strideW + dx·dilW = x + padL`, times the
+weight `w[g·cpg + c, o mod opg, dy, dx]` (weights `cin × (cout/groups) × kh × kw`). -/
+def convTValue (s : ConvTShape) (input w b : Array Word) (o y x : Nat) : ℚ :=
+  (∑ c ∈ Finset.range s.cpg, ∑ dy ∈ Finset.range s.kh, ∑ dx ∈ Finset.range s.kw,
+    ∑ iy ∈ Finset.range s.h, ∑ ix ∈ Finset.range s.w,
+      if iy * s.strideH + dy * s.dilH = y + s.padT ∧ ix * s.strideW + dx * s.dilW = x + s.padL then
+        rationalWord input[(((o / s.opg) * s.cpg + c) * s.h + iy) * s.w + ix]! *
+          rationalWord w[((((o / s.opg) * s.cpg + c) * s.opg + o % s.opg) * s.kh + dy) * s.kw + dx]!
+      else 0) + rationalWord b[o]!
+
+/-- The flat transposed-convolution reduction over the listed taps is exactly the ONNX sum over
+channels, filter taps and the input positions they reach, plus bias. -/
+theorem convTranspose_total (s : ConvTShape) (input w b : Array Word) (o y x : Nat)
+    (hsh : 0 < s.strideH) (hsw : 0 < s.strideW) :
+    (∑ i ∈ Finset.range ((convTTaps s y x).size + 1),
+      rationalWord (if i < (convTTaps s y x).size then
+        convTInput s input (o / s.opg) y x (convTTaps s y x)[i]! else oneW) *
+      rationalWord (if i < (convTTaps s y x).size then
+        convTWeight s w o (convTTaps s y x)[i]! else b[o]!)) =
+        convTValue s input w b o y x := by
+  rw [Finset.sum_range_succ]
+  simp only [lt_self_iff_false, ite_false, rational_one, one_mul, convTValue]
+  congr 1
+  have hinner : (∑ i ∈ Finset.range (convTTaps s y x).size,
+      rationalWord (if i < (convTTaps s y x).size then
+        convTInput s input (o / s.opg) y x (convTTaps s y x)[i]! else oneW) *
+      rationalWord (if i < (convTTaps s y x).size then
+        convTWeight s w o (convTTaps s y x)[i]! else b[o]!)) =
+        ∑ i ∈ Finset.range (convTTaps s y x).size,
+          (fun t => rationalWord (convTInput s input (o / s.opg) y x t) *
+            rationalWord (convTWeight s w o t)) (convTTaps s y x)[i]! := by
+    apply Finset.sum_congr rfl
+    intro i hi
+    simp only [if_pos (Finset.mem_range.mp hi)]
+  rw [hinner, convTTaps]
+  refine (sum_filter_range s.taps _ (fun t => rationalWord (convTInput s input (o / s.opg) y x t) *
+    rationalWord (convTWeight s w o t))).trans ?_
+  rw [Finset.sum_filter, ConvShape.taps, Nat.mul_assoc, sum_blocks]
+  apply Finset.sum_congr rfl
+  intro c hc
+  rw [sum_blocks]
+  apply Finset.sum_congr rfl
+  intro dy hdy
+  apply Finset.sum_congr rfl
+  intro dx hdx
+  have ht : c * (s.kh * s.kw) + (dy * s.kw + dx) = (c * s.kh + dy) * s.kw + dx := by ring
+  have hco := tap_coordinates s.kh s.kw c dy dx (Finset.mem_range.mp hdy)
+    (Finset.mem_range.mp hdx)
+  rw [ht]
+  simp only [convTInput, convTWeight, hco.1, hco.2.1, hco.2.2]
+  have hsplit : ∀ iy, (∑ ix ∈ Finset.range s.w,
+      if iy * s.strideH + dy * s.dilH = y + s.padT ∧ ix * s.strideW + dx * s.dilW = x + s.padL then
+        rationalWord input[(((o / s.opg) * s.cpg + c) * s.h + iy) * s.w + ix]! *
+          rationalWord w[((((o / s.opg) * s.cpg + c) * s.opg + o % s.opg) * s.kh + dy) * s.kw + dx]!
+      else 0) =
+      if iy * s.strideH + dy * s.dilH = y + s.padT then
+        (if (tapSource x s.padL dx s.dilW s.strideW s.w).isSome then
+          rationalWord input[(((o / s.opg) * s.cpg + c) * s.h + iy) * s.w +
+            (tapSource x s.padL dx s.dilW s.strideW s.w).getD 0]! *
+          rationalWord w[((((o / s.opg) * s.cpg + c) * s.opg + o % s.opg) * s.kh + dy) * s.kw + dx]!
+        else 0) else 0 := by
+    intro iy
+    by_cases hy : iy * s.strideH + dy * s.dilH = y + s.padT
+    · rw [if_pos hy]
+      simp only [hy, true_and]
+      exact sum_tapSource x s.padL dx s.dilW s.strideW s.w hsw _
+    · rw [if_neg hy]
+      simp [hy]
+  rw [Finset.sum_congr rfl (fun iy _ => hsplit iy),
+    sum_tapSource y s.padT dy s.dilH s.strideH s.h hsh]
+  cases (tapSource y s.padT dy s.dilH s.strideH s.h).isSome <;>
+    cases (tapSource x s.padL dx s.dilW s.strideW s.w).isSome <;> simp
+
 /-- A pooling window's sum is the sum over its rectangle of image cells. -/
 theorem pool_total (s : PoolShape) (input : Array Word) (ch : Nat) (win : PoolWindow) :
     (∑ t ∈ Finset.range (win.rows * win.cols), rationalWord (poolCell s input ch win t)) =
