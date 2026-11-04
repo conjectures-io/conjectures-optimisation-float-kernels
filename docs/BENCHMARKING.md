@@ -21,21 +21,34 @@ sizes. This gives 36 workload/cell combinations per family, 180 for overall, per
 The suite is synthetic inference, not trained-model accuracy or backpropagation.
 
 Fresh-seed mode chooses a new root seed for an evaluation; retries retain the same workloads.
-Candidate and reference receive identical seeds, shapes, parameters and inputs. The required
-hardware environments and their weights are part of the published board configuration.
+Candidate and reference receive identical model weights, shapes, parameters and inputs within each
+paired sample. Each inference gets a distinct activation input drawn from the same data-type
+distribution. The harness derives an independent seed per inference and passes the same seed bank
+to both sides of the pair. Lean generates inputs in small batches before each timing window,
+keeping memory bounded while excluding generation from kernel timing.
+The required hardware environments and their weights are part of the published board configuration.
 The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 
 ## Measurement
 
 1. Build candidate and reference once for the target CPU, then reuse validated cached binaries
    across family jobs. Build time is not scored.
-2. Calibrate repetitions on the reference, using two warmed best-of-three passes. Candidate and
+2. Calibrate repetitions on the reference, using two warmed median-of-three passes. Candidate and
    reference use the same repetition counts for every workload/cell.
 3. Run paired rounds, alternating which binary runs first and using one CPU affinity where supported.
-   Each reported duration is the best of the configured inner repetitions.
-4. Require matching output checksums. Model/input preparation and output hashing are outside timing.
+   Each reported duration is the median of the configured inner repetitions.
+4. Run each inner timing sample in a fresh process. Within a sample, each inference gets a
+   different activation input; weights, shapes and profile remain fixed. Input generation is
+   outside each timing window. The process exit clears kernel state before the next inner sample,
+   and output checksums are computed outside timing.
 
-The development config generator uses **11 rounds, best of 3, 50 ms cells**. These are local
+Distinct per-inference inputs make the current exact-argument output caches miss. A fresh process
+per inner sample also clears global mutable state between samples, while keeping process startup,
+model construction and input generation outside the reported kernel time. The benchmark still
+allows setup reuse within a sample; process-per-inference isolation would be a stricter and more
+expensive policy.
+
+The development config generator uses **11 rounds, median of 3, 50 ms cells**. These are local
 configuration defaults, not a promise about production. Read `/v1/competitions/torchlean/boards`
 and submission reports for live policy and frozen evaluation settings. Full processing also includes
 proof checking, native builds and queue waiting; it is longer than the timed inference.

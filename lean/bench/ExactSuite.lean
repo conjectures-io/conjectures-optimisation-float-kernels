@@ -170,8 +170,7 @@ def cellModel (c : Cell) (seed : UInt32) : List Layer × Nat × Nat :=
     let C := pick 7 16 33
     (mixerLayers c.kind seed T C 10, c.batch, T * C)
 
-/-- Run one cell with kernels `K`; the output's hash. `rep` (the repetition number) only reaches
-the input through `touch`, so repeated runs are really run. -/
+/-- Run one cell with kernels `K`; the output's hash. Legacy path retained for existing callers. -/
 structure PreparedCell where
   layers : List Layer
   samples : Nat
@@ -184,6 +183,10 @@ def prepareCell (c : Cell) (seed : UInt32) : PreparedCell :=
 
 def runPrepared (K : Kernels) (p : PreparedCell) (rep : Nat) : Array Word :=
   runModel K p.layers p.samples p.size (touch rep p.input)
+
+/-- Run one inference on an input prepared by the harness before the timing window. -/
+def runPreparedInput (K : Kernels) (p : PreparedCell) (input : Array Word) : Array Word :=
+  runModel K p.layers p.samples p.size input
 
 def runCell (K : Kernels) (c : Cell) (seed : UInt32) (rep : Nat := 0) : UInt32 :=
   hashArr (runPrepared K (prepareCell c seed) rep)
