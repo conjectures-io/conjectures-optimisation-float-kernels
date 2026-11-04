@@ -32,8 +32,11 @@ def clock(monkeypatch):
 
 
 def timing(**extra):
+    # Keep fake 100 ns rows from generating an enormous synthetic seed bank in these unit tests.
     return (
-        dict(rounds=1, inner=1, cell_ms=1, run_seconds=10, build_seconds=10, benchmark_seconds=4)
+        dict(
+            rounds=1, inner=1, cell_ms=0.001, run_seconds=10, build_seconds=10, benchmark_seconds=4
+        )
         | extra
     )
 
@@ -93,6 +96,64 @@ def test_build_does_not_consume_measurement_time_and_durations_are_recorded(meas
     )
     assert result["timing_seconds"] == pytest.approx(2)
     assert sandbox.WORK.read_bytes() == b"operator source"
+
+
+def test_round_uses_paired_distinct_inputs_in_fresh_processes_and_medians(
+    measurement, clock, monkeypatch
+):
+    request, _ = measurement
+    request["timing"] = timing(inner=3)
+    rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
+    calls = []
+
+    def run(command, timeout, **kwargs):
+        side = Path(command[-1]).name
+        env = kwargs["env_extra"]
+        calls.append((side, env))
+        if len(calls) <= 2:
+            measured = rows
+        else:
+            sample = (len(calls) - 3) // 2
+            ns = {
+                "reference": (100, 300, 200),
+                "candidate": (50, 150, 100),
+            }[side][sample]
+            measured = rows.replace(" true 100 ", f" true {ns} ")
+        clock.advance(0.01)
+        return 0, measured
+
+    monkeypatch.setattr(sandbox, "run", run)
+    result = benchmark.measure(request, b"candidate", b"reference")
+
+    # Two baseline-only calibration processes, then one fresh process per side/sample.
+    assert len(calls) == 2 + 2 * request["timing"]["inner"]
+    samples = calls[2:]
+    assert all(env["BENCH_INNER"] == "1" for _, env in samples)
+    paired_banks = []
+    for index in range(0, len(samples), 2):
+        left_side, left_env = samples[index]
+        right_side, right_env = samples[index + 1]
+        assert left_side != right_side
+        left_seeds = [
+            left_env[f"BENCH_INPUT_SEEDS_{chunk}"]
+            for chunk in range(int(left_env["BENCH_INPUT_SEED_CHUNKS"]))
+        ]
+        right_seeds = [
+            right_env[f"BENCH_INPUT_SEEDS_{chunk}"]
+            for chunk in range(int(right_env["BENCH_INPUT_SEED_CHUNKS"]))
+        ]
+        assert left_seeds == right_seeds
+        paired_banks.append(left_seeds)
+    assert len({tuple(bank) for bank in paired_banks}) == request["timing"]["inner"]
+
+    sample_round = result["rounds"][0]
+    for workload in workloads(42):
+        measured = sample_round["cells"][f"{workload['id']}|{CELL}"]
+        assert measured["reference_ns_samples"] == [100, 300, 200]
+        assert measured["candidate_ns_samples"] == [50, 150, 100]
+        assert measured["reference_ns"] == 200
+        assert measured["candidate_ns"] == 100
+        assert measured["reference_checksum"] == measured["candidate_checksum"]
 
 
 def test_shared_preparation_is_charged_to_build_not_benchmark(measurement, clock, monkeypatch):
@@ -273,7 +334,10 @@ def test_a_timeout_keeps_what_the_measurement_had_reached(measurement, clock, mo
     assert partial["calibration"] == dict.fromkeys(names, 100)
     assert set(partial["repetitions"]) == set(names)
     assert [r["reference_first"] for r in partial["rounds"]] == [True]
-    assert partial["round_in_progress"] == {"candidate": {n: [100, 123] for n in names}}
+    assert partial["round_in_progress"] == {
+        "candidate": [{n: [100, 123] for n in names}],
+        "reference": [],
+    }
     assert partial["rounds_planned"] == 2
     assert partial["build_seconds"] == 9 and partial["benchmark_seconds"] == 9.5
     assert sandbox.WORK.read_bytes() == b"operator source"
@@ -291,8 +355,9 @@ def test_a_crash_keeps_the_measurement_but_is_no_timeout(measurement, monkeypatc
         benchmark.measure(request, b"candidate", b"reference")
     error = exc.value.error()
     assert error["kind"] == "candidate" and "timeout" not in error
-    assert error["partial"]["rounds"] == [] and set(error["partial"]["round_in_progress"]) == {
-        "reference"
+    assert error["partial"]["rounds"] == [] and error["partial"]["round_in_progress"] == {
+        "candidate": [],
+        "reference": [{n: (100, 123) for n in (f"{w['id']}|{CELL}" for w in workloads(42))}],
     }
 
 

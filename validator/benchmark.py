@@ -5,14 +5,17 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import platform
+import secrets
 import shutil
 import socket
 import subprocess
 import time
 from pathlib import Path
+from statistics import median
 
 import sandbox
 from config import MeasurementRequest, digest, measurement_hash
@@ -23,6 +26,19 @@ import fingerprint
 
 # The only translation of legacy Lean suite labels; persisted requests use public names.
 LEAN_MODELS = {"resnet": "cnn", "mobilenet": "mnet", "normalized_mlp": "nmlp"}
+
+INPUT_CELL_ORDER = tuple(
+    f"{model}:b{batch}:{kind}"
+    for kind in ("normal", "wide", "sparse")
+    for model, batches in (
+        ("mlp", (1, 8)),
+        ("resnet", (1, 4)),
+        ("mobilenet", (1, 4)),
+        ("normalized_mlp", (1, 8)),
+        ("mixer", (1, 4)),
+    )
+    for batch in batches
+)
 
 
 def lean_cell(cell):
@@ -270,6 +286,68 @@ def row_names(request):
     }
 
 
+def input_seed_bank(request, reps, inner, key):
+    """Independent seeds shared by both sides of one paired sample."""
+    cells = [cell for cell in INPUT_CELL_ORDER if cell in request["cells"]]
+    values = []
+    seen = set()
+    for workload in request["workloads"]:
+        for cell in cells:
+            count = reps.get(f"{workload['id']}|{cell}", 1)
+            for run in range(inner):
+                for repetition in range(count):
+                    context = f"{workload['id']}|{cell}|{run}|{repetition}".encode()
+                    counter = 0
+                    while True:
+                        seed = int.from_bytes(
+                            hmac.new(
+                                key, context + counter.to_bytes(4, "big"), hashlib.sha256
+                            ).digest()[:4],
+                            "big",
+                        )
+                        if seed not in seen:
+                            seen.add(seed)
+                            values.append(seed)
+                            break
+                        counter += 1
+    return values
+
+
+def input_seed_environment(values):
+    """Keep env values below per-string limits and the whole bank within a safe total size."""
+    chunks, current = [], []
+    current_size = 0
+    for value in map(str, values):
+        if current and current_size + len(value) + 1 > 100_000:
+            chunks.append(",".join(current))
+            current, current_size = [], 0
+        current.append(value)
+        current_size += len(value) + int(len(current) > 1)
+    if current:
+        chunks.append(",".join(current))
+    if not chunks:
+        raise ValueError("input-seed bank cannot be empty")
+    if len(chunks) > 8:
+        raise ValueError("input-seed bank exceeds the environment-size budget")
+    return {
+        "BENCH_INPUT_SEED_CHUNKS": str(len(chunks)),
+        **{f"BENCH_INPUT_SEEDS_{i}": chunk for i, chunk in enumerate(chunks)},
+    }
+
+
+def paired_input_seed_key():
+    """A per-pair key; the same generated inputs are passed to reference and candidate."""
+    return secrets.token_bytes(32)
+
+
+def checksum_series(values):
+    """Fold checksums from every independently timed sample into one stable word."""
+    result = 2166136261
+    for value in values:
+        result = ((result ^ value) * 16777619) & 0xFFFFFFFF
+    return result
+
+
 def start_marker(line):
     # The bench's `<row> start` marker, on stderr before each cell; not a result row.
     fields = line.split()
@@ -300,7 +378,7 @@ def finished(output, public):
     }
 
 
-def run_binary(binary, request, reps, inner, side, deadline):
+def run_binary(binary, request, reps, inner, side, deadline, input_seed_key=None):
     budget = deadline.remaining(side)
     timeout = min(request["timing"]["run_seconds"], budget)
     extra = {
@@ -316,6 +394,9 @@ def run_binary(binary, request, reps, inner, side, deadline):
     extra["BENCH_REPS"] = ",".join(
         f"{k.split('|')[0]}|{lean_cell(k.split('|')[1])}={n}" for k, n in reps.items()
     )
+    input_seed_key = input_seed_key or secrets.token_bytes(32)
+    extra["BENCH_INPUT_MODE"] = "distinct"
+    extra.update(input_seed_environment(input_seed_bank(request, reps, inner, input_seed_key)))
     command = [str(binary)]
     if sandbox._BENCH_CPU:
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
@@ -440,28 +521,57 @@ def measure(request, candidate, reference, mode=None):
                 benchmark_clock.share()
                 t0 = time.monotonic()
                 for i in range(request["timing"]["rounds"]):
-                    sides = [("reference", ref), ("candidate", sub)]
-                    if i % 2:
-                        sides.reverse()
-                    # A side that finished before the other was stopped is kept with the failure.
-                    observed = partial["round_in_progress"] = {}
-                    for side, binary in sides:
-                        observed[side] = run_binary(
-                            binary, request, reps, request["timing"]["inner"], side, benchmark_clock
-                        )
+                    inner = request["timing"]["inner"]
+                    sample_keys = [paired_input_seed_key() for _ in range(inner)]
+                    partial["input_seed_keys_in_progress"] = [key.hex() for key in sample_keys]
+                    observed = partial["round_in_progress"] = {
+                        "reference": [],
+                        "candidate": [],
+                    }
+                    reference_runs = observed["reference"]
+                    candidate_runs = observed["candidate"]
+                    for sample_index, input_seed_key in enumerate(sample_keys):
+                        sides = [("reference", ref), ("candidate", sub)]
+                        if (i + sample_index) % 2:
+                            sides.reverse()
+                        for side, binary in sides:
+                            rows = run_binary(
+                                binary,
+                                request,
+                                reps,
+                                1,
+                                side,
+                                benchmark_clock,
+                                input_seed_key=input_seed_key,
+                            )
+                            observed[side].append(rows)
                     cells = {}
                     for c in reps:
-                        a, b = observed["reference"][c], observed["candidate"][c]
-                        if a[1] != b[1]:
+                        ref_samples = [sample[c] for sample in reference_runs]
+                        candidate_samples = [sample[c] for sample in candidate_runs]
+                        ref_checksums = [sample[1] for sample in ref_samples]
+                        candidate_checksums = [sample[1] for sample in candidate_samples]
+                        if ref_checksums != candidate_checksums:
                             raise MeasurementFailure("checksum", f"output mismatch on {c}")
                         cells[c] = {
-                            "reference_ns": a[0],
-                            "candidate_ns": b[0],
-                            "reference_checksum": a[1],
-                            "candidate_checksum": b[1],
+                            "reference_ns": int(median(sample[0] for sample in ref_samples)),
+                            "candidate_ns": int(median(sample[0] for sample in candidate_samples)),
+                            "reference_checksum": checksum_series(ref_checksums),
+                            "candidate_checksum": checksum_series(candidate_checksums),
+                            "reference_ns_samples": [sample[0] for sample in ref_samples],
+                            "candidate_ns_samples": [sample[0] for sample in candidate_samples],
+                            "reference_checksums": ref_checksums,
+                            "candidate_checksums": candidate_checksums,
                         }
-                    rounds.append({"reference_first": i % 2 == 0, "cells": cells})
+                    rounds.append(
+                        {
+                            "reference_first": i % 2 == 0,
+                            "input_seed_keys": [key.hex() for key in sample_keys],
+                            "cells": cells,
+                        }
+                    )
                     del partial["round_in_progress"]
+                    partial.pop("input_seed_keys_in_progress", None)
                 round_seconds = time.monotonic() - t0
                 benchmark_clock.remaining("candidate")
             except MeasurementFailure as exc:
