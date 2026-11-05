@@ -27,6 +27,9 @@ BENCHMARK_FILES = (
     + [
         "validator/benchmark.py",
         "validator/config.py",
+        "validator/comparisons.py",
+        "validator/db/evaluations.py",
+        "validator/scoring.py",
         "validator/timing.py",
         "validator/multiseed.py",
         "validator/workload.py",

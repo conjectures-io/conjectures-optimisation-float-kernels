@@ -59,14 +59,24 @@ def test_claim_bound_to_authenticated_login(store, config, logins):
     assert job.claimant == name
     assert first.access()["environments"] == ["local"]
     assert first.sources(job.id)[0] == b"candidate"
+    event = {"phase": "build_stage", "stage": "candidate", "seconds": 12.5}
+    assert first.write_progress(job.id, job.owner, job.token, job.attempts, 0, event)
     # Knowing another process's token is insufficient with different DB credentials.
     second.claims[job.id] = (job.owner, job.token)
     second.requests[job.id] = job.request
+    assert not second.write_progress(job.id, job.owner, job.token, job.attempts, 1, event)
     with pytest.raises(NoResultFound):
         second.sources(job.id)
     assert not second.heartbeat(job.id, job.owner, job.token)
     assert not second.complete(job.id, job.owner, job.token, result(job.request))
     assert not second.fail(job.id, job.owner, job.token, {"kind": "candidate", "reason": "spoof"})
+    with store.engine.connect() as conn:
+        assert (
+            conn.scalar(
+                text("SELECT payload FROM benchmark_job_progress WHERE job_id=:id"), {"id": job.id}
+            )
+            == event
+        )
     for statement in (
         "UPDATE benchmark_jobs SET state='cancelled'",
         "UPDATE worker_logins SET enabled=true",
@@ -227,7 +237,7 @@ def test_preflight_reads_only_and_checks_environment(store, config, logins, monk
         sys, "argv", ["preflight", "--environment", "local", "--expected-identity", "a" * 64]
     )
     worker_preflight.main()
-    assert json.loads(capsys.readouterr().out)["access"]["protocol"] == 2
+    assert json.loads(capsys.readouterr().out)["access"]["protocol"] == 4
     with store.engine.connect() as conn:
         assert conn.scalar(text("SELECT sum(attempts) FROM benchmark_jobs")) == 0
     monkeypatch.setattr(sys, "argv", ["preflight", "--environment", "other"])

@@ -23,10 +23,7 @@ def fixture_lines(fixture_id: str, target: Path, samples_per_run: int) -> list[s
     if not manifest_path.is_file():
         raise ValueError(f"missing sample-addressable fixture {target}")
     manifest = json.loads(manifest_path.read_text())
-    if (
-        manifest["format"] != "sample-addressable-f32-v1"
-        or manifest["workload_id"] != fixture_id
-    ):
+    if manifest["format"] != "sample-addressable-f32-v1" or manifest["workload_id"] != fixture_id:
         raise ValueError(f"unsupported fixture format: {target}")
     weights = ROOT / manifest["weights_path"]
     samples = ROOT / manifest["samples_path"]
@@ -59,7 +56,17 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--environment", default="local")
     parser.add_argument(
-        "--quick", action="store_true", help="development only: 3 paired rounds, 1 process each"
+        "--quick", action="store_true", help="development only: one paired and baseline round"
+    )
+    parser.add_argument("--rounds", type=int, default=12, help="paired observations per workload")
+    parser.add_argument(
+        "--inner", type=int, default=1, help="fresh processes per paired observation"
+    )
+    parser.add_argument(
+        "--baseline-rounds", type=int, default=3, help="baseline telemetry observations"
+    )
+    parser.add_argument(
+        "--min-rounds", type=int, help="minimum paired rounds required for admission"
     )
     parser.add_argument(
         "--reference", type=Path, default=ROOT / "kernels/exact/incumbent/Kernel.lean"
@@ -76,33 +83,58 @@ def main():
     parser.add_argument(
         "--real-image-zoo",
         action="store_true",
-        help="include local trained image-zoo fixtures as diagnostic real workloads",
+        help="include local trained image-zoo fixtures in the scored real suite",
     )
     parser.add_argument(
         "--real-uci-har",
         action="store_true",
-        help="include local UCI-HAR sensor fixtures as diagnostic real workloads",
+        help="include local UCI-HAR sensor fixtures in the scored real suite",
     )
     parser.add_argument(
         "--real-appliance-mixer",
         action="store_true",
-        help="include the local Appliance Energy Mixer fixture as a diagnostic workload",
+        help="include the local Appliance Energy Mixer fixture in the scored real suite",
+    )
+    parser.add_argument(
+        "--synthetic-full",
+        action="store_true",
+        help="include every supported synthetic batch/kind cell instead of batch-1 defaults",
+    )
+    parser.add_argument(
+        "--synthetic-cell",
+        action="append",
+        help="explicit synthetic cell to score; repeat to build a custom compact suite",
     )
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output already exists; edit it or choose a new path")
     source = args.reference.resolve()
     proof, bench = fingerprint.proof(), fingerprint.benchmark()
-    rounds, inner = (3, 1) if args.quick else (11, 3)
-
-    def samples_per_run(sample_count: int, workload_id: str) -> int:
-        capacity = sample_count // (rounds * inner)
-        if capacity < 1:
-            parser.error(
-                f"{workload_id} has {sample_count} samples but the selected timing needs "
-                f"{rounds * inner} distinct samples; use --quick or supply a larger fixture"
+    rounds, inner, baseline_rounds = (
+        (1, 1, 1) if args.quick else (args.rounds, args.inner, args.baseline_rounds)
+    )
+    if min(rounds, inner, baseline_rounds) < 1:
+        parser.error("round and process counts must be positive")
+    min_rounds = args.min_rounds if args.min_rounds is not None else min(5, rounds)
+    if not 1 <= min_rounds <= rounds:
+        parser.error("--min-rounds must be between 1 and --rounds")
+    synthetic_models = (
+        [args.board] if args.board else ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"]
+    )
+    if args.synthetic_cell:
+        synthetic_cells = args.synthetic_cell
+    else:
+        kinds = ("normal", "wide", "sparse")
+        synthetic_cells = [
+            f"{model}:b{batch}:{kind}"
+            for model in synthetic_models
+            for batch in (
+                ((1, 8) if model in ("mlp", "normalized_mlp") else (1, 4))
+                if args.synthetic_full
+                else (1,)
             )
-        return min(3, capacity)
+            for kind in kinds
+        ]
 
     lines = [
         "# Development configuration; calibrate production settings before enabling payouts.",
@@ -120,10 +152,15 @@ def main():
         'suites = ["synthetic", "real"]'
         if args.real_image_zoo or args.real_uci_har or args.real_appliance_mixer
         else 'suites = ["synthetic"]',
+        f"synthetic_cells = {synthetic_cells!r}",
+        "suite_weights = { synthetic = 0.5, real = 0.5 }"
+        if args.real_image_zoo or args.real_uci_har or args.real_appliance_mixer
+        else "suite_weights = { synthetic = 1.0 }",
         "",
         "[timing]",
         f"rounds = {rounds}",
         f"inner = {inner}",
+        f"baseline_rounds = {baseline_rounds}",
         "run_seconds = 300",
         "# Build and measurement limits default by architecture and model count.",
         "",
@@ -132,7 +169,7 @@ def main():
         "guard = 1.10",
         "draws = 2000",
         "quantile = 0.05",
-        f"min_rounds = {min(5, rounds)}",
+        f"min_rounds = {min_rounds}",
         "",
         f"[environments.{args.environment}]",
         "weight = 1.0",
@@ -145,7 +182,10 @@ def main():
         "",
         "[rewards.board_weights]",
     ]
-    names = ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer"]
+    # The first scored season uses the five families with real fixtures. Keep Transformer
+    # available through --board for local kernel experiments, but do not silently add a seventh
+    # reward board to the default dev configuration.
+    names = ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"]
     selected = [args.board] if args.board else ["overall", *names]
     lines += [
         f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.5 / len(names)}"
@@ -182,11 +222,10 @@ def main():
                 / f"{family}-{dataset}"
             )
             fixture_id = "image-zoo-" + family.replace("_", "-") + "-" + dataset
-            manifest = json.loads((target / "manifest.json").read_text())
             lines += fixture_lines(
                 fixture_id,
                 target,
-                samples_per_run(manifest["sample_count"], family + "-" + dataset),
+                1,
             )
     if args.real_uci_har:
         model_dir = ROOT / "data/real-model-backtest/20261102-uci-har"
@@ -199,11 +238,10 @@ def main():
                 / "data/real-model-backtest/20261105-sample-addressable/models/uci-har"
                 / family
             )
-            manifest = json.loads((target / "manifest.json").read_text())
             lines += fixture_lines(
                 "uci-har-" + family.replace("_", "-"),
                 target,
-                samples_per_run(manifest["sample_count"], family + "-uci-har"),
+                1,
             )
     if args.real_appliance_mixer:
         path = (
@@ -216,11 +254,10 @@ def main():
             ROOT
             / "data/real-model-backtest/20261105-sample-addressable/models/appliance-energy/mixer"
         )
-        manifest = json.loads((target / "manifest.json").read_text())
         lines += fixture_lines(
             "appliance-energy-mixer",
             target,
-            samples_per_run(manifest["sample_count"], "appliance-energy-mixer"),
+            1,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines) + "\n")

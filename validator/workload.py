@@ -6,12 +6,27 @@ import math
 import re
 import struct
 from dataclasses import dataclass
-from pathlib import PurePosixPath
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 Suite = Literal["synthetic", "real"]
 SYNTHETIC_REVISION = "seeded-profiles-v1"
+
+
+def baseline_sentinel_rows(workloads: list[dict], cells: list[str], real_workloads: list[dict]):
+    """Pick one stable synthetic and real input row per represented family for load telemetry."""
+    synthetic = []
+    if workloads:
+        draw_id = workloads[0]["id"]
+        for family in sorted({cell.split(":", 1)[0] for cell in cells}):
+            family_cells = sorted(cell for cell in cells if cell.startswith(f"{family}:"))
+            preferred = next((cell for cell in family_cells if cell.endswith(":normal")), None)
+            synthetic.append(f"{draw_id}|{preferred or family_cells[0]}")
+    real_by_family = {}
+    for item in real_workloads:
+        real_by_family.setdefault(item["family"], []).append(item["id"])
+    real = [sorted(ids)[0] for _, ids in sorted(real_by_family.items())]
+    return {"synthetic": synthetic, "real": real}
 
 
 @dataclass(frozen=True)
@@ -91,13 +106,11 @@ class RealWorkloadSpec:
         for field in ("id", "family", "model", "dataset", "adapter", "asset_revision"):
             if not isinstance(raw[field], str) or not raw[field]:
                 raise ValueError(f"real workload {field} must be nonempty text")
-        if (
-            any(
-                not isinstance(raw[field], str)
-                or "\\" in raw[field]
-                or any(char in raw[field] for char in ",|=\n\r")
-                for field in ("weights_path", "samples_path")
-            )
+        if any(
+            not isinstance(raw[field], str)
+            or "\\" in raw[field]
+            or any(char in raw[field] for char in ",|=\n\r")
+            for field in ("weights_path", "samples_path")
         ):
             raise ValueError("real workload paths must be relative POSIX paths")
         adapters = {
@@ -120,8 +133,10 @@ class RealWorkloadSpec:
             value = raw[field]
             if type(value) is not int or value < 1:
                 raise ValueError(f"real workload {field} must be a positive integer")
-        if raw["samples_per_run"] > raw["sample_count"]:
-            raise ValueError("samples_per_run cannot exceed sample_count")
+        if raw["sample_count"] < 2:
+            raise ValueError("real workload requires at least two samples for an unscored warm-up")
+        if raw["samples_per_run"] != 1:
+            raise ValueError("real inference must use batch size one (samples_per_run = 1)")
         return cls(**raw)
 
     def json(self) -> dict:

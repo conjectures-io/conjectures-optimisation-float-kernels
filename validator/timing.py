@@ -4,14 +4,29 @@ import math
 
 SUPERVISOR_GRACE_SECONDS = 60
 DEFAULT_TIMING = dict(
-    rounds=11,
-    inner=3,
+    rounds=12,
+    inner=1,
     baseline_rounds=3,
     run_seconds=300,
     build_seconds=960,
     cached_build_seconds=180,
     benchmark_seconds=1200,
 )
+
+
+def baseline_round_indices(rounds: int, count: int) -> tuple[int, ...]:
+    """Space same-input baseline sentinels across the paired evaluation timeline."""
+    if type(rounds) is not int or rounds < 1 or type(count) is not int or count < 0:
+        raise ValueError(
+            "baseline sentinel schedule requires positive rounds and nonnegative count"
+        )
+    count = min(rounds, count)
+    if count == 0:
+        return ()
+    if count == 1:
+        return (rounds // 2,)
+    denominator = 2 * (count - 1)
+    return tuple((2 * index * (rounds - 1) + (count - 1)) // denominator for index in range(count))
 
 
 def build_defaults(architecture: str = "arm64") -> dict:
@@ -24,7 +39,14 @@ def build_defaults(architecture: str = "arm64") -> dict:
 
 def validate_timing(timing: dict) -> None:
     required = {"rounds", "inner", "run_seconds", "build_seconds", "benchmark_seconds"}
-    optional = {"cached_build_seconds", "baseline_rounds"}
+    optional = {
+        "cached_build_seconds",
+        "baseline_rounds",
+        "shared_build_seconds",
+        "baseline_build_seconds",
+        "reference_build_seconds",
+        "candidate_build_seconds",
+    }
     if not required <= timing.keys() or set(timing) - required - optional:
         raise ValueError("timing requires " + ", ".join(sorted(required)))
     for key, value in timing.items():
@@ -51,6 +73,13 @@ def preparation_seconds(timing: dict, mode: str = "cold") -> float:
         if mode == "cached"
         else timing["build_seconds"]
     )
+
+
+def build_stage_seconds(timing: dict, stage: str) -> float:
+    """Return a role-specific cap, inheriting the overall build cap until calibrated."""
+    if stage not in ("shared", "baseline", "reference", "candidate"):
+        raise ValueError("unknown build stage")
+    return timing.get(f"{stage}_build_seconds", timing["build_seconds"])
 
 
 def supervisor_seconds(timing: dict, mode: str = "cold") -> float:

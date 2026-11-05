@@ -7,9 +7,12 @@ import random
 from statistics import median
 
 from config import digest, measurement_hash
+from timing import baseline_round_indices, build_stage_seconds, preparation_seconds
+from workload import baseline_sentinel_rows
 
 
 def geomean(values: list[tuple[float, float]]) -> float:
+    values = list(values)
     return math.exp(sum(math.log(v) * w for v, w in values) / sum(w for _, w in values))
 
 
@@ -23,9 +26,100 @@ def quantile(values: list[float], q: float) -> float:
 def validate_result(request: dict, result: dict, cell_weights: dict | None = None) -> list[float]:
     if result.get("request_hash") != measurement_hash(request):
         raise ValueError("measurement request mismatch")
+    expected_policy = {
+        "observations_per_workload_per_process": 1,
+        "fresh_process_per_pass": True,
+        "weights_reloaded_each_pass": True,
+        "inference_clock": "supervisor-monotonic-ready-done-v1",
+        "baseline_sentinel_policy": "spaced-same-input-per-family-v1",
+    }
+    if request.get("warmup_policy") == "independent-unscored-input-v1":
+        expected_policy.update(
+            unscored_warmup_per_row_per_process=True,
+            warmup_inputs_independent_and_frozen=True,
+        )
+    if result.get("measurement_policy") != expected_policy:
+        raise ValueError("measurement timing/isolation policy mismatch")
     provenance = result.get("provenance", {})
     if provenance.get("identity") != request["identity"] or not provenance.get("machine"):
         raise ValueError("environment provenance mismatch")
+    if "suites" in request:
+        stage_seconds = result.get("stage_seconds")
+        preparation = result.get("preparation")
+        stages = stage_seconds.get("build_stages") if isinstance(stage_seconds, dict) else None
+        expected_stages = {"shared", "baseline", "reference", "candidate"}
+        if not isinstance(stages, dict) or set(stages) != expected_stages:
+            raise ValueError("missing per-role build stage evidence")
+        mode = preparation.get("mode") if isinstance(preparation, dict) else None
+        if mode not in ("cold", "cached"):
+            raise ValueError("missing build preparation mode")
+        expected_budgets = {
+            name: build_stage_seconds(request["timing"], name)
+            for name in ("shared", "baseline", "reference", "candidate")
+        }
+        if preparation.get("stage_budgets_seconds") != expected_budgets:
+            raise ValueError("build phase caps disagree with the measurement plan")
+        durations = []
+        for name, row in stages.items():
+            if (
+                not isinstance(row, dict)
+                or row.get("status") not in ("complete", "cached", "skipped")
+                or isinstance(row.get("seconds"), bool)
+                or not isinstance(row.get("seconds"), (int, float))
+                or not math.isfinite(row["seconds"])
+                or row["seconds"] < 0
+                or any(
+                    isinstance(row.get(field), bool)
+                    or not isinstance(row.get(field), (int, float))
+                    or not math.isfinite(row[field])
+                    or row[field] < 0
+                    for field in ("cache_lookup_seconds", "compile_seconds", "other_seconds")
+                )
+                or abs(
+                    row["seconds"]
+                    - row["cache_lookup_seconds"]
+                    - row["compile_seconds"]
+                    - row["other_seconds"]
+                )
+                > 0.02
+            ):
+                raise ValueError("invalid build stage evidence")
+            durations.append(float(row["seconds"]))
+            if name == "shared":
+                expected_status = "cached" if mode == "cached" else "complete"
+            elif name == "baseline" and request.get("baseline_hash") is None:
+                expected_status = "skipped"
+            elif mode == "cached":
+                expected_status = "cached"
+            else:
+                expected_status = row["status"]
+            if row["status"] != expected_status or (
+                mode == "cold"
+                and expected_status != "skipped"
+                and name != "shared"
+                and row["status"] not in ("complete", "cached")
+            ):
+                raise ValueError("build stage status disagrees with the measurement plan")
+            if expected_status != "skipped" and row.get("budget_seconds") != build_stage_seconds(
+                request["timing"], name
+            ):
+                raise ValueError("build stage budget disagrees with the measurement plan")
+        total_build = stage_seconds.get("build")
+        build_overhead = stage_seconds.get("build_overhead")
+        if (
+            isinstance(total_build, bool)
+            or not isinstance(total_build, (int, float))
+            or not math.isfinite(total_build)
+            or total_build < 0
+            or isinstance(build_overhead, bool)
+            or not isinstance(build_overhead, (int, float))
+            or not math.isfinite(build_overhead)
+            or build_overhead < 0
+            or abs(sum(durations) + build_overhead - total_build) > 0.02
+            or total_build > preparation_seconds(request["timing"], mode) + 0.02
+            or preparation.get("budget_seconds") != preparation_seconds(request["timing"], mode)
+        ):
+            raise ValueError("invalid overall build timing evidence")
     reps = result.get("repetitions", {})
     from multiseed import expanded
 
@@ -47,7 +141,23 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
         if request.get("baseline_hash") is not None
         else 0
     )
-    baseline_indices = set(range(baseline_round_count))
+    baseline_indices = set(
+        baseline_round_indices(request["timing"]["rounds"], baseline_round_count)
+    )
+    sentinels = baseline_sentinel_rows(request["workloads"], request["cells"], real_workloads)
+    sentinel_synthetic = set(sentinels["synthetic"])
+    sentinel_real = set(sentinels["real"])
+
+    def check_peak_memory(samples, expected_count):
+        if (
+            not isinstance(samples, list)
+            or len(samples) != expected_count
+            or any(
+                value is not None and (type(value) is not int or value <= 0) for value in samples
+            )
+        ):
+            raise ValueError("invalid peak-memory telemetry")
+
     for i, row in enumerate(real_rounds):
         if not isinstance(row, dict):
             raise ValueError("invalid real workload round")
@@ -83,6 +193,10 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
                     "baseline_input_preparation_ns",
                     "baseline_inner_ns",
                 }
+            if request.get("warmup_policy") == "independent-unscored-input-v1":
+                required |= {"reference_warmup_ns", "candidate_warmup_ns"}
+                if i in baseline_indices:
+                    required.add("baseline_warmup_ns")
             if set(obs) != required or obs["samples"] != spec["samples_per_run"]:
                 raise ValueError("invalid real workload observation fields")
             if (
@@ -110,6 +224,9 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
                 "baseline_ns",
                 "baseline_model_load_ns",
                 "baseline_input_preparation_ns",
+                "reference_warmup_ns",
+                "candidate_warmup_ns",
+                "baseline_warmup_ns",
             }:
                 value = obs[timing_key]
                 if type(value) is not int or value < (1 if timing_key.endswith("_ns") else 0):
@@ -146,7 +263,6 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
         *,
         baseline: bool = False,
         seen_seeds: set | None = None,
-        seen_real_samples: set | None = None,
     ):
         if not isinstance(plan, dict) or set(plan) != {"synthetic", "real"}:
             raise ValueError("invalid paired input plan")
@@ -190,27 +306,60 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
                 )
             ):
                 raise ValueError("invalid real input sample indices")
-            flattened = [index for group in samples for index in group]
-            if len(flattened) != len(set(flattened)):
-                raise ValueError("real sample indices must be distinct within a round")
-            sample_keys = {(spec["id"], index) for index in flattened}
-            if seen_real_samples is not None and seen_real_samples.intersection(sample_keys):
-                raise ValueError("real sample indices must not repeat across timed rounds")
-            if seen_real_samples is not None:
-                seen_real_samples.update(sample_keys)
 
     rounds = result.get("rounds", [])
     if not isinstance(rounds, list) or len(rounds) != request["timing"]["rounds"]:
         raise ValueError("missing paired rounds")
     seen_input_seeds = set()
-    seen_real_samples = set()
     for index, row in enumerate(rounds):
         if "suites" in request:
-            check_input_plan(
-                row.get("input_plan"),
-                seen_seeds=seen_input_seeds,
-                seen_real_samples=seen_real_samples,
-            )
+            check_input_plan(row.get("input_plan"), seen_seeds=seen_input_seeds)
+            planned_synthetic = request.get("synthetic_input_plan")
+            if planned_synthetic is not None:
+                expected = {
+                    key: [group[0] for group in values[index]]
+                    for key, values in planned_synthetic.items()
+                }
+                if row["input_plan"]["synthetic"] != expected:
+                    raise ValueError("worker synthetic input seeds differ from coordinator plan")
+            if request.get("warmup_policy") == "independent-unscored-input-v1":
+                expected_warmup_synthetic = {
+                    key: [group[0] for group in values[index]]
+                    for key, values in request["synthetic_warmup_plan"].items()
+                }
+                expected_warmup_real = {
+                    item_id: schedule[index]
+                    for item_id, schedule in (request.get("real_warmup_plan") or {}).items()
+                }
+                if row.get("warmup_plan") != {
+                    "synthetic": expected_warmup_synthetic,
+                    "real": expected_warmup_real,
+                }:
+                    raise ValueError("worker warm-up inputs differ from coordinator plan")
+                warmup_ns = row.get("warmup_ns")
+                expected_rows = {
+                    f"{draw['id']}|{cell}"
+                    for draw in request["workloads"]
+                    for cell in request["cells"]
+                } | {f"{item['id']}|{item['family']}" for item in real_workloads}
+                if not isinstance(warmup_ns, dict) or set(warmup_ns) != {
+                    "reference",
+                    "candidate",
+                }:
+                    raise ValueError("missing warm-up timing telemetry")
+                for side in ("reference", "candidate"):
+                    samples = warmup_ns[side]
+                    if (
+                        not isinstance(samples, dict)
+                        or set(samples) != expected_rows
+                        or any(
+                            not isinstance(values, list)
+                            or len(values) != request["timing"]["inner"]
+                            or any(type(value) is not int or value <= 0 for value in values)
+                            for values in samples.values()
+                        )
+                    ):
+                        raise ValueError("invalid warm-up timing telemetry")
             process_wall = row.get("process_wall_ns")
             if (
                 not isinstance(process_wall, dict)
@@ -223,17 +372,36 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
                 )
             ):
                 raise ValueError("missing raw process wall timings")
+        process_peaks = row.get("process_peak_memory_bytes")
+        if process_peaks is not None:
+            if not isinstance(process_peaks, dict) or set(process_peaks) != {
+                "reference",
+                "candidate",
+            }:
+                raise ValueError("invalid process peak-memory telemetry")
+            for samples in process_peaks.values():
+                check_peak_memory(samples, request["timing"]["inner"])
         expected_real_samples = row.get("input_plan", {}).get("real", {})
         for item in real_workloads:
             observation = real_rounds[index]["workloads"][item["id"]]
+            if (
+                request.get("real_sample_plan") is not None
+                and expected_real_samples[item["id"]]
+                != request["real_sample_plan"][item["id"]][index]
+            ):
+                raise ValueError("worker real sample IDs differ from coordinator plan")
             if (
                 "suites" in request
                 and observation.get("sample_indices") != expected_real_samples[item["id"]]
             ):
                 raise ValueError("real input plan disagrees with measured sample ids")
-            expected_baseline = (
-                expected_real_samples[item["id"]][0] if index in baseline_indices else None
-            )
+            if index in baseline_indices:
+                if item["id"] in sentinel_real:
+                    expected_baseline = request["real_sample_plan"][item["id"]][0][0]
+                else:
+                    expected_baseline = expected_real_samples[item["id"]][0]
+            else:
+                expected_baseline = None
             if observation.get("baseline_sample_indices") != expected_baseline:
                 raise ValueError("invalid baseline sample selection")
     summary = real.get("summary")
@@ -257,16 +425,32 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
             "candidate_input_preparation_median_ns",
             "reference_input_preparation_median_ns",
         ):
-            if type(row.get(key)) is not int or row[key] <= 0:
+            value = row.get(key)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
                 raise ValueError("invalid real workload summary duration")
         baseline_ns = row.get("baseline_median_ns")
         baseline_ratio = row.get("candidate_to_baseline")
         if request.get("baseline_hash") is not None:
             if (
-                type(baseline_ns) is not int
+                isinstance(baseline_ns, bool)
+                or not isinstance(baseline_ns, (int, float))
+                or not math.isfinite(baseline_ns)
                 or baseline_ns <= 0
-                or type(row.get("baseline_model_load_median_ns")) is not int
-                or type(row.get("baseline_input_preparation_median_ns")) is not int
+                or any(
+                    isinstance(row.get(key), bool)
+                    or not isinstance(row.get(key), (int, float))
+                    or not math.isfinite(row[key])
+                    or row[key] <= 0
+                    for key in (
+                        "baseline_model_load_median_ns",
+                        "baseline_input_preparation_median_ns",
+                    )
+                )
             ):
                 raise ValueError("missing real baseline summary")
         elif baseline_ns is not None or baseline_ratio is not None:
@@ -388,6 +572,7 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
         if (
             not isinstance(evidence, dict)
             or evidence.get("source_hash") != request["baseline_hash"]
+            or evidence.get("sentinel_rows") != sentinels
             or not isinstance(baseline_reps, dict)
             or set(baseline_reps) != set(cells)
             or any(type(n) is not int or n < 1 for n in baseline_reps.values())
@@ -418,13 +603,53 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
                     or process_wall[0] <= 0
                 ):
                     raise ValueError("missing baseline process wall timing")
+                process_peaks = row.get("process_peak_memory_bytes")
+                if process_peaks is not None:
+                    check_peak_memory(process_peaks, 1)
                 paired = rounds[index]["input_plan"]
+                sentinel = rounds[0]["input_plan"]
                 expected_synthetic = {
-                    key: [values[0]] for key, values in paired["synthetic"].items()
+                    key: [(sentinel if key in sentinel_synthetic else paired)["synthetic"][key][0]]
+                    for key in paired["synthetic"]
                 }
-                expected_real = {key: [values[0]] for key, values in paired["real"].items()}
+                expected_real = {
+                    key: [(sentinel if key in sentinel_real else paired)["real"][key][0]]
+                    for key in paired["real"]
+                }
                 if row["input_plan"] != {"synthetic": expected_synthetic, "real": expected_real}:
-                    raise ValueError("baseline did not use the paired input selection")
+                    raise ValueError("baseline telemetry used an unexpected input selection")
+                if request.get("warmup_policy") == "independent-unscored-input-v1":
+                    paired_warmup = rounds[index].get("warmup_plan")
+                    first_warmup = rounds[0].get("warmup_plan")
+                    expected_warmup = {
+                        "synthetic": {
+                            key: [
+                                (first_warmup if key in sentinel_synthetic else paired_warmup)[
+                                    "synthetic"
+                                ][key][0]
+                            ]
+                            for key in paired_warmup["synthetic"]
+                        },
+                        "real": {
+                            item["id"]: [
+                                (first_warmup if item["id"] in sentinel_real else paired_warmup)[
+                                    "real"
+                                ][item["id"]][0]
+                            ]
+                            for item in real_workloads
+                        },
+                    }
+                    if row.get("warmup_plan") != expected_warmup:
+                        raise ValueError("baseline telemetry used an unexpected warm-up selection")
+                    if (
+                        not isinstance(row.get("warmup_ns"), dict)
+                        or set(row["warmup_ns"]) != expected_rows
+                    ):
+                        raise ValueError("missing baseline warm-up timing telemetry")
+                    if any(
+                        type(value) is not int or value <= 0 for value in row["warmup_ns"].values()
+                    ):
+                        raise ValueError("invalid baseline warm-up timing telemetry")
             for cell, observation in observations.items():
                 duration = observation.get("baseline_ns")
                 checksum = observation.get("baseline_checksum")
@@ -447,6 +672,8 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
                         or raw[0] != duration
                     ):
                         raise ValueError("invalid raw baseline timing sample")
+        if seen_baseline_rounds != baseline_indices:
+            raise ValueError("baseline sentinel rounds are not correctly spaced")
         summary = evidence.get("summary")
         if "suites" in request and (not isinstance(summary, dict) or set(summary) != set(cells)):
             raise ValueError("missing baseline summary")
@@ -477,12 +704,15 @@ def validate_result(request: dict, result: dict, cell_weights: dict | None = Non
                     if (
                         isinstance(expected, int)
                         and not isinstance(expected, bool)
-                        and key in {"baseline_median_ns", "baseline_repetitions"}
+                        and key == "baseline_repetitions"
                     ):
                         valid = type(actual) is int and actual == expected
                     else:
-                        valid = isinstance(actual, (int, float)) and math.isclose(
-                            actual, expected, rel_tol=1e-12
+                        valid = (
+                            not isinstance(actual, bool)
+                            and isinstance(actual, (int, float))
+                            and math.isfinite(actual)
+                            and math.isclose(actual, expected, rel_tol=1e-12)
                         )
                     if not valid:
                         raise ValueError("invalid baseline summary")
@@ -495,6 +725,10 @@ def assess(plan, measurements):
     measurements = sorted(measurements, key=lambda pair: (pair[0]["environment"], pair[0]["seed"]))
 
     expected = {(s["environment"], s["seed"]): s for s in plan["strata"]}
+    family_weights = {}
+    for cell, weight in plan["cells"].items():
+        family = cell.split(":", 1)[0]
+        family_weights[family] = family_weights.get(family, 0.0) + weight
     seen = set()
     environments = []
     diagnostics = []
@@ -540,19 +774,73 @@ def assess(plan, measurements):
                     r["cells"][k]["candidate_ns"] / r["cells"][k]["reference_ns"]
                     for r in result["rounds"]
                 )
-        score = geomean([(median(xs), w["weight"]) for w, xs in groups])
-        diagnostics.append(dict(environment=key[0], seed=key[1], score=score, guards=guards))
-        environments.append((groups, st["weight"]))
+        synthetic_score = geomean([(median(xs), w["weight"]) for w, xs in groups])
+
+        real_specs = request.get("real_workloads", [])
+        real_rows = result.get("real", {}).get("rounds", []) if real_specs else []
+        by_family = {}
+        real_ratios = {}
+        for spec in real_specs:
+            ratios = [
+                row["workloads"][spec["id"]]["candidate_ns"]
+                / row["workloads"][spec["id"]]["reference_ns"]
+                for row in real_rows
+            ]
+            real_ratios[spec["id"]] = ratios
+            workload_ratio = median(ratios)
+            guards[f"real:{spec['id']}"] = workload_ratio
+            by_family.setdefault(spec["family"], []).append((spec["id"], workload_ratio))
+
+        real_family_scores = {
+            family: geomean([(ratio, 1.0) for _, ratio in rows])
+            for family, rows in by_family.items()
+        }
+        real_score = (
+            geomean(
+                [(value, family_weights[family]) for family, value in real_family_scores.items()]
+            )
+            if real_family_scores
+            else None
+        )
+        suite_scores = {"synthetic": synthetic_score}
+        if real_score is not None:
+            suite_scores["real"] = real_score
+        suite_weights = plan.get("suite_weights", {"synthetic": 1.0})
+        if set(suite_scores) != set(suite_weights):
+            raise ValueError("scored suite set disagrees with the frozen plan")
+        score = geomean([(suite_scores[name], weight) for name, weight in suite_weights.items()])
+        diagnostics.append(
+            dict(
+                environment=key[0],
+                seed=key[1],
+                score=score,
+                suite_scores=suite_scores,
+                real_family_scores=real_family_scores,
+                guards=guards,
+            )
+        )
+        environments.append((groups, real_ratios, by_family, st["weight"]))
     if seen != set(expected):
         raise ValueError("incomplete required environments/seeds")
     point = geomean(
         [(d["score"], expected[(d["environment"], d["seed"])]["weight"]) for d in diagnostics]
     )
+    suite_names = list(plan.get("suite_weights", {"synthetic": 1.0}))
+    aggregate_suite_scores = {
+        name: geomean(
+            (
+                diagnostic["suite_scores"][name],
+                expected[(diagnostic["environment"], diagnostic["seed"])]["weight"],
+            )
+            for diagnostic in diagnostics
+        )
+        for name in suite_names
+    }
     rng = random.Random(int(digest({"plan": plan, "measurements": measurements})[:16], 16))
     draws = []
     for _ in range(plan["admission"]["draws"]):
         envscores = []
-        for groups, envweight in environments:
+        for groups, real_ratio_rows, real_groups, envweight in environments:
             n = len(groups[0][1])
             indices = rng.choices(range(n), k=n)
             terms = []
@@ -560,7 +848,25 @@ def assess(plan, measurements):
                 items = [(w, xs) for w, xs in groups if w["profile"] == p]
                 for w, xs in rng.choices(items, k=len(items)):
                     terms.append((median(xs[i] for i in indices), weight / len(items)))
-            envscores.append((geomean(terms), envweight))
+            suite_scores = {"synthetic": geomean(terms)}
+            if real_groups:
+                sampled_families = []
+                for family, rows in real_groups.items():
+                    sampled = rng.choices(rows, k=len(rows))
+                    family_score = geomean(
+                        (
+                            median(real_ratio_rows[workload_id][i] for i in indices),
+                            1.0,
+                        )
+                        for workload_id, _ in sampled
+                    )
+                    sampled_families.append((family_score, family_weights[family]))
+                suite_scores["real"] = geomean(sampled_families)
+            combined = geomean(
+                (suite_scores[name], weight)
+                for name, weight in plan.get("suite_weights", {"synthetic": 1.0}).items()
+            )
+            envscores.append((combined, envweight))
         draws.append(1 - geomean(envscores))
     lower = quantile(draws, plan["admission"]["quantile"])
     guard = all(v <= plan["admission"]["guard"] for d in diagnostics for v in d["guards"].values())
@@ -574,5 +880,10 @@ def assess(plan, measurements):
         else "qualifies"
     )
     return dict(
-        score=point, gain_lower=lower, guard_passed=guard, outcome=outcome, strata=diagnostics
+        score=point,
+        suite_scores=aggregate_suite_scores,
+        gain_lower=lower,
+        guard_passed=guard,
+        outcome=outcome,
+        strata=diagnostics,
     )

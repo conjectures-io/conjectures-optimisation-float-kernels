@@ -32,7 +32,7 @@ TIMEOUT = {
 PARTIAL = {
     "build_seconds": 40.0,
     "rounds": [{"reference_first": True, "cells": {}}],
-    "rounds_planned": 11,
+    "rounds_planned": 12,
     "calibration": {"s0|mlp:b1:relu": 90},
 }
 
@@ -63,18 +63,23 @@ def test_a_candidate_timeout_is_timed_out_and_keeps_its_evidence(store, config, 
         ("timed-out", "info", reason)
     }
     for decision, environment, seed in decisions(store).values():
-        assert decision == {
+        expected = {
             "outcome": "timed-out",
             "reason": reason,
             "score": None,
             "timeout": {k: v for k, v in TIMEOUT.items() if k not in ("side", "finished")}
             | {
+                "peak_memory_bytes": None,
+                "bounded_by_overall": None,
+                "phase_budget_seconds": None,
+                "configured_phase_seconds": None,
                 "environment": environment,
                 "seed": seed,
                 "rounds_completed": 1,
-                "rounds_planned": 11,
+                "rounds_planned": 12,
             },
         }
+        assert decision == expected, f"{decision!r} != {expected!r}"
     with db.session_scope(store.sessions) as s:
         errors = [j.error for j in s.scalars(select(m.BenchmarkJob))]
     assert errors == [failure, failure]

@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
+from pathlib import Path
 
+import benchmark
 import pytest
-from config import Config, digest, measurement_hash
+from comparisons import board_request, board_result, bundle_requests, validate_bundle_result
+from config import (
+    Config,
+    MeasurementRequest,
+    RealWorkloadSpec,
+    digest,
+    file_digest,
+    measurement_hash,
+)
 from multiseed import expanded, workloads
 from rewards import score
 from scoring import assess
+from timing import baseline_round_indices
+from workload import baseline_sentinel_rows
 
 
 @pytest.fixture
@@ -56,26 +69,156 @@ def config(tmp_path):
 
 
 def result(request, ratio=0.9):
-    return {
-        "request_hash": measurement_hash(request),
-        "provenance": {"identity": request["identity"], "machine": "test-machine"},
-        "workloads": request["workloads"],
-        "repetitions": {c: 1 for c in expanded(request)},
-        "rounds": [
+    cells = list(expanded(request))
+    repetitions = dict.fromkeys(cells, 1)
+    rounds = []
+    for round_index in range(request["timing"]["rounds"]):
+        input_plan = {"synthetic": {}, "real": {}}
+        for cell_index, cell in enumerate(cells):
+            planned = (request.get("synthetic_input_plan") or {}).get(cell)
+            if planned is None:
+                seed = 1000 + round_index * len(cells) + cell_index
+            else:
+                seed = planned[round_index][0][0]
+            input_plan["synthetic"][cell] = [seed]
+        rounds.append(
             {
-                "reference_first": i % 2 == 0,
+                "reference_first": round_index % 2 == 0,
+                "input_plan": input_plan,
+                "process_wall_ns": {
+                    "reference": [100_000] * request["timing"]["inner"],
+                    "candidate": [100_000] * request["timing"]["inner"],
+                },
                 "cells": {
-                    c: {
+                    cell: {
                         "reference_ns": 1000,
-                        "candidate_ns": 1000 * ratio,
+                        "candidate_ns": int(1000 * ratio),
                         "reference_checksum": 123,
                         "candidate_checksum": 123,
+                        "reference_inner_ns": [1000] * request["timing"]["inner"],
+                        "candidate_inner_ns": [int(1000 * ratio)] * request["timing"]["inner"],
                     }
-                    for c in expanded(request)
+                    for cell in cells
                 },
             }
-            for i in range(request["timing"]["rounds"])
-        ],
+        )
+
+    has_baseline = request.get("baseline_hash") is not None
+    baseline_count = (
+        min(request["timing"].get("baseline_rounds", 3), request["timing"]["rounds"])
+        if has_baseline
+        else 0
+    )
+    baseline_round_indices_for_result = baseline_round_indices(
+        request["timing"]["rounds"], baseline_count
+    )
+    sentinels = baseline_sentinel_rows(
+        request["workloads"], request["cells"], request.get("real_workloads", ())
+    )
+    sentinel_synthetic = set(sentinels["synthetic"])
+    baseline_rounds = [
+        {
+            "paired_round": round_index,
+            "input_plan": {
+                "synthetic": {
+                    cell: [
+                        rounds[0 if cell in sentinel_synthetic else round_index]["input_plan"][
+                            "synthetic"
+                        ][cell][0]
+                    ]
+                    for cell in cells
+                },
+                "real": {},
+            },
+            "process_wall_ns": [100_000],
+            "cells": {
+                cell: {
+                    "baseline_ns": 1000,
+                    "baseline_checksum": 123,
+                    "requests": 1,
+                    "baseline_inner_ns": [1000],
+                    "baseline_ns_per_request": 1000.0,
+                }
+                for cell in cells
+            },
+        }
+        for round_index in baseline_round_indices_for_result
+    ]
+    baseline_repetitions = dict.fromkeys(cells, 1)
+    baseline_summary = {
+        cell: {
+            "baseline_median_ns": 1000,
+            "baseline_repetitions": 1,
+            "baseline_ns_per_request": 1000.0,
+            "candidate_median_ns_per_request": int(1000 * ratio),
+            "reference_median_ns_per_request": 1000.0,
+            "candidate_to_baseline": ratio,
+            "reference_to_baseline": 1.0,
+        }
+        for cell in cells
+    }
+    mode = "cold"
+    build_stages = {}
+    for stage in ("shared", "baseline", "reference", "candidate"):
+        skipped = stage == "baseline" and not has_baseline
+        build_stages[stage] = {
+            "status": "skipped" if skipped else "complete",
+            "seconds": 0.0,
+            "cache_lookup_seconds": 0.0,
+            "compile_seconds": 0.0,
+            "other_seconds": 0.0,
+            **(
+                {}
+                if skipped
+                else {
+                    "budget_seconds": request["timing"].get(
+                        f"{stage}_build_seconds", request["timing"]["build_seconds"]
+                    )
+                }
+            ),
+        }
+    timing = request["timing"]
+    return {
+        "request_hash": measurement_hash(request),
+        "measurement_policy": {
+            "observations_per_workload_per_process": 1,
+            "fresh_process_per_pass": True,
+            "weights_reloaded_each_pass": True,
+            "inference_clock": "supervisor-monotonic-ready-done-v1",
+            "baseline_sentinel_policy": "spaced-same-input-per-family-v1",
+        },
+        "provenance": {"identity": request["identity"], "machine": "test-machine"},
+        "workloads": request["workloads"],
+        "repetitions": repetitions,
+        "rounds": rounds,
+        "baseline": (
+            {
+                "source_hash": request["baseline_hash"],
+                "sentinel_rows": sentinels,
+                "rounds": baseline_rounds,
+                "repetitions": baseline_repetitions,
+                "summary": baseline_summary,
+            }
+            if has_baseline
+            else None
+        ),
+        "real": {"workloads": [], "rounds": [], "summary": {}, "families": {}},
+        "stage_seconds": {
+            "build": 0.0,
+            "build_overhead": 0.0,
+            "build_stages": build_stages,
+            "baseline_process": baseline_count * 0.0001,
+            "rounds": 0.001,
+            "benchmark": 0.001,
+        },
+        "preparation": {
+            "mode": mode,
+            "budget_seconds": timing["build_seconds"],
+            "stage_budgets_seconds": {
+                stage: timing.get(f"{stage}_build_seconds", timing["build_seconds"])
+                for stage in ("shared", "baseline", "reference", "candidate")
+            },
+        },
     }
 
 
@@ -91,11 +234,201 @@ def request_for(config, board="mlp"):
     }
 
 
+def test_board_requests_bundle_and_project_without_changing_the_frozen_request(config):
+    legacy_requests = {board: request_for(config, board) for board in ("mlp", "resnet")}
+    legacy_requests["resnet"]["cells"] = [legacy_requests["mlp"]["cells"][0]]
+    legacy_bundle = bundle_requests(legacy_requests)
+    for board, request in legacy_requests.items():
+        assert board_request(legacy_bundle, board) == request
+    validate_bundle_result(
+        legacy_bundle,
+        {
+            "bundle_hash": digest(legacy_bundle),
+            "comparisons": {board: result(request) for board, request in legacy_requests.items()},
+        },
+    )
+
+    requests = {board: request_for(config, board) for board in ("mlp", "resnet")}
+    requests["resnet"]["cells"] = [requests["mlp"]["cells"][0]]
+    seed = 7000
+    shared_inputs = {}
+    for request in requests.values():
+        selected_inputs = {}
+        for draw in request["workloads"]:
+            for cell in request["cells"]:
+                key = f"{draw['id']}|{cell}"
+                if key not in shared_inputs:
+                    shared_inputs[key] = [
+                        [[seed + round_index]] for round_index in range(request["timing"]["rounds"])
+                    ]
+                    seed += request["timing"]["rounds"]
+                selected_inputs[key] = shared_inputs[key]
+        request.update(
+            suites=["synthetic"],
+            real_workloads=[],
+            real_sample_plan=None,
+            synthetic_input_plan=selected_inputs,
+        )
+
+    bundled = bundle_requests(requests)
+
+    assert set(bundled["comparisons"]) == set(requests)
+    assert set(bundled["cells"]) == {
+        cell for request in requests.values() for cell in request["cells"]
+    }
+    assert bundled["timing"]["build_seconds"] == 2 * requests["mlp"]["timing"]["build_seconds"]
+    assert (
+        bundled["timing"]["benchmark_seconds"] == 2 * requests["mlp"]["timing"]["benchmark_seconds"]
+    )
+    for board, request in requests.items():
+        assert board_request(bundled, board) == request
+    bundled_result = {
+        "bundle_hash": digest(bundled),
+        "comparisons": {board: result(request) for board, request in requests.items()},
+    }
+    for board, request in requests.items():
+        assert board_result(bundled, bundled_result, board) == result(request)
+
+
+def test_board_bundle_rejects_different_hidden_inputs(config):
+    requests = {board: request_for(config, board) for board in ("mlp", "resnet")}
+    requests["resnet"]["cells"] = list(requests["mlp"]["cells"])
+    for board, request in requests.items():
+        seed = 9001 + (1000 if board == "resnet" else 0)
+        selected_inputs = {}
+        for draw in request["workloads"]:
+            for cell in request["cells"]:
+                selected_inputs[f"{draw['id']}|{cell}"] = [
+                    [[seed + round_index]] for round_index in range(request["timing"]["rounds"])
+                ]
+                seed += request["timing"]["rounds"]
+        request["synthetic_input_plan"] = selected_inputs
+    with pytest.raises(ValueError, match="synthetic input schedule"):
+        bundle_requests(requests)
+
+
+def test_bundle_runner_executes_candidate_once_for_multiple_references(config, monkeypatch):
+    requests = {board: request_for(config, board) for board in ("mlp", "resnet")}
+    # The first request represents Overall's superset; the next board scores one shared row.
+    requests["resnet"]["cells"] = [requests["mlp"]["cells"][0]]
+    requests["resnet"]["timing"]["benchmark_seconds"] //= 2
+    candidate_source = b"candidate"
+    candidate_hash = hashlib.sha256(candidate_source).hexdigest()
+    reference_sources = {}
+    for board, request in requests.items():
+        request["candidate_hash"] = candidate_hash
+        reference_source = f"ref-{board}".encode()
+        reference_hash = hashlib.sha256(reference_source).hexdigest()
+        request["reference_hash"] = reference_hash
+        reference_sources[reference_hash] = reference_source
+    bundle = bundle_requests(requests)
+    calls = []
+    baseline_inputs_seen = []
+    baseline_pass_ids = []
+    sentinel_keys = set(
+        baseline_sentinel_rows(
+            requests["mlp"]["workloads"],
+            requests["mlp"]["cells"],
+            requests["mlp"].get("real_workloads", ()),
+        )["synthetic"]
+    )
+
+    def fake_run(binary, request, reps, inner, side, deadline, input_sequences):
+        calls.append(side)
+        if side == "baseline":
+            baseline_pass_ids.append(input_sequences.get("__cache_pass__"))
+            baseline_inputs_seen.append(
+                {key: value for key, value in input_sequences.items() if key != "__cache_pass__"}
+            )
+        keys = set(benchmark.row_names(request).values())
+        return {
+            **{key: (100, 42) for key in keys},
+            "__raw_ns__": {key: [100] for key in keys},
+            "__real_preparation_ns__": {},
+            "__process_wall_ns__": [10],
+            "__peak_memory_bytes__": [None],
+        }
+
+    def fake_measure(request, candidate, reference, mode=None, progress_callback=None, runner=None):
+        keys = set(benchmark.row_names(request).values())
+        baseline_indices = baseline_round_indices(
+            request["timing"]["rounds"], request["timing"].get("baseline_rounds", 3)
+        )
+        selected_sentinels = set(
+            baseline_sentinel_rows(
+                request["workloads"], request["cells"], request.get("real_workloads", ())
+            )["synthetic"]
+        )
+        sentinel_inputs = None
+        for round_index in range(request["timing"]["rounds"]):
+            inputs = {key: [[f"{key}:{round_index}"]] for key in keys}
+            if round_index == 0:
+                sentinel_inputs = {key: inputs[key] for key in selected_sentinels}
+            for side, binary in (("reference", reference), ("candidate", candidate_source)):
+                runner(binary, request, {key: 1 for key in keys}, 1, side, object(), inputs)
+            if round_index in baseline_indices:
+                baseline_inputs = dict(inputs)
+                baseline_inputs.update(sentinel_inputs)
+                baseline_inputs["__cache_pass__"] = baseline_indices.index(round_index)
+                runner(
+                    b"baseline",
+                    request,
+                    {key: 1 for key in keys},
+                    1,
+                    "baseline",
+                    object(),
+                    baseline_inputs,
+                )
+        return {"request_hash": measurement_hash(request)}
+
+    monkeypatch.setattr(benchmark, "measure", fake_measure)
+    result = benchmark.measure_bundle(bundle, candidate_source, reference_sources, runner=fake_run)
+
+    assert set(result["comparisons"]) == set(requests)
+    assert calls.count("candidate") == requests["mlp"]["timing"]["rounds"]
+    assert calls.count("baseline") == requests["mlp"]["timing"]["baseline_rounds"]
+    assert calls.count("reference") == 2 * requests["mlp"]["timing"]["rounds"]
+    assert result["shared_candidate_process_wall_ns"] == [10] * requests["mlp"]["timing"]["rounds"]
+    assert (
+        result["shared_baseline_process_wall_ns"]
+        == [10] * requests["mlp"]["timing"]["baseline_rounds"]
+    )
+    assert baseline_pass_ids == [0, 1, 2]
+    assert all(
+        all(row[key] == baseline_inputs_seen[0][key] for key in sentinel_keys)
+        for row in baseline_inputs_seen[1:]
+    )
+
+
+def test_baseline_sentinels_are_evenly_spaced():
+    assert baseline_round_indices(12, 3) == (0, 6, 11)
+    assert baseline_round_indices(12, 1) == (6,)
+    assert baseline_round_indices(5, 8) == (0, 1, 2, 3, 4)
+
+
+def test_baseline_sentinel_rows_select_one_stable_input_per_family():
+    selected = baseline_sentinel_rows(
+        [{"id": "s0"}],
+        ["mlp:b1:wide", "mlp:b1:normal", "resnet:b1:sparse"],
+        [
+            {"id": "resnet-z", "family": "resnet"},
+            {"id": "mlp-z", "family": "mlp"},
+            {"id": "mlp-a", "family": "mlp"},
+        ],
+    )
+    assert selected == {
+        "synthetic": ["s0|mlp:b1:normal", "s0|resnet:b1:sparse"],
+        "real": ["mlp-a", "resnet-z"],
+    }
+
+
 def editable_config(config):
     raw = copy.deepcopy(config.__dict__)
     raw["benchmark"] = {
         "suites": list(raw.pop("suites")),
+        "synthetic_cells": list(raw.pop("synthetic_cells")),
         "real_workloads": [workload.json() for workload in raw.pop("real_workloads")],
+        "suite_weights": raw.pop("suite_weights"),
     }
     return raw
 
@@ -111,6 +444,119 @@ def test_scoring(config, ratio, outcome):
     assert decision == assess(config.plan("mlp"), [(request, result(request, ratio))])
 
 
+@pytest.mark.parametrize("real_ratio", [0.8, 1.2])
+def test_mixed_suite_score_includes_real_model_evidence(config, monkeypatch, real_ratio):
+    import scoring
+
+    plan = config.plan("mlp")
+    plan["suites"] = ["synthetic", "real"]
+    plan["suite_weights"] = {"synthetic": 0.5, "real": 0.5}
+    request = request_for(config)
+    measured = result(request, 0.9)
+    real_workload = {
+        "id": "mlp-real-a",
+        "family": "mlp",
+        "model": "toy",
+        "dataset": "toy",
+    }
+    plan["real_workloads"] = [real_workload]
+    request["suites"] = ["synthetic", "real"]
+    request["real_workloads"] = [real_workload]
+    measured["real"] = {
+        "rounds": [
+            {
+                "workloads": {
+                    "mlp-real-a": {
+                        "candidate_ns": int(1000 * real_ratio),
+                        "reference_ns": 1000,
+                    }
+                }
+            }
+            for _ in range(request["timing"]["rounds"])
+        ]
+    }
+    monkeypatch.setattr(scoring, "validate_result", lambda *_args, **_kwargs: None)
+    decision = assess(plan, [(request, measured)])
+    expected = math.sqrt(0.9 * real_ratio)
+    assert decision["score"] == pytest.approx(expected)
+    assert decision["strata"][0]["suite_scores"] == pytest.approx(
+        {"synthetic": 0.9, "real": real_ratio}
+    )
+    assert decision["suite_scores"] == pytest.approx({"synthetic": 0.9, "real": real_ratio})
+    assert decision["outcome"] == ("qualifies" if real_ratio == 0.8 else "guard-failed")
+
+
+def test_configurable_synthetic_cells_are_normalized_per_family(config):
+    raw = editable_config(config)
+    raw["benchmark"]["synthetic_cells"] = [
+        "mlp:b1:normal",
+        "mlp:b8:normal",
+        "resnet:b1:sparse",
+    ]
+    compact = Config.parse(raw)
+
+    mlp_cells = compact.plan("mlp")["cells"]
+    resnet_cells = compact.plan("resnet")["cells"]
+    assert mlp_cells == {"mlp:b1:normal": 0.5, "mlp:b8:normal": 0.5}
+    assert resnet_cells == {"resnet:b1:sparse": 1.0}
+
+    raw["benchmark"]["synthetic_cells"] = ["mlp:b1:normal"]
+    with pytest.raises(ValueError, match="no cell for model family resnet"):
+        Config.parse(raw).plan("resnet")
+
+
+def test_configured_suite_weights_are_frozen_and_scoped_to_available_families(config, monkeypatch):
+    monkeypatch.setattr(RealWorkloadSpec, "validate_assets", lambda *_args: None)
+    raw = editable_config(config)
+    raw["benchmark"]["suites"] = ["synthetic", "real"]
+    raw["benchmark"]["suite_weights"] = {"synthetic": 0.7, "real": 0.3}
+    raw["benchmark"]["real_workloads"] = [
+        {
+            "id": "local-test-mlp",
+            "family": "mlp",
+            "model": "fixture",
+            "dataset": "fixture",
+            "adapter": "image-zoo-v1",
+            "weights_path": "validator/config.py",
+            "weights_sha256": file_digest(Path("validator/config.py")),
+            "samples_path": "validator/scoring.py",
+            "samples_sha256": file_digest(Path("validator/scoring.py")),
+            "asset_revision": "c" * 64,
+            "sample_count": 4,
+            "sample_words": 1,
+            "samples_per_run": 1,
+        }
+    ]
+    configured = Config.parse(raw)
+    assert configured.plan("mlp")["suite_weights"] == {"synthetic": 0.7, "real": 0.3}
+    assert configured.plan("resnet")["suite_weights"] == {"synthetic": 1.0}
+    assert configured.identity("mlp") != config.identity("mlp")
+
+
+def test_resolved_synthetic_input_plan_is_required_and_validated(config):
+    request = request_for(config)
+    request["suites"] = ["synthetic"]
+    with pytest.raises(ValueError, match="synthetic input plan is required"):
+        MeasurementRequest.parse(request)
+
+    request["synthetic_input_plan"] = {
+        f"{draw['id']}|{cell}": [
+            [[1000 + index * request["timing"]["rounds"] + round_index]]
+            for round_index in range(request["timing"]["rounds"])
+        ]
+        for index, (draw, cell) in enumerate(
+            (draw, cell) for draw in request["workloads"] for cell in request["cells"]
+        )
+    }
+    parsed = MeasurementRequest.parse(request)
+    assert parsed.synthetic_input_plan == request["synthetic_input_plan"]
+
+    first_key, second_key = list(request["synthetic_input_plan"])[:2]
+    request["synthetic_input_plan"][second_key] = request["synthetic_input_plan"][first_key]
+    with pytest.raises(ValueError, match="distinct across observations"):
+        MeasurementRequest.parse(request)
+
+
 def test_stratified_hardware_guard(config):
     plan = config.plan("mlp")
     plan["strata"] = [
@@ -124,6 +570,45 @@ def test_stratified_hardware_guard(config):
     assert decision["outcome"] == "guard-failed"
     with pytest.raises(ValueError, match="incomplete"):
         assess(plan, [(a, result(a))])
+
+
+def test_peak_memory_is_telemetry_and_does_not_change_admission(config):
+    request = request_for(config)
+    plan = config.plan("mlp")
+    measured = result(request, 0.9)
+    for row in measured["rounds"]:
+        row["process_peak_memory_bytes"] = {
+            "candidate": [None] * request["timing"]["inner"],
+            "reference": [1024 * 1024] * request["timing"]["inner"],
+        }
+    decision = assess(plan, [(request, measured)])
+    assert decision["outcome"] == "qualifies"
+
+    measured["rounds"][0]["process_peak_memory_bytes"]["candidate"][0] = -1
+    with pytest.raises(ValueError, match="peak-memory"):
+        assess(plan, [(request, measured)])
+
+
+def test_baseline_speed_is_telemetry_and_does_not_change_admission(config):
+    request = request_for(config)
+    plan = config.plan("mlp")
+    request["baseline_hash"] = plan["baseline_hash"]
+    measured = result(request, 0.9)
+    decision = assess(plan, [(request, measured)])
+
+    baseline_ns = 1_000_000
+    for row in measured["baseline"]["rounds"]:
+        for cell, observation in row["cells"].items():
+            observation["baseline_ns"] = baseline_ns
+            observation["baseline_inner_ns"] = [baseline_ns]
+            observation["baseline_ns_per_request"] = float(baseline_ns)
+    for cell, summary in measured["baseline"]["summary"].items():
+        summary["baseline_median_ns"] = baseline_ns
+        summary["baseline_ns_per_request"] = float(baseline_ns)
+        summary["candidate_to_baseline"] = summary["candidate_median_ns_per_request"] / baseline_ns
+        summary["reference_to_baseline"] = summary["reference_median_ns_per_request"] / baseline_ns
+
+    assert assess(plan, [(request, measured)]) == decision
 
 
 @pytest.mark.parametrize("change", ["nan", "checksum", "missing", "order", "provenance"])
@@ -277,6 +762,7 @@ def test_default_budgets_vary_by_family_and_architecture(config):
         models={"mlp": 0.5, "resnet": 0.5}, reference=raw["boards"]["mlp"]["reference"].copy()
     )
     raw["rewards"]["board_weights"] = {"mlp": 0.25, "resnet": 0.25, "overall": 0.5}
+    raw["admission"]["min_rounds"] = 3
     configured = Config.parse(raw)
     assert configured.verification_seconds == 1800
     assert configured.plan("mlp")["timing"]["benchmark_seconds"] == 360
@@ -306,6 +792,23 @@ def test_environment_limits_are_frozen_and_checked_by_scoring(config):
     wrong = request | {"timing": plan["timing"]}
     with pytest.raises(ValueError, match="incompatible measurement policy"):
         assess(plan, [(wrong, result(wrong))])
+
+
+def test_build_phase_budgets_can_be_overridden_per_environment(config):
+    raw = editable_config(config)
+    raw["environments"]["local"]["timing"] = {
+        "shared_build_seconds": 40,
+        "baseline_build_seconds": 25,
+        "reference_build_seconds": 35,
+        "candidate_build_seconds": 50,
+    }
+    configured = Config.parse(raw)
+    timing = configured.plan("mlp")["strata"][0]["timing"]
+    assert timing["build_seconds"] == 60  # still the overall build cap
+    assert timing["shared_build_seconds"] == 40
+    assert timing["baseline_build_seconds"] == 25
+    assert timing["reference_build_seconds"] == 35
+    assert timing["candidate_build_seconds"] == 50
 
 
 @pytest.mark.parametrize(

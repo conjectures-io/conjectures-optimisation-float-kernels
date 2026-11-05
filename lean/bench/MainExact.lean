@@ -2,10 +2,11 @@ import ExactSuite
 import RealSuite
 import Submission
 
-/-! One-inference-per-process benchmark protocol. Every model/input is prepared outside inference
-timing, then each selected cell is evaluated once in this process. Independent repetitions are
-launched by the Python harness as separate child processes. Each row is workload|cell true
-total_nanoseconds output_checksum, flushed as it finishes, and
+/-! One-pass-per-process benchmark protocol. Every model/input is prepared outside inference
+timing, then each selected cell/workload is evaluated once in this process. Independent passes
+are launched by the Python harness as separate child processes. `BENCH_READY|row` and
+`BENCH_DONE|row` bracket inference for the trusted parent timer. Each result row is
+workload|cell true child_nanoseconds output_checksum, flushed as it finishes, and
 `workload|cell start` goes to stderr before each cell: a run stopped at its time limit still
 shows the rows it finished and the cell it was on.
 BENCH_WORKLOADS: id:UInt32seed:profile,...; BENCH_REPS: id|cell=count,... -/
@@ -36,13 +37,13 @@ def parseInputSeedMap (text : String) : List (String × List UInt32) :=
       else some (key, parsed.filterMap id)
     | _ => none
 
-def parseRealWorkloads (text : String) : List (String × String × String × String × String × Nat × Nat × Nat) :=
+def parseRealWorkloads (text : String) : List (String × String × String × String × String × String × Nat × Nat × Nat) :=
   (text.splitOn ",").filterMap fun token => match token.splitOn "|" with
-    | [id, adapter, family, weightsPath, inputsPath, samples, sampleCount, sampleWords] => do
+    | [id, adapter, family, weightsPath, inputsPath, warmupPath, samples, sampleCount, sampleWords] => do
       let n ← samples.toNat?
       let count ← sampleCount.toNat?
       let words ← sampleWords.toNat?
-      some (id, adapter, family, weightsPath, inputsPath, n, count, words)
+      some (id, adapter, family, weightsPath, inputsPath, warmupPath, n, count, words)
     | _ => none
 
 def realCellModel (family : String) : String :=
@@ -74,25 +75,36 @@ def main : IO UInt32 := do
     | some path => pure (some (← IO.FS.readFile path))
     | none => pure none
   let inputSeedMap := parseInputSeedMap (inputSeedText.getD "")
+  let warmupSeedFile ← IO.getEnv "BENCH_WARMUP_INPUT_SEED_FILE"
+  let warmupSeedText ← match warmupSeedFile with
+    | some path => pure (some (← IO.FS.readFile path))
+    | none => pure none
+  let warmupSeedMap := parseInputSeedMap (warmupSeedText.getD "")
   let selected := match (← IO.getEnv "BENCH_CELLS") with
     | none => ExactSuite.cells
     | some cells => ExactSuite.cells.filter fun c => (cells.splitOn ",").contains c.name
   if selected.isEmpty then throw (IO.userError "empty cell selection")
   let realWorkloads := parseRealWorkloads ((← IO.getEnv "BENCH_REAL_WORKLOADS").getD "")
+  let expectedKeys := workloads.flatMap fun (name, _, _) =>
+    selected.map fun cell => s!"{name}|{cell.name}"
+  let expectedKeys := expectedKeys ++ realWorkloads.map fun (id, _, family, _, _, _, _, _, _) =>
+    let cell := selected.find? fun cell =>
+      cell.model == realCellModel family && cell.batch == 1 && cell.kind == "normal"
+    match cell with
+    | some c => s!"{id}|{c.name}"
+    | none => s!"{id}|<missing-family-cell>"
   if inputSeedFile.isSome then
     let keys := inputSeedMap.map Prod.fst
-    let expectedKeys := workloads.flatMap fun (name, _, _) =>
-      selected.map fun cell => s!"{name}|{cell.name}"
-    let expectedKeys := expectedKeys ++ realWorkloads.map fun (id, _, family, _, _, _, _, _) =>
-      let cell := selected.find? fun cell =>
-        cell.model == realCellModel family && cell.batch == 1 && cell.kind == "normal"
-      match cell with
-      | some c => s!"{id}|{c.name}"
-      | none => s!"{id}|<missing-family-cell>"
     let nonemptyLines := (inputSeedText.getD "").splitOn "\n" |>.filter fun line => !line.isEmpty
     if keys.length != nonemptyLines.length || hasDuplicateKeys keys ||
         (keys.mergeSort (· <= ·)) != (expectedKeys.mergeSort (· <= ·)) then
       throw (IO.userError "benchmark input-seed file does not match selected workloads")
+  if warmupSeedFile.isSome then
+    let keys := warmupSeedMap.map Prod.fst
+    let nonemptyLines := (warmupSeedText.getD "").splitOn "\n" |>.filter fun line => !line.isEmpty
+    if keys.length != nonemptyLines.length || hasDuplicateKeys keys ||
+        (keys.mergeSort (· <= ·)) != (expectedKeys.mergeSort (· <= ·)) then
+      throw (IO.userError "benchmark warm-up input plan does not match selected workloads")
   let mut workloadIndex := 0
   for (name,seed,profile) in workloads do
     for c in selected do
@@ -109,8 +121,26 @@ def main : IO UInt32 := do
       if seeds.length != inputCount then throw (IO.userError s!"input seed count mismatch for {key}")
       let inputs := seeds.toArray.map fun inputSeed =>
         ExactSuite.gen c.kind (prepared.samples * prepared.size) inputSeed
+      if warmupSeedFile.isSome then
+        let some (_, warmupSeeds) := warmupSeedMap.find? (fun entry => entry.1 == key)
+          | throw (IO.userError s!"missing warm-up seed for {key}")
+        if warmupSeeds.length != 1 || warmupSeeds[0]! == seeds[0]! then
+          throw (IO.userError s!"invalid or repeated warm-up seed for {key}")
+        let warmupInput := ExactSuite.gen c.kind (prepared.samples * prepared.size) warmupSeeds[0]!
+        IO.println s!"BENCH_WARMUP_READY|{key}"
+        (← IO.getStdout).flush
+        let warmupStart ← IO.monoNanosNow
+        let warmupOutput ← IO.lazyPure fun _ => ExactSuite.runPreparedInput Submission.kernels prepared warmupInput
+        let warmupChecksum := ExactSuite.hashArr warmupOutput
+        let warmupEnd ← IO.monoNanosNow
+        IO.println s!"BENCH_WARMUP_DONE|{key}"
+        (← IO.getStdout).flush
+        IO.println s!"WARMUP|{key} true {warmupEnd - warmupStart} {warmupChecksum}"
+        (← IO.getStdout).flush
       let mut durations : Array Nat := #[]
       let mut outputs : Array (Array ExactRuntime.Word) := #[]
+      IO.println s!"BENCH_READY|{key}"
+      (← IO.getStdout).flush
       for group in [0:inner] do
         let t0 ← IO.monoNanosNow
         for r in [0:n] do
@@ -119,12 +149,14 @@ def main : IO UInt32 := do
           outputs := outputs.push output
         let t1 ← IO.monoNanosNow
         durations := durations.push (t1 - t0)
+      IO.println s!"BENCH_DONE|{key}"
+      (← IO.getStdout).flush
       let checksum := outputs.foldl (fun h output =>
         (h ^^^ ExactSuite.hashArr output) * 16777619) 2166136261
       IO.println s!"{key} true {medianNat durations} {checksum}"
       (← IO.getStdout).flush
       workloadIndex := workloadIndex + 1
-  for (id, adapter, family, weightsPath, inputsPath, samplesPerRun, sampleCount, size) in realWorkloads do
+  for (id, adapter, family, weightsPath, inputsPath, warmupPath, samplesPerRun, sampleCount, size) in realWorkloads do
     if id.isEmpty || samplesPerRun == 0 then throw (IO.userError "invalid real workload")
     let some c := selected.find? fun cell =>
       cell.model == realCellModel family && cell.batch == 1 && cell.kind == "normal"
@@ -147,6 +179,12 @@ def main : IO UInt32 := do
     if indices.length != requested then throw (IO.userError s!"input index count mismatch for {row}")
     if indices.any (fun i => i.toNat ≥ sampleCount) then
       throw (IO.userError s!"invalid sample index for {row}")
+    let warmupIndices := match warmupSeedMap.find? (fun entry => entry.1 == row) with
+      | some (_, values) => values
+      | none => []
+    if warmupSeedFile.isSome &&
+        (warmupIndices.length != 1 || warmupIndices[0]! == indices[0]! || warmupIndices[0]!.toNat ≥ sampleCount) then
+      throw (IO.userError s!"invalid or repeated real warm-up sample for {row}")
     let inputStart ← IO.monoNanosNow
     let inputBytes ← IO.FS.readBinFile inputsPath
     let inputTensors ← match RealSuite.readTensors inputBytes with
@@ -155,11 +193,41 @@ def main : IO UInt32 := do
     if inputTensors.size != 1 || inputTensors[0]!.size != samplesPerRun * size then
       throw (IO.userError s!"{id}: selected sample file has invalid dimensions")
     let inputEnd ← IO.monoNanosNow
+    let mut warmupTensor : Option (Array ExactRuntime.Word) := none
+    let mut warmupPrepNs := 0
+    if warmupSeedFile.isSome then
+      if warmupPath.isEmpty then throw (IO.userError s!"missing warm-up input path for {id}")
+      let warmupStart ← IO.monoNanosNow
+      let warmupBytes ← IO.FS.readBinFile warmupPath
+      let warmupTensors ← match RealSuite.readTensors warmupBytes with
+        | .ok value => pure value
+        | .error message => throw (IO.userError s!"{id} warm-up sample: {message}")
+      if warmupTensors.size != 1 || warmupTensors[0]!.size != samplesPerRun * size then
+        throw (IO.userError s!"{id}: warm-up sample file has invalid dimensions")
+      warmupTensor := some warmupTensors[0]!
+      let warmupEnd ← IO.monoNanosNow
+      warmupPrepNs := warmupEnd - warmupStart
+    IO.println s!"REAL_PREP|{id}|{setupEnd - setupStart}|{inputEnd - inputStart + warmupPrepNs}"
+    if let some warmupInput := warmupTensor then
+      IO.println s!"BENCH_WARMUP_READY|{row}"
+      (← IO.getStdout).flush
+      let warmupStart ← IO.monoNanosNow
+      let warmupOutput ← IO.lazyPure fun _ => ExactRuntime.runModel Submission.kernels layers
+        samplesPerRun size warmupInput
+      let warmupChecksum := ExactSuite.hashArr warmupOutput
+      let warmupEnd ← IO.monoNanosNow
+      IO.println s!"BENCH_WARMUP_DONE|{row}"
+      (← IO.getStdout).flush
+      IO.println s!"WARMUP|{row} true {warmupEnd - warmupStart} {warmupChecksum}"
+      (← IO.getStdout).flush
+    IO.println s!"BENCH_READY|{row}"
+    (← IO.getStdout).flush
     let t0 ← IO.monoNanosNow
     let output ← IO.lazyPure fun _ => ExactRuntime.runModel Submission.kernels layers
       samplesPerRun size inputTensors[0]!
     let t1 ← IO.monoNanosNow
-    IO.println s!"REAL_PREP|{id}|{setupEnd - setupStart}|{inputEnd - inputStart}"
+    IO.println s!"BENCH_DONE|{row}"
+    (← IO.getStdout).flush
     let checksum := ExactSuite.hashArr output
     IO.println s!"{row} true {t1 - t0} {checksum}"
     (← IO.getStdout).flush

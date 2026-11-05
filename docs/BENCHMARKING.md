@@ -5,25 +5,34 @@ champion; winning one board does not substitute individual kernels into another 
 
 ## Boards and workloads
 
-| Board | Workload | Batch sizes |
+| Board | Workload | Supported batch sizes |
 |---|---|---|
 | `mlp` | Fully connected classifier | 1, 8 |
 | `resnet` | Residual CNN | 1, 4 |
 | `mobilenet` | Depthwise/pointwise CNN | 1, 4 |
 | `normalized_mlp` | MLP with RMS and layer normalization | 1, 8 |
 | `mixer` | Token/channel mixing block | 1, 4 |
-| `transformer` | Pre-norm block: causal multi-head attention, SiLU MLP | 1, 4 |
-| `overall` | Weighted combination of all six families | As above |
+| `overall` | Weighted combination of the five initially scored families | As above |
 
-Each model/batch runs on normal, wide-exponent and sparse inputs: six cells per family,
-36 for overall. A root seed draws **six workloads**: two typical, two scale and two boundary
-cases, with total profile weights **50/30/20%**. Shapes and values vary, including odd boundary
-sizes. This gives 36 workload/cell combinations per family, 216 for overall, per environment/root seed.
-The promotion suite is synthetic inference, not trained-model accuracy or backpropagation. An
-optional, local diagnostic suite can add trained image, UCI-HAR sensor and appliance-energy
-time-series fixtures for supported MLP, normalized MLP, ResNet, MobileNet and Mixer boards. Those
-rows are reported separately and do not change admission. Transformer remains synthetic until a
-compatible real fixture exists.
+The initial scored set is MLP, ResNet, MobileNet, normalized MLP and Mixer. Transformer remains
+available as an optional synthetic-only local research board (`--board transformer`), but the
+default config generator omits it from board rewards. To leave time for the real-model suite, the
+default synthetic plan scores batch 1 only, across normal, wide-exponent and sparse cells: three
+cells per family and 15 for Overall. `--synthetic-full` opts into all supported batch sizes, or
+repeat `--synthetic-cell` to specify an exact custom cell set. Config validation rejects a board
+whose family has no selected synthetic cell.
+
+A root seed draws **six workloads**: two typical, two scale and two boundary cases, with total
+profile weights **50/30/20%**. Shapes and values vary, including odd boundary sizes. The compact
+default gives 18 workload/cell combinations per family and 90 for Overall, per environment/root
+seed; the full batch matrix doubles that synthetic cost. A local full-matrix orchestration pilot
+with three paired rounds and three baseline rounds exhausted its 20-minute benchmark budget before
+finishing, so batch-size expansion is opt-in while mixed real/synthetic timing is calibrated.
+The synthetic suite measures compact generated inference workloads. When enabled, the real suite
+also participates in promotion using the fixed `benchmark.suite_weights` (equal weights by
+default). Its trained image, UCI-HAR sensor and appliance-energy time-series fixtures exercise
+inference for supported MLP, normalized MLP, ResNet, MobileNet and Mixer boards. Both suite scores
+are reported separately. Transformer remains synthetic until a compatible real fixture exists.
 
 A kernel affects a score only through the models that call it. No current model uses
 `convTranspose`, a convolution shape other than `ConvShape.simple`, or pooling other than
@@ -36,25 +45,39 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 
 ## Measurement
 
-1. Build the shipped baseline, candidate and current champion once for the target CPU, then reuse
-   validated cached binaries across family jobs. Build time is not scored.
-2. Each timed cell/workload runs once per fresh subprocess, so submitted global state cannot carry
-   from one repetition of that cell into the next. Inputs are prepared outside timing and are
-   distinct within and across repetitions. Champion and candidate receive the same matched input
-   sequence.
-3. Run paired rounds, alternating execution order and using one CPU affinity where supported. The
-   reported duration is the median across configured independent subprocesses.
+1. Prepare shared Lean modules, then build the baseline, candidate and current champion/reference
+   under separately recorded stage clocks. Each stage has its own configurable cap, while the
+   environment's overall build limit remains a final ceiling. Valid cached binaries skip their
+   corresponding work. Build time is not scored.
+2. Each repeated measurement pass runs in a fresh subprocess. That pass evaluates each selected
+   cell/workload once; before each scored inference, it runs one unscored warm-up with a separately
+   selected input in the same process. The next repetition gets a new process, so submitted state
+   cannot carry between repetitions of the same row. The coordinator persists the hidden synthetic
+   generator seeds and real sample IDs, including warm-up selections, in the evaluation request.
+   Candidate, champion and baseline use the same matched scored inputs; retries reuse the same
+   request. Warm-up inputs are distinct from scored inputs. Inputs are prepared outside inference
+   timing and are one real example per batch-1 inference. Sample IDs may recur across fresh
+   processes when the fixture has fewer examples than observations. Model weights are reloaded on
+   each pass; model-load time is reported separately.
+3. The harness emits flushed `BENCH_READY` and `BENCH_DONE` markers around each inference. The
+   trusted parent measures elapsed time between receiving those markers with its monotonic clock;
+   the child-reported duration is diagnostic only. Model loading, input preparation and output
+   hashing remain outside inference timing. Run paired rounds, alternating execution order and
+   using one CPU affinity where supported. Report the median across configured independent passes.
 4. Check matching output checksums. The baseline is measured separately on fewer rounds, once per
    fresh process; its timings are diagnostic and do not affect promotion. The exact
    baseline source hash and its per-request timings are stored with each measurement result.
-5. Model/input preparation and output hashing are outside kernel timing; process startup and all
-   measurement preparation remain visible in the overall stage duration. Real rows report model
-   load and input-selection preparation separately, retain sampled fixture indices, and include raw
-   inner timings.
+5. Result telemetry reports shared preparation and baseline, reference and candidate build times
+   separately, each role's cache lookup separately from actual build work, plus the overall build
+   duration and configured phase caps. Process startup and all measurement preparation remain
+   visible in the overall stage duration.
+   Real rows report model load and input-selection preparation separately, retain sampled fixture
+   indices, and include raw per-pass timings.
 
 The real suite is opt-in and uses local fixtures only. Add one or more switches to
 `scripts/exact-config.py --output <path>`: `--real-image-zoo`, `--real-uci-har`, or
-`--real-appliance-mixer`. Each switch requires the corresponding local files under
+`--real-appliance-mixer`. Use `--synthetic-full` for all batch sizes, or `--synthetic-cell` (repeat
+the option) to define a custom cell set. Each real-suite switch requires the corresponding local files under
 `data/real-model-backtest/`; the generated config records each selected asset's hash. Use no switch
 for synthetic-only configuration when real assets are unavailable. Every benchmark worker must
 have the same relative asset paths and hashes before real workloads are enabled. The selected
@@ -62,9 +85,12 @@ adapter validates tensor counts and dimensions before timing. Assets are mounted
 each fresh benchmark process; no network fetch occurs. The compact image-zoo, UCI-HAR and appliance
 fixtures are small task-trained research models, not claims of externally pretrained SOTA coverage.
 
-The development config generator uses **11 paired rounds, 3 fresh processes per candidate and
-reference round, and 3 baseline diagnostic rounds**. The baseline runs once per selected round.
-These are local configuration defaults, not a promise about production. Read
+The initial development profile uses **12 paired rounds**, one fresh process per side per round,
+and **3 baseline diagnostic rounds**. A three-round self-comparison was too noisy for admission;
+the 11-round control was substantially more stable, and an even count balances which side runs
+first. Repetition counts are configurable with
+`--rounds`, `--inner`, `--baseline-rounds` and `--min-rounds`; `--quick` emits a one-round smoke
+configuration. These are pilot defaults, not final production policy. Read
 `/v1/competitions/torchlean/boards`
 and submission reports for live policy and frozen evaluation settings. Full processing also includes
 proof checking, native builds and queue waiting; it is longer than the timed inference.
@@ -78,8 +104,11 @@ For each hardware/root-seed stratum:
 - Cell ratio = candidate time / reference time. Below 1 is faster.
 - For each workload and round, combine cell ratios by weighted geometric mean.
 - Take the median across rounds for that workload.
-- Combine workload medians using their profile weights, then combine hardware/root-seed scores
-  by weighted geometric mean. Raw nanoseconds from different CPUs are never pooled.
+- Combine synthetic workload medians using their profile weights. For real workloads, take the
+  median paired candidate/champion ratio per model, combine models equally within each family,
+  then weight families using the board's model weights. Combine enabled suite scores using
+  `benchmark.suite_weights`, then combine hardware/root-seed scores by weighted geometric mean.
+  Raw nanoseconds from different CPUs are never pooled.
 
 The overall board's model weights are configurable; the development default weights models equally.
 A family board scores only that family's cells.
@@ -89,7 +118,8 @@ Promotion requires **all** configured checks:
 - Enough paired rounds and a score at or below the promotion bar (development default `0.97`).
 - Positive lower-bound gain from a stratified bootstrap (default 2,000 resamples, fifth percentile).
   It resamples workloads within profiles and paired round indices, preserving weights.
-- Every workload/cell/environment median ratio within the regression guard (default `1.10`).
+- Every synthetic workload/cell and real model/environment median ratio within the regression
+  guard (default `1.10`).
 
 Thus a fast average can still fail due to a regression or insufficient confidence. `gain_lower`
 is a one-sided bound, not a two-sided confidence interval. Proof acceptance and promotion are

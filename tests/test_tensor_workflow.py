@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import hashlib
+import random
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from config import Config
+from comparisons import board_request
+from config import Config, digest, measurement_hash
 from rewards import score
 from sqlalchemy import func, select, text
 from test_exact_competition import result
+from workload import RealWorkloadSpec
 
 import db
 from conftest import register
 from db import models as m
-from db.evaluations import EvaluationsDb
+from db.evaluations import (
+    EvaluationsDb,
+    _sample_plan_prefix,
+    _synthetic_plan_prefix,
+    select_real_sample_plan,
+    submission_assignment,
+)
 from db.jobs import WorkerDb
 
 
@@ -26,6 +37,105 @@ def setup(store, config):
     repo.set_leader(uuid.uuid4().hex)
     repo.reconcile(config)
     return repo, WorkerDb(store.sessions)
+
+
+def editable_config(config):
+    raw = copy.deepcopy(config.__dict__)
+    raw["benchmark"] = {
+        "suites": list(raw.pop("suites")),
+        "synthetic_cells": list(raw.pop("synthetic_cells")),
+        "real_workloads": [workload.json() for workload in raw.pop("real_workloads")],
+        "suite_weights": raw.pop("suite_weights"),
+    }
+    return raw
+
+
+def test_coordinator_sample_plan_is_balanced_and_reproducible():
+    workloads = [
+        {"id": "digits-mlp", "sample_count": 4, "samples_per_run": 1},
+        {"id": "har-resnet", "sample_count": 20, "samples_per_run": 1},
+    ]
+    timing = {"rounds": 3, "inner": 2}
+    first = select_real_sample_plan(workloads, timing, rng=random.Random(19))
+    second = select_real_sample_plan(workloads, timing, rng=random.Random(19))
+    assert first == second
+    for workload in workloads:
+        groups = [samples for round_samples in first[workload["id"]] for samples in round_samples]
+        assert len(groups) == timing["rounds"] * timing["inner"]
+        assert all(len(samples) == workload["samples_per_run"] for samples in groups)
+        flattened = [sample for group in groups for sample in group]
+        assert len(set(flattened)) == min(workload["sample_count"], len(flattened))
+        assert (
+            max(flattened.count(sample) for sample in set(flattened))
+            - min(flattened.count(sample) for sample in set(flattened))
+            <= 1
+        )
+
+
+def test_submission_assignment_resolves_shared_seed_and_sample_plan():
+    workloads = [{"id": "digits-mlp", "sample_count": 4, "samples_per_run": 1}]
+    timing = {"rounds": 3, "inner": 2}
+    first = submission_assignment(workloads, timing, fresh_seed_count=2, rng=random.Random(23))
+    second = submission_assignment(workloads, timing, fresh_seed_count=2, rng=random.Random(23))
+
+    assert first == second
+    assert len(set(first["seed_values"])) == 2
+    assert len(first["real_sample_plan"]["digits-mlp"]) == timing["rounds"]
+    for scored_round, warmup_round in zip(
+        first["real_sample_plan"]["digits-mlp"], first["real_warmup_plan"]["digits-mlp"]
+    ):
+        for scored, warmup in zip(scored_round, warmup_round):
+            assert scored[0] != warmup[0]
+    preserved = submission_assignment(
+        workloads,
+        timing,
+        fresh_seed_count=2,
+        previous_seed_values=first["seed_values"],
+        rng=random.Random(99),
+    )
+    assert preserved["seed_values"] == first["seed_values"]
+
+
+def test_submission_assignment_resolves_shared_synthetic_inputs():
+    timing = {"rounds": 3, "inner": 2}
+    cells = ["mlp:b1:normal", "mlp:b1:wide"]
+    first = submission_assignment(
+        [], timing, workload_seeds=[42], synthetic_cells=cells, rng=random.Random(23)
+    )
+    second = submission_assignment(
+        [], timing, workload_seeds=[42], synthetic_cells=cells, rng=random.Random(23)
+    )
+
+    assert first == second
+    plan = first["synthetic_input_plan"]
+    assert set(plan) == {f"s{i}|{cell}" for i in range(6) for cell in cells}
+    flattened = [
+        seed for rounds in plan.values() for group in rounds for values in group for seed in values
+    ]
+    assert len(flattened) == len(set(flattened))
+    warmups = first["synthetic_warmup_plan"]
+    warmup_seeds = [
+        seed
+        for rounds in warmups.values()
+        for group in rounds
+        for values in group
+        for seed in values
+    ]
+    assert len(warmup_seeds) == len(set(warmup_seeds))
+    assert not set(flattened) & set(warmup_seeds)
+    prefix = _synthetic_plan_prefix(plan, [42], ["mlp:b1:wide"], {"rounds": 2, "inner": 1})
+    assert set(prefix) == {f"s{i}|mlp:b1:wide" for i in range(6)}
+    assert all(
+        len(rounds) == 2 and all(len(group) == 1 for group in rounds) for rounds in prefix.values()
+    )
+
+
+def test_shared_sample_plan_prefix_preserves_order_and_board_round_shape():
+    shared = {"digits-mlp": [[[5], [1]], [[8], [4]], [[2], [9]]]}
+    assert _sample_plan_prefix(shared, {"rounds": 2, "inner": 1}) == {"digits-mlp": [[[5]], [[1]]]}
+    assert _sample_plan_prefix(shared, {"rounds": 2, "inner": 2}) == {
+        "digits-mlp": [[[5], [1]], [[8], [4]]]
+    }
 
 
 def accepted(store, config, hotkey="alice", content=b"candidate"):
@@ -184,7 +294,7 @@ def test_hardware_changes_reuse_completed_evidence_with_links(store, config):
     accepted(store, config)
     repo.plan(config)
     drain(worker)
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw["environments"]["local"]["weight"] = 0.5
     raw["environments"]["arm"] = {"identity": "d" * 64, "weight": 0.5}
     changed = Config.parse(raw)
@@ -204,7 +314,7 @@ def test_activation_reactivation_boundary_and_active_config_keeps_fifo(store, co
     repo, worker = setup(store, config)
     first = accepted(store, config)
     repo.plan(config)
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw["boards"]["new"] = copy.deepcopy(raw["boards"]["mlp"])
     raw["rewards"]["board_weights"] = {"mlp": 0.25, "resnet": 0.25, "new": 0.5}
     expanded = Config.parse(raw)
@@ -271,7 +381,7 @@ def test_disqualification_preserves_history_and_updates_publication(store, confi
 
 
 def test_fresh_seeds_persist_across_changed_plan(store, config):
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw.update(seed_mode="fresh", seeds=(), seed_count=2)
     fresh = Config.parse(raw)
     repo, _ = setup(store, fresh)
@@ -279,6 +389,7 @@ def test_fresh_seeds_persist_across_changed_plan(store, config):
     repo.plan(fresh)
     with db.session_scope(store.sessions) as s:
         old = {e.board: e.plan["seed_values"] for e in s.scalars(select(m.Evaluation))}
+    assert len({tuple(values) for values in old.values()}) == 1
     raw["admission"]["bar"] = 0.95
     changed = Config.parse(raw)
     repo.reconcile(changed)
@@ -289,6 +400,104 @@ def test_fresh_seeds_persist_across_changed_plan(store, config):
             for e in s.scalars(select(m.Evaluation).where(m.Evaluation.state == "pending"))
         }
     assert new == old and all(len(set(v)) == 2 for v in new.values())
+
+
+def test_overall_and_family_plans_share_seed_and_real_sample_draws(store, config):
+    boards = copy.deepcopy(config.boards)
+    boards["overall"] = {
+        "models": {"mlp": 0.5, "resnet": 0.5},
+        "reference": copy.deepcopy(boards["mlp"]["reference"]),
+        "timing": copy.deepcopy(boards["mlp"]["timing"]),
+    }
+    rewards = copy.deepcopy(config.rewards)
+    rewards["board_weights"] = {"mlp": 1 / 3, "resnet": 1 / 3, "overall": 1 / 3}
+    workload = RealWorkloadSpec(
+        id="digits-mlp",
+        family="mlp",
+        model="fixture-mlp",
+        dataset="digits",
+        adapter="image-zoo-v1",
+        weights_path="local/weights.bin",
+        weights_sha256=hashlib.sha256(b"weights").hexdigest(),
+        samples_path="local/samples.bin",
+        samples_sha256=hashlib.sha256(b"samples").hexdigest(),
+        asset_revision="test-fixture-v1",
+        sample_count=17,
+        sample_words=16,
+        samples_per_run=1,
+    )
+    shared = replace(
+        config,
+        boards=boards,
+        rewards=rewards,
+        seed_mode="fresh",
+        seeds=(),
+        seed_count=2,
+        suites=("synthetic", "real"),
+        real_workloads=(workload,),
+    )
+    repo, _ = setup(store, shared)
+    accepted(store, shared)
+    assert len(repo.plan(shared)) == 3
+    with db.session_scope(store.sessions) as s:
+        plans = {
+            evaluation.board: evaluation.plan for evaluation in s.scalars(select(m.Evaluation))
+        }
+    assert plans["mlp"]["seed_values"] == plans["overall"]["seed_values"]
+    assert (
+        plans["mlp"]["real_sample_plan"]["digits-mlp"]
+        == plans["overall"]["real_sample_plan"]["digits-mlp"]
+    )
+    assert plans["resnet"]["real_sample_plan"] is None
+
+
+def test_overall_and_family_evaluations_share_one_leased_comparison_bundle(store, config, tmp_path):
+    boards = copy.deepcopy(config.boards)
+    overall_source = b"overall reference"
+    overall_path = tmp_path / "overall.lean"
+    overall_path.write_bytes(overall_source)
+    boards["overall"] = {
+        "models": {"mlp": 0.5, "resnet": 0.5},
+        "reference": {
+            "path": str(overall_path),
+            "sha256": hashlib.sha256(overall_source).hexdigest(),
+        },
+        "timing": copy.deepcopy(boards["mlp"]["timing"]),
+    }
+    rewards = copy.deepcopy(config.rewards)
+    rewards["board_weights"] = {"mlp": 1 / 3, "resnet": 1 / 3, "overall": 1 / 3}
+    shared = replace(config, boards=boards, rewards=rewards)
+    repo, worker = setup(store, shared)
+    accepted(store, shared)
+
+    evaluation_ids = repo.plan(shared)
+    assert len(evaluation_ids) == 3
+    with db.session_scope(store.sessions) as s:
+        jobs = list(s.scalars(select(m.BenchmarkJob)))
+        links = list(s.scalars(select(m.EvaluationJob)))
+    assert len(jobs) == 1
+    assert len(links) == 3
+    job = worker.claim("local", "a" * 64, "shared-worker")
+    assert job is not None
+    assert set(job.request["comparisons"]) == {"mlp", "resnet", "overall"}
+    candidate, references = worker.sources_bundle(job.id)
+    assert candidate == b"candidate"
+    assert set(references) == {
+        config.boards["mlp"]["reference"]["sha256"],
+        hashlib.sha256(overall_source).hexdigest(),
+    }
+
+    bundle_result = {
+        "bundle_hash": digest(job.request),
+        "comparisons": {
+            board: result(board_request(job.request, board)) for board in job.request["comparisons"]
+        },
+    }
+    assert worker.complete(job.id, job.owner, job.token, bundle_result)
+    ready = repo.ready()
+    assert {evaluation.board for evaluation, _ in ready} == {"mlp", "resnet", "overall"}
+    assert all(len(pairs) == 1 for _, pairs in ready)
+    assert all(pairs[0][1]["request_hash"] == measurement_hash(pairs[0][0]) for _, pairs in ready)
 
 
 def test_execute_only_worker_role(store, config):
@@ -411,7 +620,7 @@ def test_reward_only_edit_changes_no_jobs_or_proofs(store, config):
     repo.plan(config)
     drain(worker)
     repo.aggregate(config)
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw["rewards"]["rank_shares"] = [0.9, 0.1]
     changed = Config.parse(raw)
     repo.reconcile(changed)
@@ -469,7 +678,7 @@ def test_database_url_escapes_password(monkeypatch):
 
 
 def test_per_device_preparation_budgets_survive_db_planning_and_admission(store, config):
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw.pop("timing")
     for board in raw["boards"].values():
         board.pop("timing", None)

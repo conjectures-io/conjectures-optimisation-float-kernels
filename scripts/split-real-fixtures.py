@@ -105,18 +105,28 @@ def fixtures():
             yield (
                 image / f"{family}-{dataset}.bin",
                 OUTPUT_ROOT / "models/image-zoo" / f"{family}-{dataset}",
-                "image-zoo-v1", family, model, dataset,
+                "image-zoo-v1",
+                family,
+                model,
+                dataset,
             )
     har = SOURCE_ROOT / "20261102-uci-har"
     for family in ("mlp", "normalized_mlp", "resnet", "mobilenet", "mixer"):
         yield (
-            har / f"{family}.bin", OUTPUT_ROOT / "models/uci-har" / family,
-            "uci-har-v1", family, f"uci-har-{family}", "UCI-HAR",
+            har / f"{family}.bin",
+            OUTPUT_ROOT / "models/uci-har" / family,
+            "uci-har-v1",
+            family,
+            f"uci-har-{family}",
+            "UCI-HAR",
         )
     yield (
         SOURCE_ROOT / "20261103-appliance-energy-mixer/appliance-energy-mixer.bin",
         OUTPUT_ROOT / "models/appliance-energy" / "mixer",
-        "appliance-mixer-v1", "mixer", "appliance-energy-mixer", "Appliance Energy Prediction",
+        "appliance-mixer-v1",
+        "mixer",
+        "appliance-energy-mixer",
+        "Appliance Energy Prediction",
     )
 
 

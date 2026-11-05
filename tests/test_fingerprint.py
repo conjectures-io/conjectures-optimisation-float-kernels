@@ -15,9 +15,10 @@ def test_exact_contract_and_all_toolkit_are_proof_pinned():
     assert "lean/bench/MainExact.lean" not in fingerprint.PROOF_FILES
 
 
-def test_benchmark_pins_request_policy_but_excludes_reward_and_admission_code():
+def test_benchmark_pins_request_policy_and_admission_scoring_but_not_rewards():
     assert "validator/config.py" in fingerprint.BENCHMARK_FILES
-    assert not {"validator/rewards.py", "validator/scoring.py"} & set(fingerprint.PINNED)
+    assert "validator/scoring.py" in fingerprint.BENCHMARK_FILES
+    assert "validator/rewards.py" not in fingerprint.PINNED
     assert fingerprint.proof() != fingerprint.benchmark()
     assert all((Path(fingerprint.HERE) / name).is_file() for name in fingerprint.PINNED)
 

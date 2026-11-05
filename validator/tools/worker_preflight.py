@@ -64,7 +64,7 @@ def main():
     store = db.connect()
     try:
         access = WorkerDb(store.sessions).access()
-        if access["protocol"] != 2 or not access["enabled"] or access["kind"] != args.kind:
+        if access["protocol"] != 4 or not access["enabled"] or access["kind"] != args.kind:
             raise RuntimeError("worker role disabled, incompatible or not provisioned")
         environment = args.environment or os.environ.get("BENCHMARK_ENVIRONMENT")
         if args.kind == "benchmark" and environment not in access["environments"]:
@@ -77,6 +77,7 @@ def main():
                     "complete(bigint,text,text,jsonb)",
                     "fail(bigint,text,text,jsonb)",
                     "sources(bigint,text,text)",
+                    "bundle_sources(bigint,text,text)",
                 )
                 for signature in required:
                     if not conn.scalar(

@@ -191,6 +191,22 @@ class BenchmarkJob(Base):
     )
 
 
+class BenchmarkProgress(Base):
+    __tablename__ = "benchmark_job_progress"
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("benchmark_jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[dt.datetime] = timestamp()
+    payload: Mapped[dict] = mapped_column(JSONB)
+    __table_args__ = (
+        CheckConstraint("attempt > 0 AND sequence >= 0", name="ck_job_progress_sequence"),
+        CheckConstraint("jsonb_typeof(payload) = 'object'", name="ck_job_progress_payload_object"),
+        Index("ix_job_progress_created", "job_id", "created_at"),
+    )
+
+
 class EvaluationJob(Base):
     __tablename__ = "evaluation_jobs"
     evaluation_id: Mapped[int] = mapped_column(ForeignKey("evaluations.id"), primary_key=True)

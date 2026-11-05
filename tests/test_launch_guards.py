@@ -10,7 +10,7 @@ import pytest
 from duplicates import normalized, normalized_digest
 from sandbox import intake
 from sqlalchemy import text
-from test_tensor_workflow import setup
+from test_tensor_workflow import editable_config, setup
 
 import db
 from conftest import register
@@ -163,4 +163,4 @@ def test_dev_uploads_are_evaluated_only_on_a_dev_deployment(store, config):
     repo.reconcile(dev)
     assert len(repo.plan(dev)) == len(config.boards)
     with pytest.raises(ValueError, match="dev_intake"):
-        type(config).parse(json.loads(json.dumps(dataclasses.asdict(config))) | {"dev_intake": 1})
+        type(config).parse(editable_config(config) | {"dev_intake": 1})

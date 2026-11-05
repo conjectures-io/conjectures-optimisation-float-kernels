@@ -1,6 +1,7 @@
 """The queued batch protocol, hierarchical admission and malformed worker evidence."""
 
 import copy
+import time
 from pathlib import Path
 
 import benchmark
@@ -9,6 +10,16 @@ import sandbox
 from config import MeasurementRequest, measurement_hash
 from multiseed import workloads
 from scoring import assess
+
+
+def emit_timing_markers(output, callback):
+    if callback is not None:
+        for line in output.splitlines():
+            fields = line.split()
+            if len(fields) == 4 and fields[1] == "true":
+                callback(f"BENCH_READY|{fields[0]}", time.monotonic_ns())
+                callback(f"BENCH_DONE|{fields[0]}", time.monotonic_ns())
+    return output
 
 
 @pytest.fixture
@@ -38,6 +49,13 @@ def pair():
     }
     result = dict(
         request_hash=measurement_hash(req),
+        measurement_policy={
+            "observations_per_workload_per_process": 1,
+            "fresh_process_per_pass": True,
+            "weights_reloaded_each_pass": True,
+            "inference_clock": "supervisor-monotonic-ready-done-v1",
+            "baseline_sentinel_policy": "spaced-same-input-per-family-v1",
+        },
         provenance=dict(identity="a" * 64, machine="test"),
         workloads=req["workloads"],
         repetitions=dict.fromkeys(cells, 1),
@@ -125,6 +143,45 @@ def test_request_cannot_override_workload_policy(pair, field):
         MeasurementRequest.parse(req)
 
 
+def test_frozen_warmup_input_plan_is_required_and_disjoint(pair):
+    req, _, _ = pair
+    req.update(suites=["synthetic"], real_workloads=[], real_sample_plan=None)
+    scored = {}
+    warmup = {}
+    seed = 100
+    warmup_seed = 50_000
+    for workload in req["workloads"]:
+        key = f"{workload['id']}|mlp:b1:normal"
+        scored[key] = []
+        warmup[key] = []
+        for _ in range(req["timing"]["rounds"]):
+            scored_passes = []
+            warmup_passes = []
+            for _ in range(req["timing"]["inner"]):
+                scored_passes.append([seed])
+                seed += 1
+                warmup_passes.append([warmup_seed])
+                warmup_seed += 1
+            scored[key].append(scored_passes)
+            warmup[key].append(warmup_passes)
+    req["synthetic_input_plan"] = scored
+    req["synthetic_warmup_plan"] = warmup
+    req["warmup_policy"] = "independent-unscored-input-v1"
+    parsed = MeasurementRequest.parse(req)
+    assert parsed.synthetic_warmup_plan == warmup
+
+    with pytest.raises(ValueError, match="warm-up plan is required"):
+        MeasurementRequest.parse(req | {"synthetic_warmup_plan": None})
+
+    overlap = copy.deepcopy(req)
+    first_key = next(iter(scored))
+    overlap["synthetic_warmup_plan"][first_key][0][0] = overlap["synthetic_input_plan"][first_key][
+        0
+    ][0]
+    with pytest.raises(ValueError, match="repeated synthetic warm-up"):
+        MeasurementRequest.parse(overlap)
+
+
 @pytest.mark.parametrize("bad", ["duplicate", "missing", "unknown", "checksum"])
 def test_binary_protocol_rejects_bad_rows(pair, monkeypatch, bad):
     req, _, _ = pair
@@ -157,7 +214,8 @@ def test_binary_protocol_translates_workloads_and_repetitions(pair, monkeypatch)
         assert env["BENCH_WORKLOADS"] == ",".join(
             f"{w['id']}:{w['seed']}:{w['profile']}" for w in req["workloads"]
         )
-        return 0, "\n".join(f"{w['id']}|cnn:b1:normal true 100 42" for w in req["workloads"])
+        output = "\n".join(f"{w['id']}|cnn:b1:normal true 100 42" for w in req["workloads"])
+        return 0, emit_timing_markers(output, kw.get("on_output_line"))
 
     monkeypatch.setattr(sandbox, "run", run)
     rows = benchmark.run_binary(
@@ -171,5 +229,6 @@ def test_binary_protocol_translates_workloads_and_repetitions(pair, monkeypatch)
     assert {key for key in rows if not key.startswith("__")} == {
         f"s{i}|resnet:b1:normal" for i in range(6)
     }
-    assert rows["__raw_ns__"]["s0|resnet:b1:normal"] == [100, 100, 100]
+    assert len(rows["__raw_ns__"]["s0|resnet:b1:normal"]) == 3
+    assert all(value > 0 for value in rows["__raw_ns__"]["s0|resnet:b1:normal"])
     assert len(rows["__process_wall_ns__"]) == 3
