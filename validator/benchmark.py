@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
-import hmac
 import json
 import os
 import platform
@@ -26,19 +25,6 @@ import fingerprint
 
 # The only translation of legacy Lean suite labels; persisted requests use public names.
 LEAN_MODELS = {"resnet": "cnn", "mobilenet": "mnet", "normalized_mlp": "nmlp"}
-
-INPUT_CELL_ORDER = tuple(
-    f"{model}:b{batch}:{kind}"
-    for kind in ("normal", "wide", "sparse")
-    for model, batches in (
-        ("mlp", (1, 8)),
-        ("resnet", (1, 4)),
-        ("mobilenet", (1, 4)),
-        ("normalized_mlp", (1, 8)),
-        ("mixer", (1, 4)),
-    )
-    for batch in batches
-)
 
 
 def lean_cell(cell):
@@ -286,58 +272,13 @@ def row_names(request):
     }
 
 
-def input_seed_bank(request, reps, inner, key):
-    """Independent seeds shared by both sides of one paired sample."""
-    cells = [cell for cell in INPUT_CELL_ORDER if cell in request["cells"]]
-    values = []
-    seen = set()
-    for workload in request["workloads"]:
-        for cell in cells:
-            count = reps.get(f"{workload['id']}|{cell}", 1)
-            for run in range(inner):
-                for repetition in range(count):
-                    context = f"{workload['id']}|{cell}|{run}|{repetition}".encode()
-                    counter = 0
-                    while True:
-                        seed = int.from_bytes(
-                            hmac.new(
-                                key, context + counter.to_bytes(4, "big"), hashlib.sha256
-                            ).digest()[:4],
-                            "big",
-                        )
-                        if seed not in seen:
-                            seen.add(seed)
-                            values.append(seed)
-                            break
-                        counter += 1
-    return values
+INPUT_SEED_STEP = 2654435761
 
 
-def input_seed_environment(values):
-    """Keep env values below per-string limits and the whole bank within a safe total size."""
-    chunks, current = [], []
-    current_size = 0
-    for value in map(str, values):
-        if current and current_size + len(value) + 1 > 100_000:
-            chunks.append(",".join(current))
-            current, current_size = [], 0
-        current.append(value)
-        current_size += len(value) + int(len(current) > 1)
-    if current:
-        chunks.append(",".join(current))
-    if not chunks:
-        raise ValueError("input-seed bank cannot be empty")
-    if len(chunks) > 8:
-        raise ValueError("input-seed bank exceeds the environment-size budget")
-    return {
-        "BENCH_INPUT_SEED_CHUNKS": str(len(chunks)),
-        **{f"BENCH_INPUT_SEEDS_{i}": chunk for i, chunk in enumerate(chunks)},
-    }
-
-
-def paired_input_seed_key():
-    """A per-pair key; the same generated inputs are passed to reference and candidate."""
-    return secrets.token_bytes(32)
+def paired_input_seed_key(base_seed=None, sample_index=0, inputs_per_sample=1):
+    """Return one compact starting seed; Lean derives each inference seed from it."""
+    base_seed = secrets.randbits(32) if base_seed is None else base_seed
+    return (base_seed + sample_index * inputs_per_sample * INPUT_SEED_STEP) & 0xFFFFFFFF
 
 
 def checksum_series(values):
@@ -394,9 +335,9 @@ def run_binary(binary, request, reps, inner, side, deadline, input_seed_key=None
     extra["BENCH_REPS"] = ",".join(
         f"{k.split('|')[0]}|{lean_cell(k.split('|')[1])}={n}" for k, n in reps.items()
     )
-    input_seed_key = input_seed_key or secrets.token_bytes(32)
+    input_seed_key = paired_input_seed_key() if input_seed_key is None else input_seed_key
     extra["BENCH_INPUT_MODE"] = "distinct"
-    extra.update(input_seed_environment(input_seed_bank(request, reps, inner, input_seed_key)))
+    extra["BENCH_INPUT_SEED"] = str(input_seed_key)
     command = [str(binary)]
     if sandbox._BENCH_CPU:
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
@@ -520,10 +461,19 @@ def measure(request, candidate, reference, mode=None):
                 # sides.
                 benchmark_clock.share()
                 t0 = time.monotonic()
+                measurement_seed = paired_input_seed_key()
+                inputs_per_sample = sum(reps.values())
+                sample_index = 0
                 for i in range(request["timing"]["rounds"]):
                     inner = request["timing"]["inner"]
-                    sample_keys = [paired_input_seed_key() for _ in range(inner)]
-                    partial["input_seed_keys_in_progress"] = [key.hex() for key in sample_keys]
+                    sample_keys = [
+                        paired_input_seed_key(
+                            measurement_seed, sample_index + offset, inputs_per_sample
+                        )
+                        for offset in range(inner)
+                    ]
+                    sample_index += inner
+                    partial["input_seed_keys_in_progress"] = [f"{key:08x}" for key in sample_keys]
                     observed = partial["round_in_progress"] = {
                         "reference": [],
                         "candidate": [],
@@ -566,7 +516,7 @@ def measure(request, candidate, reference, mode=None):
                     rounds.append(
                         {
                             "reference_first": i % 2 == 0,
-                            "input_seed_keys": [key.hex() for key in sample_keys],
+                            "input_seed_keys": [f"{key:08x}" for key in sample_keys],
                             "cells": cells,
                         }
                     )
