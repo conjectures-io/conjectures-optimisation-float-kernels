@@ -90,7 +90,7 @@ partial coverage from before this upgrade.
 | Docs | ✅ | `docs/CONTRACT.md`, `RUNTIME.md`, `MATHEMATICAL-PROOFS.md`, `README.md`, `MANUAL.md` |
 | Benchmark model family using the new features | ❌ | Boards are model families, so these kernels earn nothing until a model uses them (plan D4/D5) |
 | Season rollout (boards, identities, config) | ❌ | Plan Part 3 |
-| Full CI gate on the branch | ✅ except the sandboxed slow tests | Run locally: all 12 Lean targets build; proof-axiom check (64 theorems, standard axioms only), audit self-test, incumbent audit, oracle, model and workload checks, fast tests and ruff pass. The sandboxed slow tests need bubblewrap 0.11.2, which this machine lacks (`sudo apt-get install meson ninja-build pkg-config libcap-dev && bash scripts/install-bubblewrap.sh`) |
+| Full CI gate on the branch | ✅ except one sandbox-only check | Run locally: all 12 Lean targets build; proof-axiom check (64 theorems, standard axioms only), audit self-test, incumbent audit, oracle, model and workload checks, fast tests and ruff pass. Gate fixture matrix (`selftest.py`, run without the sandbox): 10 of 11 verdicts match, including the incumbent, baseline, `wrong`, `sorryax` and every policy attack. The 11th, `tamper` with the policy bypassed, is caught only by the sandbox's overlay layer, so it needs bubblewrap 0.11.2, which this machine lacks (`sudo apt-get install meson ninja-build pkg-config libcap-dev && bash scripts/install-bubblewrap.sh`) |
 
 ## Decisions blocking further progress
 
