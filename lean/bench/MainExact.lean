@@ -28,30 +28,15 @@ def main : IO UInt32 := do
   let inputMode := (← IO.getEnv "BENCH_INPUT_MODE").getD "distinct"
   if inputMode != "distinct" && inputMode != "repeat" then
     throw (IO.userError "BENCH_INPUT_MODE must be distinct or repeat")
-  let inputSeedText ← do
-    match (← IO.getEnv "BENCH_INPUT_SEED_CHUNKS") with
-    | none => IO.getEnv "BENCH_INPUT_SEEDS"
-    | some countText => do
-      let some count := countText.toNat? | throw (IO.userError "invalid input-seed chunk count")
-      if count == 0 || count > 8 then throw (IO.userError "invalid input-seed chunk count")
-      let chunks ← (List.range count).mapM fun i => do
-        let some chunk ← IO.getEnv s!"BENCH_INPUT_SEEDS_{i}" |
-          throw (IO.userError "missing input-seed chunk")
-        pure chunk
-      pure (some (String.intercalate "," chunks))
-  let inputSeedBank ← match inputSeedText with
-    | none => pure none
-    | some "" => throw (IO.userError "empty input-seed bank")
+  let inputSeed ← match (← IO.getEnv "BENCH_INPUT_SEED") with
+    | none =>
+      if inputMode == "distinct" then
+        throw (IO.userError "distinct input mode needs one input seed")
+      else pure (0 : UInt32)
     | some text => do
-      let parsed := (text.splitOn ",").map String.toNat?
-      if parsed.any (fun value => value.isNone) then
-        throw (IO.userError "invalid input seed")
-      let values := parsed.filterMap id
-      if values.any (fun value => value ≥ 4294967296) then
-        throw (IO.userError "input seed exceeds UInt32")
-      pure (some (values.map Nat.toUInt32 |>.toArray))
-  if inputMode == "distinct" && inputSeedBank.isNone then
-    throw (IO.userError "distinct input mode needs an input-seed bank")
+      let some value := text.toNat? | throw (IO.userError "invalid input seed")
+      if value ≥ 4294967296 then throw (IO.userError "input seed exceeds UInt32")
+      pure value.toUInt32
   let text := (← IO.getEnv "BENCH_WORKLOADS").getD "s0:42:legacy"
   let mut workloads : List (String × UInt32 × String) := []
   for token in text.splitOn "," do
@@ -89,10 +74,9 @@ def main : IO UInt32 := do
           let mut inputs : Array (Array ExactRuntime.Word) := #[]
           for _r in [0:count] do
             let input ← if inputMode == "repeat" then pure prepared.input else do
-              let some bank := inputSeedBank | throw (IO.userError "missing input-seed bank")
-              if inputSeedCursor >= bank.size then
-                throw (IO.userError "input-seed bank is too short")
-              let seed := bank[inputSeedCursor]!
+              -- The odd step permutes UInt32 seeds; each inference gets a new input without
+              -- keeping or receiving a bank. The paired reference/candidate share inputSeed.
+              let seed := inputSeed + inputSeedCursor.toUInt32 * 2654435761
               inputSeedCursor := inputSeedCursor + 1
               pure (ExactSuite.gen c.kind (prepared.samples * prepared.size) seed)
             inputs := inputs.push input
@@ -114,7 +98,4 @@ def main : IO UInt32 := do
       let checksum := checksums.foldl (fun h value => (h ^^^ value) * 16777619) 2166136261
       IO.println s!"{key} true {middleTime times statistic} {checksum}"
       (← IO.getStdout).flush
-  if let some bank := inputSeedBank then
-    if inputSeedCursor != bank.size then
-      throw (IO.userError "input-seed bank has unused entries")
   return 0

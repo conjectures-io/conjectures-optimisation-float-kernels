@@ -23,9 +23,10 @@ The suite is synthetic inference, not trained-model accuracy or backpropagation.
 Fresh-seed mode chooses a new root seed for an evaluation; retries retain the same workloads.
 Candidate and reference receive identical model weights, shapes, parameters and inputs within each
 paired sample. Each inference gets a distinct activation input drawn from the same data-type
-distribution. The harness derives an independent seed per inference and passes the same seed bank
-to both sides of the pair. Lean generates inputs in small batches before each timing window,
-keeping memory bounded while excluding generation from kernel timing.
+distribution. The harness passes one starting seed to both sides of each paired sample. Lean
+derives a fresh seed for every inference from that starting seed and generates inputs in batches
+before each timing window. This avoids storing or passing a seed bank, keeps memory bounded, and
+excludes input generation from kernel timing.
 The required hardware environments and their weights are part of the published board configuration.
 The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 

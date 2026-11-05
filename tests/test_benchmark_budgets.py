@@ -32,7 +32,7 @@ def clock(monkeypatch):
 
 
 def timing(**extra):
-    # Keep fake 100 ns rows from generating an enormous synthetic seed bank in these unit tests.
+    # Keep fake 100 ns rows from generating an enormous repetition count in unit tests.
     return (
         dict(
             rounds=1, inner=1, cell_ms=0.001, run_seconds=10, build_seconds=10, benchmark_seconds=4
@@ -129,22 +129,16 @@ def test_round_uses_paired_distinct_inputs_in_fresh_processes_and_medians(
     assert len(calls) == 2 + 2 * request["timing"]["inner"]
     samples = calls[2:]
     assert all(env["BENCH_INNER"] == "1" for _, env in samples)
-    paired_banks = []
+    paired_seeds = []
     for index in range(0, len(samples), 2):
         left_side, left_env = samples[index]
         right_side, right_env = samples[index + 1]
         assert left_side != right_side
-        left_seeds = [
-            left_env[f"BENCH_INPUT_SEEDS_{chunk}"]
-            for chunk in range(int(left_env["BENCH_INPUT_SEED_CHUNKS"]))
-        ]
-        right_seeds = [
-            right_env[f"BENCH_INPUT_SEEDS_{chunk}"]
-            for chunk in range(int(right_env["BENCH_INPUT_SEED_CHUNKS"]))
-        ]
-        assert left_seeds == right_seeds
-        paired_banks.append(left_seeds)
-    assert len({tuple(bank) for bank in paired_banks}) == request["timing"]["inner"]
+        assert len(left_env["BENCH_INPUT_SEED"]) <= 10
+        assert not any(name.startswith("BENCH_INPUT_SEEDS_") for name in left_env)
+        assert left_env["BENCH_INPUT_SEED"] == right_env["BENCH_INPUT_SEED"]
+        paired_seeds.append(left_env["BENCH_INPUT_SEED"])
+    assert len(set(paired_seeds)) == request["timing"]["inner"]
 
     sample_round = result["rounds"][0]
     for workload in workloads(42):
