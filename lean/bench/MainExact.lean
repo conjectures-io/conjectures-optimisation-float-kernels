@@ -36,10 +36,13 @@ def parseInputSeedMap (text : String) : List (String × List UInt32) :=
       else some (key, parsed.filterMap id)
     | _ => none
 
-def parseRealWorkloads (text : String) : List (String × String × String × String × Nat) :=
+def parseRealWorkloads (text : String) : List (String × String × String × String × String × Nat × Nat × Nat) :=
   (text.splitOn ",").filterMap fun token => match token.splitOn "|" with
-    | [id, adapter, family, path, samples] =>
-      samples.toNat?.map fun n => (id, adapter, family, path, n)
+    | [id, adapter, family, weightsPath, inputsPath, samples, sampleCount, sampleWords] => do
+      let n ← samples.toNat?
+      let count ← sampleCount.toNat?
+      let words ← sampleWords.toNat?
+      some (id, adapter, family, weightsPath, inputsPath, n, count, words)
     | _ => none
 
 def realCellModel (family : String) : String :=
@@ -80,7 +83,7 @@ def main : IO UInt32 := do
     let keys := inputSeedMap.map Prod.fst
     let expectedKeys := workloads.flatMap fun (name, _, _) =>
       selected.map fun cell => s!"{name}|{cell.name}"
-    let expectedKeys := expectedKeys ++ realWorkloads.map fun (id, _, family, _, _) =>
+    let expectedKeys := expectedKeys ++ realWorkloads.map fun (id, _, family, _, _, _, _, _) =>
       let cell := selected.find? fun cell =>
         cell.model == realCellModel family && cell.batch == 1 && cell.kind == "normal"
       match cell with
@@ -121,7 +124,7 @@ def main : IO UInt32 := do
       IO.println s!"{key} true {medianNat durations} {checksum}"
       (← IO.getStdout).flush
       workloadIndex := workloadIndex + 1
-  for (id, adapter, family, assetPath, samplesPerRun) in realWorkloads do
+  for (id, adapter, family, weightsPath, inputsPath, samplesPerRun, sampleCount, size) in realWorkloads do
     if id.isEmpty || samplesPerRun == 0 then throw (IO.userError "invalid real workload")
     let some c := selected.find? fun cell =>
       cell.model == realCellModel family && cell.batch == 1 && cell.kind == "normal"
@@ -129,39 +132,35 @@ def main : IO UInt32 := do
     let row := s!"{id}|{c.name}"
     IO.eprintln s!"{row} start"
     let setupStart ← IO.monoNanosNow
-    let bytes ← IO.FS.readBinFile assetPath
+    let bytes ← IO.FS.readBinFile weightsPath
     let tensors ← match RealSuite.readTensors bytes with
       | .ok value => pure value
       | .error message => throw (IO.userError s!"{id}: {message}")
-    let (layers, sampleCount, size, allInputs) ← match RealSuite.prepare adapter family tensors with
+    let layers ← match RealSuite.prepare adapter family size tensors with
       | .ok value => pure value
       | .error message => throw (IO.userError s!"{id}: {message}")
     let setupEnd ← IO.monoNanosNow
-    let mut inputPreparation : Array Nat := #[]
     let requested := samplesPerRun * inner
     let indices := match inputSeedMap.find? (fun entry => entry.1 == row) with
       | some (_, values) => values
       | none => []
     if indices.length != requested then throw (IO.userError s!"input index count mismatch for {row}")
-    let mut durations : Array Nat := #[]
-    let mut outputHashes : Array UInt32 := #[]
-    for group in [0:inner] do
-      let inputStart ← IO.monoNanosNow
-      let chosen := (indices.drop (group * samplesPerRun)).take samplesPerRun
-      if chosen.any (fun i => i.toNat >= sampleCount) then
-        throw (IO.userError s!"input index outside fixture for {row}")
-      let input := chosen.foldl (fun acc index =>
-        acc ++ allInputs.extract (index.toNat * size) ((index.toNat + 1) * size)) #[]
-      let inputEnd ← IO.monoNanosNow
-      inputPreparation := inputPreparation.push (inputEnd - inputStart)
-      let t0 ← IO.monoNanosNow
-      let output ← IO.lazyPure fun _ => ExactRuntime.runModel Submission.kernels layers
-        samplesPerRun size input
-      let t1 ← IO.monoNanosNow
-      durations := durations.push (t1 - t0)
-      outputHashes := outputHashes.push (ExactSuite.hashArr output)
-    IO.println s!"REAL_PREP|{id}|{setupEnd - setupStart}|{medianNat inputPreparation}"
-    let checksum := outputHashes.foldl (fun h output => (h ^^^ output) * 16777619) 2166136261
-    IO.println s!"{row} true {medianNat durations} {checksum}"
+    if indices.any (fun i => i.toNat ≥ sampleCount) then
+      throw (IO.userError s!"invalid sample index for {row}")
+    let inputStart ← IO.monoNanosNow
+    let inputBytes ← IO.FS.readBinFile inputsPath
+    let inputTensors ← match RealSuite.readTensors inputBytes with
+      | .ok value => pure value
+      | .error message => throw (IO.userError s!"{id} selected samples: {message}")
+    if inputTensors.size != 1 || inputTensors[0]!.size != samplesPerRun * size then
+      throw (IO.userError s!"{id}: selected sample file has invalid dimensions")
+    let inputEnd ← IO.monoNanosNow
+    let t0 ← IO.monoNanosNow
+    let output ← IO.lazyPure fun _ => ExactRuntime.runModel Submission.kernels layers
+      samplesPerRun size inputTensors[0]!
+    let t1 ← IO.monoNanosNow
+    IO.println s!"REAL_PREP|{id}|{setupEnd - setupStart}|{inputEnd - inputStart}"
+    let checksum := ExactSuite.hashArr output
+    IO.println s!"{row} true {t1 - t0} {checksum}"
     (← IO.getStdout).flush
   return 0

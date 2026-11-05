@@ -18,7 +18,7 @@ from workload import RealWorkloadSpec
 MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
 KINDS = ("normal", "wide", "sparse")
-VERSION = "exact-boards-v5-fresh-process-real-workloads"
+VERSION = "exact-boards-v6-sample-addressable-real-workloads"
 BASELINE_SOURCE = Path(__file__).resolve().parents[1] / "kernels/exact/baseline/Kernel.lean"
 
 
@@ -30,6 +30,14 @@ def digest(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
+
+
+def file_digest(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -206,22 +214,30 @@ class Config:
         if "real" in suites:
             for workload in real_workloads:
                 root = Path(__file__).resolve().parents[1]
-                asset_source = root / workload.asset_path
-                asset = asset_source.resolve()
-                try:
-                    asset.relative_to(root)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"real workload asset escapes repository: {workload.id}"
-                    ) from exc
-                if (
-                    not asset.is_file()
-                    or asset_source.is_symlink()
-                    or asset.stat().st_size > 512 * 2**20
-                    or hashlib.sha256(asset.read_bytes()).hexdigest() != workload.asset_sha256
+                paths = []
+                for relative, expected_hash in (
+                    (workload.weights_path, workload.weights_sha256),
+                    (workload.samples_path, workload.samples_sha256),
                 ):
-                    raise ValueError(f"real workload asset missing or hash mismatch: {workload.id}")
-                workload.validate_asset(asset)
+                    source = root / relative
+                    asset = source.resolve()
+                    try:
+                        asset.relative_to(root)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"real workload asset escapes repository: {workload.id}"
+                        ) from exc
+                    if (
+                        not asset.is_file()
+                        or source.is_symlink()
+                        or asset.stat().st_size > 512 * 2**20
+                        or file_digest(asset) != expected_hash
+                    ):
+                        raise ValueError(
+                            f"real workload asset missing or hash mismatch: {workload.id}"
+                        )
+                    paths.append(asset)
+                workload.validate_assets(*paths)
         timing_overrides = data.get("timing", {})
         data["timing"] = DEFAULT_TIMING | timing_overrides
         if "cached_build_seconds" not in timing_overrides:

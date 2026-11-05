@@ -13,6 +13,7 @@ import shutil
 import secrets
 import socket
 import statistics
+import struct
 import subprocess
 import tempfile
 import time
@@ -377,18 +378,9 @@ def run_binary(binary, request, reps, inner, side, deadline, input_sequences=Non
         f"{k.split('|')[0]}|{lean_cell(k.split('|')[1])}={n}" for k, n in reps.items()
     )
     real_assets = {}
-    real_entries = []
     for item in request.get("real_workloads", ()):
         asset_id = item["id"]
-        path = (sandbox.HERE / item["asset_path"]).resolve()
-        real_assets[asset_id] = path
-        mounted = f"/benchmark-assets/{asset_id}.bin" if sandbox._SANDBOX else str(path)
-        real_entries.append(
-            "|".join(
-                (asset_id, item["adapter"], item["family"], mounted, str(item["samples_per_run"]))
-            )
-        )
-    extra["BENCH_REAL_WORKLOADS"] = ",".join(real_entries)
+        real_assets[f"{asset_id}-weights"] = (sandbox.HERE / item["weights_path"]).resolve()
     command = [str(binary)]
     if sandbox._BENCH_CPU:
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
@@ -396,6 +388,7 @@ def run_binary(binary, request, reps, inner, side, deadline, input_sequences=Non
     groups = []
     process_wall_ns = []
     with tempfile.TemporaryDirectory(prefix="bench-inputs-") as directory:
+        temporary_inputs = Path(directory)
         seed_file = Path(directory) / "input-seeds.txt"
         for repetition in range(inner):
             seed_rows = []
@@ -420,16 +413,63 @@ def run_binary(binary, request, reps, inner, side, deadline, input_sequences=Non
                     printed_key + "=" + ";".join(map(str, groups_for_key[repetition][:count]))
                 )
             seed_file.write_text("\n".join(seed_rows) + "\n")
+            real_entries = []
+            invocation_assets = dict(real_assets)
+            for item in request.get("real_workloads", ()):
+                asset_id = item["id"]
+                groups_for_key = input_sequences[f"{asset_id}|{item['family']}"]
+                chosen = groups_for_key[repetition][: item["samples_per_run"]]
+                source = (sandbox.HERE / item["samples_path"]).resolve()
+                staged = temporary_inputs / f"{asset_id}-samples-{repetition}.bin"
+                with source.open("rb") as stream:
+                    payload = bytearray()
+                    for index in chosen:
+                        stream.seek(index * item["sample_words"] * 4)
+                        record = stream.read(item["sample_words"] * 4)
+                        if len(record) != item["sample_words"] * 4:
+                            raise MeasurementFailure(
+                                "infrastructure", f"truncated sample record in {asset_id}"
+                            )
+                        payload.extend(record)
+                staged.write_bytes(struct.pack("<I", len(payload) // 4) + payload)
+                sample_asset_id = f"{asset_id}-selected-input"
+                invocation_assets[sample_asset_id] = staged
+                weight_path = (
+                    f"/benchmark-assets/{asset_id}-weights.bin"
+                    if sandbox._SANDBOX
+                    else str(real_assets[f"{asset_id}-weights"])
+                )
+                sample_path = (
+                    f"/benchmark-assets/{sample_asset_id}.bin"
+                    if sandbox._SANDBOX
+                    else str(staged)
+                )
+                real_entries.append(
+                    "|".join(
+                        (
+                            asset_id,
+                            item["adapter"],
+                            item["family"],
+                            weight_path,
+                            sample_path,
+                            str(item["samples_per_run"]),
+                            str(item["sample_count"]),
+                            str(item["sample_words"]),
+                        )
+                    )
+                )
+            invocation_env = dict(extra)
+            invocation_env["BENCH_REAL_WORKLOADS"] = ",".join(real_entries)
             budget = deadline.remaining(side)
             timeout = min(request["timing"]["run_seconds"], budget)
             started = time.monotonic()
             code, output = sandbox.run(
                 command,
                 timeout,
-                env_extra=extra,
+                env_extra=invocation_env,
                 memory_mb=sandbox._BENCH_MEMORY_MB,
                 input_file=seed_file,
-                asset_files=real_assets,
+                asset_files=invocation_assets,
             )
             seconds = time.monotonic() - started
             if code == 124:
@@ -532,25 +572,32 @@ def measure(request, candidate, reference, mode=None):
         if hashlib.sha256(content).hexdigest() != request[key]:
             raise MeasurementFailure("infrastructure", "immutable source hash mismatch")
     for item in request.get("real_workloads", ()):
-        source_path = sandbox.HERE / item["asset_path"]
-        path = source_path.resolve()
-        try:
-            path.relative_to(sandbox.HERE.resolve())
-        except ValueError as exc:
-            raise MeasurementFailure(
-                "infrastructure", "real workload path escapes checkout"
-            ) from exc
-        if (
-            not path.is_file()
-            or source_path.is_symlink()
-            or path.stat().st_size > 512 * 2**20
-            or file_hash(path) != item["asset_sha256"]
+        paths = []
+        for field, hash_field in (
+            ("weights_path", "weights_sha256"),
+            ("samples_path", "samples_sha256"),
         ):
-            raise MeasurementFailure(
-                "infrastructure", f"real workload asset missing or hash mismatch: {item['id']}"
-            )
+            source_path = sandbox.HERE / item[field]
+            path = source_path.resolve()
+            try:
+                path.relative_to(sandbox.HERE.resolve())
+            except ValueError as exc:
+                raise MeasurementFailure(
+                    "infrastructure", "real workload path escapes checkout"
+                ) from exc
+            if (
+                not path.is_file()
+                or source_path.is_symlink()
+                or path.stat().st_size > 512 * 2**20
+                or file_hash(path) != item[hash_field]
+            ):
+                raise MeasurementFailure(
+                    "infrastructure",
+                    f"real workload asset missing or hash mismatch: {item['id']} {field}",
+                )
+            paths.append(path)
         try:
-            RealWorkloadSpec.parse(item).validate_asset(path)
+            RealWorkloadSpec.parse(item).validate_assets(*paths)
         except (OSError, ValueError) as exc:
             raise MeasurementFailure(
                 "infrastructure", f"invalid real workload asset {item['id']}: {exc}"

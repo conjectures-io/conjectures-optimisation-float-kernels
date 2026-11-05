@@ -496,22 +496,27 @@ def test_measure_reports_paired_real_rows_and_baseline_grounding(tmp_path, monke
     baseline_path = tmp_path / "kernels/exact/baseline/Kernel.lean"
     baseline_path.parent.mkdir(parents=True)
     baseline_path.write_bytes(b"baseline source")
-    asset = tmp_path / "real.bin"
-    tensors = [32 * 784, 32, 16 * 32, 16, 10 * 16, 10, 2 * 784, 2]
-    with asset.open("wb") as stream:
+    weights_asset = tmp_path / "weights.bin"
+    samples_asset = tmp_path / "samples.bin"
+    tensors = [32 * 784, 32, 16 * 32, 16, 10 * 16, 10]
+    with weights_asset.open("wb") as stream:
         for count in tensors:
             stream.write(struct.pack("<I", count))
             stream.write(bytes(count * 4))
+    samples_asset.write_bytes(bytes(2 * 784 * 4))
     real = {
         "id": "digits-mlp",
         "family": "mlp",
         "model": "small-mlp",
         "dataset": "digits",
         "adapter": "image-zoo-v1",
-        "asset_path": "real.bin",
-        "asset_sha256": benchmark.file_hash(asset),
+        "weights_path": "weights.bin",
+        "weights_sha256": benchmark.file_hash(weights_asset),
+        "samples_path": "samples.bin",
+        "samples_sha256": benchmark.file_hash(samples_asset),
         "asset_revision": "fixture-v1",
         "sample_count": 2,
+        "sample_words": 784,
         "samples_per_run": 1,
     }
     request = {

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import platform
-import struct
 import sys
 from pathlib import Path
 
@@ -18,23 +18,40 @@ from benchmark import machine_identity  # noqa: E402
 import fingerprint  # noqa: E402
 
 
-def fixture_sample_count(path: Path) -> int:
-    raw = path.read_bytes()
-    counts = []
-    offset = 0
-    while offset < len(raw):
-        if offset + 4 > len(raw):
-            raise ValueError(f"truncated fixture tensor header: {path}")
-        count = struct.unpack_from("<I", raw, offset)[0]
-        offset += 4
-        end = offset + count * 4
-        if end > len(raw):
-            raise ValueError(f"truncated fixture tensor data: {path}")
-        counts.append(count)
-        offset = end
-    if len(counts) < 3 or counts[-1] < 3:
-        raise ValueError(f"fixture needs at least three labeled samples: {path}")
-    return counts[-1]
+def fixture_lines(fixture_id: str, target: Path, samples_per_run: int) -> list[str]:
+    manifest_path = target / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"missing sample-addressable fixture {target}")
+    manifest = json.loads(manifest_path.read_text())
+    if (
+        manifest["format"] != "sample-addressable-f32-v1"
+        or manifest["workload_id"] != fixture_id
+    ):
+        raise ValueError(f"unsupported fixture format: {target}")
+    weights = ROOT / manifest["weights_path"]
+    samples = ROOT / manifest["samples_path"]
+    return [
+        "",
+        "[[benchmark.real_workloads]]",
+        f"id = {fixture_id!r}",
+        f"family = {manifest['family']!r}",
+        f"model = {manifest['model']!r}",
+        f"dataset = {manifest['dataset']!r}",
+        f"adapter = {manifest['adapter']!r}",
+        f"weights_path = {weights.relative_to(ROOT).as_posix()!r}",
+        f"weights_sha256 = {manifest['weights_sha256']!r}",
+        f"samples_path = {samples.relative_to(ROOT).as_posix()!r}",
+        f"samples_sha256 = {manifest['samples_sha256']!r}",
+        "asset_revision = "
+        + repr(
+            hashlib.sha256(
+                (manifest["weights_sha256"] + manifest["samples_sha256"]).encode()
+            ).hexdigest()
+        ),
+        f"sample_count = {manifest['sample_count']}",
+        f"sample_words = {manifest['sample_words']}",
+        f"samples_per_run = {samples_per_run}",
+    ]
 
 
 def main():
@@ -159,46 +176,35 @@ def main():
         if missing:
             parser.error("--real-image-zoo requires local fixtures; missing: " + ", ".join(missing))
         for family, dataset, path in fixtures:
-            relative = path.relative_to(ROOT).as_posix()
-            asset_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-            sample_count = fixture_sample_count(path)
-            lines += [
-                "",
-                "[[benchmark.real_workloads]]",
-                f"id = {'image-zoo-' + family.replace('_', '-') + '-' + dataset!r}",
-                f"family = {family!r}",
-                f"model = {'compact-' + family!r}",
-                f"dataset = {dataset!r}",
-                'adapter = "image-zoo-v1"',
-                f"asset_path = {relative!r}",
-                f"asset_sha256 = {asset_hash!r}",
-                f"asset_revision = {asset_hash!r}",
-                f"sample_count = {sample_count}",
-                f"samples_per_run = {samples_per_run(sample_count, family + '-' + dataset)}",
-            ]
+            target = (
+                ROOT
+                / "data/real-model-backtest/20261105-sample-addressable/models/image-zoo"
+                / f"{family}-{dataset}"
+            )
+            fixture_id = "image-zoo-" + family.replace("_", "-") + "-" + dataset
+            manifest = json.loads((target / "manifest.json").read_text())
+            lines += fixture_lines(
+                fixture_id,
+                target,
+                samples_per_run(manifest["sample_count"], family + "-" + dataset),
+            )
     if args.real_uci_har:
         model_dir = ROOT / "data/real-model-backtest/20261102-uci-har"
         for family in ("mlp", "normalized_mlp", "resnet", "mobilenet", "mixer"):
             path = model_dir / f"{family}.bin"
             if not path.is_file():
                 parser.error(f"--real-uci-har requires local fixture {path}")
-            relative = path.relative_to(ROOT).as_posix()
-            asset_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-            sample_count = fixture_sample_count(path)
-            lines += [
-                "",
-                "[[benchmark.real_workloads]]",
-                f"id = {'uci-har-' + family.replace('_', '-')!r}",
-                f"family = {family!r}",
-                f"model = {'uci-har-' + family!r}",
-                'dataset = "UCI-HAR"',
-                'adapter = "uci-har-v1"',
-                f"asset_path = {relative!r}",
-                f"asset_sha256 = {asset_hash!r}",
-                f"asset_revision = {asset_hash!r}",
-                f"sample_count = {sample_count}",
-                f"samples_per_run = {samples_per_run(sample_count, family + '-uci-har')}",
-            ]
+            target = (
+                ROOT
+                / "data/real-model-backtest/20261105-sample-addressable/models/uci-har"
+                / family
+            )
+            manifest = json.loads((target / "manifest.json").read_text())
+            lines += fixture_lines(
+                "uci-har-" + family.replace("_", "-"),
+                target,
+                samples_per_run(manifest["sample_count"], family + "-uci-har"),
+            )
     if args.real_appliance_mixer:
         path = (
             ROOT
@@ -206,23 +212,16 @@ def main():
         )
         if not path.is_file():
             parser.error(f"--real-appliance-mixer requires local fixture {path}")
-        relative = path.relative_to(ROOT).as_posix()
-        asset_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        sample_count = fixture_sample_count(path) // 6
-        lines += [
-            "",
-            "[[benchmark.real_workloads]]",
-            'id = "appliance-energy-mixer"',
-            'family = "mixer"',
-            'model = "appliance-energy-mixer"',
-            'dataset = "Appliance Energy Prediction"',
-            'adapter = "appliance-mixer-v1"',
-            f"asset_path = {relative!r}",
-            f"asset_sha256 = {asset_hash!r}",
-            f"asset_revision = {asset_hash!r}",
-            f"sample_count = {sample_count}",
-            f"samples_per_run = {samples_per_run(sample_count, 'appliance-energy-mixer')}",
-        ]
+        target = (
+            ROOT
+            / "data/real-model-backtest/20261105-sample-addressable/models/appliance-energy/mixer"
+        )
+        manifest = json.loads((target / "manifest.json").read_text())
+        lines += fixture_lines(
+            "appliance-energy-mixer",
+            target,
+            samples_per_run(manifest["sample_count"], "appliance-energy-mixer"),
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines) + "\n")
     print(args.output)

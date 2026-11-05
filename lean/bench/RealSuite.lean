@@ -1,11 +1,10 @@
 import ExactSuite
 
-/-! Trusted adapters for the provisional, operator-provided real-model fixtures.
+/-! Trusted adapters for local sample-addressable real-model fixtures.
 
-The fixtures use the little-endian tensor stream emitted by
-`scripts/real-model-backtest/train_image_zoo.py`: repeated `u32 element_count` followed by
-that many IEEE binary32 words. The last two tensors are flattened NCHW/model input and labels.
-This is deliberately a small local adapter, not a stable asset format.
+Weights use the little-endian length-prefixed tensor stream. Inputs are supplied per process as
+one length-prefixed tensor containing only selected fixed-width sample records. The dataset file
+is staged by the host, so this process never reads the full sample corpus or labels.
 -/
 
 namespace RealSuite
@@ -28,7 +27,7 @@ def readTensors (bytes : ByteArray) : Except String (Array (Array Word)) := do
       (bytes[offset + i.val * 4 + 3]!.toUInt32 <<< 24)
     tensors := tensors.push tensor
     offset := offset + size * 4
-  if tensors.size < 3 then throw "fixture needs weights, inputs and labels"
+  if tensors.isEmpty then throw "fixture needs at least one tensor"
   return tensors
 
 def eps : Word := 0x3727C5AC
@@ -119,7 +118,7 @@ def sensorLayers (family : String) (size : Nat) (t : Array (Array Word)) : Excep
   throw s!"unsupported UCI-HAR model family {family}"
 
 def applianceMixerLayers (t : Array (Array Word)) : Except String (List Layer) := do
-  if t.size < 22 then throw "Appliance Mixer fixture has too few tensors"
+  if t.size < 20 then throw "Appliance Mixer fixture has too few weight tensors"
   let block (offset : Nat) : List Layer :=
     [.save, .layernorm 24 8 eps t[offset + 1]! t[offset + 2]!,
       .gemm 24 24 8 t[offset]!, .addSaved false,
@@ -128,15 +127,8 @@ def applianceMixerLayers (t : Array (Array Word)) : Except String (List Layer) :
       .linear 24 16 8 false t[offset + 7]! t[offset + 8]!, .addSaved false]
   return block 0 ++ block 9 ++ [.linear 1 192 6 false t[18]! t[19]!]
 
-def prepare (adapter family : String) (tensors : Array (Array Word)) : Except String (List Layer × Nat × Nat × Array Word) := do
-  if tensors.size < 3 then throw "fixture requires weights, input and labels"
-  let input := tensors[tensors.size - 2]!
-  let labels := tensors[tensors.size - 1]!
-  if adapter == "appliance-mixer-v1" && labels.size % 6 != 0 then
-    throw "Appliance Mixer labels must contain six outputs per sample"
-  let samples := if adapter == "appliance-mixer-v1" then labels.size / 6 else labels.size
-  if samples == 0 || input.size % samples != 0 then throw "invalid fixture input/label dimensions"
-  let size := input.size / samples
+def prepare (adapter family : String) (size : Nat) (tensors : Array (Array Word)) : Except String (List Layer) := do
+  if tensors.isEmpty || size == 0 then throw "fixture requires weights and a positive input size"
   let layers ← if adapter == "image-zoo-v1" then
       let side := Nat.sqrt size
       if side * side != size then throw "image adapter requires square flattened inputs"
@@ -145,6 +137,6 @@ def prepare (adapter family : String) (tensors : Array (Array Word)) : Except St
     else if adapter == "appliance-mixer-v1" && family == "mixer" then
       applianceMixerLayers tensors
     else throw s!"unsupported adapter/family pair {adapter}/{family}"
-  return (layers, samples, size, input)
+  return layers
 
 end RealSuite

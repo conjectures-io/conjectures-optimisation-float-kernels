@@ -67,17 +67,20 @@ class WorkloadSpec:
 
 @dataclass(frozen=True)
 class RealWorkloadSpec:
-    """A local, content-pinned real-model fixture; paths stay provisional and relative."""
+    """A local fixture with separately pinned weights and fixed-width sample records."""
 
     id: str
     family: str
     model: str
     dataset: str
     adapter: str
-    asset_path: str
-    asset_sha256: str
+    weights_path: str
+    weights_sha256: str
+    samples_path: str
+    samples_sha256: str
     asset_revision: str
     sample_count: int
+    sample_words: int
     samples_per_run: int
 
     @classmethod
@@ -89,11 +92,14 @@ class RealWorkloadSpec:
             if not isinstance(raw[field], str) or not raw[field]:
                 raise ValueError(f"real workload {field} must be nonempty text")
         if (
-            not isinstance(raw["asset_path"], str)
-            or "\\" in raw["asset_path"]
-            or any(char in raw["asset_path"] for char in ",|=\n\r")
+            any(
+                not isinstance(raw[field], str)
+                or "\\" in raw[field]
+                or any(char in raw[field] for char in ",|=\n\r")
+                for field in ("weights_path", "samples_path")
+            )
         ):
-            raise ValueError("real workload asset_path must be a relative POSIX path")
+            raise ValueError("real workload paths must be relative POSIX paths")
         adapters = {
             "image-zoo-v1": {"mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"},
             "uci-har-v1": {"mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"},
@@ -103,12 +109,14 @@ class RealWorkloadSpec:
             raise ValueError("unsupported real workload adapter/family pair")
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", raw["id"]):
             raise ValueError("invalid real workload id")
-        path = PurePosixPath(raw["asset_path"])
-        if path.is_absolute() or ".." in path.parts or not path.parts:
-            raise ValueError("real workload asset_path must stay inside the repository")
-        if not re.fullmatch(r"[0-9a-f]{64}", raw["asset_sha256"]):
-            raise ValueError("real workload asset_sha256 must be a SHA-256 digest")
-        for field in ("sample_count", "samples_per_run"):
+        for field in ("weights_path", "samples_path"):
+            path = PurePosixPath(raw[field])
+            if path.is_absolute() or ".." in path.parts or not path.parts:
+                raise ValueError(f"real workload {field} must stay inside the repository")
+        for field in ("weights_sha256", "samples_sha256"):
+            if not isinstance(raw[field], str) or not re.fullmatch(r"[0-9a-f]{64}", raw[field]):
+                raise ValueError(f"real workload {field} must be a SHA-256 digest")
+        for field in ("sample_count", "sample_words", "samples_per_run"):
             value = raw[field]
             if type(value) is not int or value < 1:
                 raise ValueError(f"real workload {field} must be a positive integer")
@@ -121,12 +129,12 @@ class RealWorkloadSpec:
 
         return asdict(self)
 
-    def validate_asset(self, path: Path) -> None:
-        """Check the provisional tensor stream against its adapter before any timing begins."""
+    def validate_assets(self, weights: Path, samples: Path) -> None:
+        """Check pinned weights and the sample-record dimensions before timing."""
         lengths = []
-        size_bytes = path.stat().st_size
+        size_bytes = weights.stat().st_size
         offset = 0
-        with path.open("rb") as stream:
+        with weights.open("rb") as stream:
             while offset < size_bytes:
                 header = stream.read(4)
                 if len(header) != 4:
@@ -138,19 +146,14 @@ class RealWorkloadSpec:
                 lengths.append(count)
                 stream.seek(count * 4, 1)
                 offset += count * 4
-        if len(lengths) < 3:
-            raise ValueError(f"{self.id}: fixture needs weights, inputs and labels")
-        expected_label_count = (
-            self.sample_count * 6 if self.adapter == "appliance-mixer-v1" else self.sample_count
-        )
-        if lengths[-1] != expected_label_count:
-            raise ValueError(f"{self.id}: sample_count does not match fixture labels")
-        if lengths[-2] % self.sample_count:
-            raise ValueError(f"{self.id}: input tensor is not divisible by sample_count")
-        input_size = lengths[-2] // self.sample_count
+        if not lengths:
+            raise ValueError(f"{self.id}: empty weights file")
+        input_size = self.sample_words
+        if samples.stat().st_size != self.sample_count * input_size * 4:
+            raise ValueError(f"{self.id}: sample file size does not match sample metadata")
         if self.adapter == "uci-har-v1":
-            if input_size % 128 or lengths[-1] != self.sample_count:
-                raise ValueError(f"{self.id}: invalid UCI-HAR input or label dimensions")
+            if input_size % 128:
+                raise ValueError(f"{self.id}: invalid UCI-HAR input dimensions")
             channels = input_size // 128
             mixer_width = input_size // 16
             expected = {
@@ -192,11 +195,11 @@ class RealWorkloadSpec:
             }[self.family]
             if self.family == "mixer" and input_size % 16:
                 raise ValueError(f"{self.id}: UCI-HAR Mixer input must divide into 16 tokens")
-            if lengths != expected + [self.sample_count * input_size, self.sample_count]:
+            if lengths != expected:
                 raise ValueError(f"{self.id}: tensor count or shape does not match UCI-HAR adapter")
             return
         if self.adapter == "appliance-mixer-v1":
-            if input_size != 24 * 8 or len(lengths) != 22:
+            if input_size != 24 * 8 or len(lengths) != 20:
                 raise ValueError(f"{self.id}: invalid Appliance Mixer fixture dimensions")
             expected = [
                 24 * 24,
@@ -220,7 +223,7 @@ class RealWorkloadSpec:
                 6 * 192,
                 6,
             ]
-            if lengths != expected + [self.sample_count * input_size, self.sample_count * 6]:
+            if lengths != expected:
                 raise ValueError(
                     f"{self.id}: tensor count or shape does not match Appliance Mixer adapter"
                 )
@@ -250,5 +253,5 @@ class RealWorkloadSpec:
         }[self.family]
         if self.family == "mixer" and side % 4:
             raise ValueError(f"{self.id}: mixer image side must be divisible by four")
-        if lengths != expected + [self.sample_count * input_size, self.sample_count]:
+        if lengths != expected:
             raise ValueError(f"{self.id}: tensor count or shape does not match image-zoo adapter")
