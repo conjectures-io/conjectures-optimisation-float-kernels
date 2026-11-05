@@ -13,6 +13,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from statistics import median
@@ -313,28 +314,6 @@ def input_seed_bank(request, reps, inner, key):
     return values
 
 
-def input_seed_environment(values):
-    """Keep env values below per-string limits and the whole bank within a safe total size."""
-    chunks, current = [], []
-    current_size = 0
-    for value in map(str, values):
-        if current and current_size + len(value) + 1 > 100_000:
-            chunks.append(",".join(current))
-            current, current_size = [], 0
-        current.append(value)
-        current_size += len(value) + int(len(current) > 1)
-    if current:
-        chunks.append(",".join(current))
-    if not chunks:
-        raise ValueError("input-seed bank cannot be empty")
-    if len(chunks) > 8:
-        raise ValueError("input-seed bank exceeds the environment-size budget")
-    return {
-        "BENCH_INPUT_SEED_CHUNKS": str(len(chunks)),
-        **{f"BENCH_INPUT_SEEDS_{i}": chunk for i, chunk in enumerate(chunks)},
-    }
-
-
 def paired_input_seed_key():
     """A per-pair key; the same generated inputs are passed to reference and candidate."""
     return secrets.token_bytes(32)
@@ -379,8 +358,7 @@ def finished(output, public):
 
 
 def run_binary(binary, request, reps, inner, side, deadline, input_seed_key=None):
-    budget = deadline.remaining(side)
-    timeout = min(request["timing"]["run_seconds"], budget)
+    deadline.remaining(side)
     extra = {
         "BENCH_CELLS": ",".join(lean_cell(c) for c in request["cells"]),
         "BENCH_REPS": ",".join(f"{lean_cell(c)}={n}" for c, n in reps.items()),
@@ -396,18 +374,26 @@ def run_binary(binary, request, reps, inner, side, deadline, input_seed_key=None
     )
     input_seed_key = input_seed_key or secrets.token_bytes(32)
     extra["BENCH_INPUT_MODE"] = "distinct"
-    extra.update(input_seed_environment(input_seed_bank(request, reps, inner, input_seed_key)))
     command = [str(binary)]
     if sandbox._BENCH_CPU:
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
-    started = time.monotonic()
-    code, output = sandbox.run(
-        command,
-        timeout,
-        env_extra=extra,
-        memory_mb=sandbox._BENCH_MEMORY_MB,
-    )
-    seconds = time.monotonic() - started
+    # LIB is mounted read-only in the sandbox; a file avoids exec's argument/environment limits.
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="ascii", prefix=".bench-input-seeds-", dir=sandbox.LIB
+    ) as seed_file:
+        seed_file.write(",".join(map(str, input_seed_bank(request, reps, inner, input_seed_key))))
+        seed_file.flush()
+        extra["BENCH_INPUT_SEEDS_FILE"] = seed_file.name
+        budget = deadline.remaining(side)
+        timeout = min(request["timing"]["run_seconds"], budget)
+        started = time.monotonic()
+        code, output = sandbox.run(
+            command,
+            timeout,
+            env_extra=extra,
+            memory_mb=sandbox._BENCH_MEMORY_MB,
+        )
+        seconds = time.monotonic() - started
     public = row_names(request)
     if code == 124:
         # The per-run cap is this side's own; running out of the shared deadline is decided by
