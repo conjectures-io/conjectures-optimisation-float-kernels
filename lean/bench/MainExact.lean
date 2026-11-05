@@ -29,16 +29,19 @@ def main : IO UInt32 := do
   if inputMode != "distinct" && inputMode != "repeat" then
     throw (IO.userError "BENCH_INPUT_MODE must be distinct or repeat")
   let inputSeedText ← do
-    match (← IO.getEnv "BENCH_INPUT_SEED_CHUNKS") with
-    | none => IO.getEnv "BENCH_INPUT_SEEDS"
-    | some countText => do
-      let some count := countText.toNat? | throw (IO.userError "invalid input-seed chunk count")
-      if count == 0 || count > 8 then throw (IO.userError "invalid input-seed chunk count")
-      let chunks ← (List.range count).mapM fun i => do
-        let some chunk ← IO.getEnv s!"BENCH_INPUT_SEEDS_{i}" |
-          throw (IO.userError "missing input-seed chunk")
-        pure chunk
-      pure (some (String.intercalate "," chunks))
+    match (← IO.getEnv "BENCH_INPUT_SEEDS_FILE") with
+    | some path => pure (some (← IO.FS.readFile path))
+    | none =>
+      match (← IO.getEnv "BENCH_INPUT_SEED_CHUNKS") with
+      | none => IO.getEnv "BENCH_INPUT_SEEDS"
+      | some countText => do
+        let some count := countText.toNat? | throw (IO.userError "invalid input-seed chunk count")
+        if count == 0 || count > 8 then throw (IO.userError "invalid input-seed chunk count")
+        let chunks ← (List.range count).mapM fun i => do
+          let some chunk ← IO.getEnv s!"BENCH_INPUT_SEEDS_{i}" |
+            throw (IO.userError "missing input-seed chunk")
+          pure chunk
+        pure (some (String.intercalate "," chunks))
   let inputSeedBank ← match inputSeedText with
     | none => pure none
     | some "" => throw (IO.userError "empty input-seed bank")

@@ -44,6 +44,7 @@ def timing(**extra):
 @pytest.fixture
 def measurement(tmp_path, monkeypatch, clock):
     monkeypatch.setattr(sandbox, "HERE", tmp_path)
+    monkeypatch.setattr(sandbox, "LIB", tmp_path)
     monkeypatch.setattr(sandbox, "WORK", tmp_path / "Submission.lean")
     config = tmp_path / "lake-config"
     config.mkdir()
@@ -108,7 +109,9 @@ def test_round_uses_paired_distinct_inputs_in_fresh_processes_and_medians(
 
     def run(command, timeout, **kwargs):
         side = Path(command[-1]).name
-        env = kwargs["env_extra"]
+        env = kwargs["env_extra"] | {
+            "seed_text": Path(kwargs["env_extra"]["BENCH_INPUT_SEEDS_FILE"]).read_text()
+        }
         calls.append((side, env))
         if len(calls) <= 2:
             measured = rows
@@ -134,17 +137,11 @@ def test_round_uses_paired_distinct_inputs_in_fresh_processes_and_medians(
         left_side, left_env = samples[index]
         right_side, right_env = samples[index + 1]
         assert left_side != right_side
-        left_seeds = [
-            left_env[f"BENCH_INPUT_SEEDS_{chunk}"]
-            for chunk in range(int(left_env["BENCH_INPUT_SEED_CHUNKS"]))
-        ]
-        right_seeds = [
-            right_env[f"BENCH_INPUT_SEEDS_{chunk}"]
-            for chunk in range(int(right_env["BENCH_INPUT_SEED_CHUNKS"]))
-        ]
+        left_seeds = left_env["seed_text"]
+        right_seeds = right_env["seed_text"]
         assert left_seeds == right_seeds
         paired_banks.append(left_seeds)
-    assert len({tuple(bank) for bank in paired_banks}) == request["timing"]["inner"]
+    assert len(set(paired_banks)) == request["timing"]["inner"]
 
     sample_round = result["rounds"][0]
     for workload in workloads(42):
