@@ -1,7 +1,6 @@
 # Status: operations to add to the TorchLean competition
 
-As of 2026-11-04, branch `feat/competition-upgrade-ops` (private repo, not pushed), commit
-`c543ded`. Tracks the Notion task "Operations to add to TorchLean competition – part of the
+As of 2026-11-05, branch `feat/competition-upgrade-ops` (private repo, not pushed). Tracks the Notion task "Operations to add to TorchLean competition – part of the
 upgrade". The plan is in [competition-upgrade.md](competition-upgrade.md).
 
 Legend: ✅ done · ⏳ in progress · ❌ not started · ➖ not needed
@@ -66,7 +65,7 @@ partial coverage from before this upgrade.
 | Separate strides | ✅ | `ConvShape.strideH/strideW` |
 | General groups | ✅ | `ConvShape.groups`; weights `cout × cin/groups × kh × kw`. `depthwise` is now `conv2d` with one group per channel (same bits as before) |
 | Native 1-D | ✅ | A shape with `h = kh = 1`; no separate kernel |
-| `ConvTranspose` | ✅ new kernel `conv.convTranspose` | `ConvTShape` adds `outPadH/outPadW`. Each output is an exact sum over only the taps that reach the input, plus the bias, rounded once. ⏳ The `convTranspose_total` meaning theorem is being proved |
+| `ConvTranspose` | ✅ new kernel `conv.convTranspose` | `ConvTShape` adds `outPadH/outPadW`. Each output is an exact sum over only the taps that reach the input, plus the bias, rounded once. `convTranspose_total` proves an output equals the bias plus input × weight over exactly the taps with `iy·strideH + dy·dilH = y + padT` (and likewise for columns) inside the image |
 
 ### Pooling variants, feature by feature
 
@@ -83,7 +82,7 @@ partial coverage from before this upgrade.
 | Piece | Status | Where |
 |---|---|---|
 | Spec and validity rules | ✅ | `lean/contract/ContractExact.lean`, `ContractExactChecked.lean` |
-| Shape and meaning proofs | ✅ (⏳ `convTranspose_total`) | `lean/contract/ExactToolkit/ModelProofs.lean`, `TensorProofs.lean` |
+| Shape and meaning proofs | ✅ | `lean/contract/ExactToolkit/ModelProofs.lean`, `TensorProofs.lean` |
 | Incumbent and fixtures proved against the 13-kernel contract | ✅ | `kernels/exact/*/Kernel.lean`. The incumbent runs the spec's definitions with its fast dot product; it has no special fast paths for the new features, which leaves headroom for miners |
 | Independent oracle | ✅ | `lean/audit/SpecProbe.lean`, `scripts/audit-exact-spec.py`. Agrees on 16,883 cases and 51 models. Bit-identical to ONNX Runtime 1.31 for conv2d, depthwise, convTranspose and both pools |
 | Differential audit with planted mutants | ✅ | `lean/audit/ExactAuditCore.lean`. 13 kernels; new valid-shape generators for every conv/pool feature; `--selftest` catches 57/57 mutants (20 new, e.g. convTranspose adding +0 for taps that reach no input, maxpool reading padding as +0, ceil mode without the last-window rule) and fails if a geometry feature goes untested; `exactAudit 20 42` passes on the incumbent (5,460 cases, 0 mismatches) |
@@ -91,7 +90,7 @@ partial coverage from before this upgrade.
 | Docs | ✅ | `docs/CONTRACT.md`, `RUNTIME.md`, `MATHEMATICAL-PROOFS.md`, `README.md`, `MANUAL.md` |
 | Benchmark model family using the new features | ❌ | Boards are model families, so these kernels earn nothing until a model uses them (plan D4/D5) |
 | Season rollout (boards, identities, config) | ❌ | Plan Part 3 |
-| Full CI gate on the branch | ❌ | Runs once the in-progress items are merged |
+| Full CI gate on the branch | ✅ except the sandboxed slow tests | Run locally: all 12 Lean targets build; proof-axiom check (64 theorems, standard axioms only), audit self-test, incumbent audit, oracle, model and workload checks, fast tests and ruff pass. The sandboxed slow tests need bubblewrap 0.11.2, which this machine lacks (`sudo apt-get install meson ninja-build pkg-config libcap-dev && bash scripts/install-bubblewrap.sh`) |
 
 ## Decisions blocking further progress
 

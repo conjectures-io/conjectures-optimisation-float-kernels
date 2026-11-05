@@ -48,6 +48,12 @@ end ExactRuntime.Audit
 #print axioms ExactRuntime.TensorMath.depthwise_taps
 #print axioms ExactRuntime.TensorMath.depthwise_entry
 #print axioms ExactRuntime.TensorMath.convTranspose_entry
+#print axioms ExactRuntime.TensorMath.tapSource_eq_some_iff
+#print axioms ExactRuntime.TensorMath.tapSource_isSome_iff
+#print axioms ExactRuntime.TensorMath.sum_tapSource
+#print axioms ExactRuntime.TensorMath.sum_filter_range
+#print axioms ExactRuntime.TensorMath.tap_coordinates
+#print axioms ExactRuntime.TensorMath.convTranspose_total
 #print axioms ExactRuntime.TensorMath.avgpool_entry
 #print axioms ExactRuntime.TensorMath.maxpool_entry
 #print axioms ExactRuntime.TensorMath.addRelu_entry
