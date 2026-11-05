@@ -204,6 +204,11 @@ def prepareCell (c : Cell) (seed : UInt32) : PreparedCell :=
 def runPrepared (K : Kernels) (p : PreparedCell) (rep : Nat) : Array Word :=
   runModel K p.layers p.samples p.size (touch rep p.input)
 
+/-- Run a prepared model on a harness-provided request input. Model construction and input
+preparation stay outside the caller's timed region. -/
+def runPreparedInput (K : Kernels) (p : PreparedCell) (input : Array Word) : Array Word :=
+  runModel K p.layers p.samples p.size input
+
 def runCell (K : Kernels) (c : Cell) (seed : UInt32) (rep : Nat := 0) : UInt32 :=
   hashArr (runPrepared K (prepareCell c seed) rep)
 

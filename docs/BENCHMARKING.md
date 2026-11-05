@@ -19,7 +19,11 @@ Each model/batch runs on normal, wide-exponent and sparse inputs: six cells per 
 36 for overall. A root seed draws **six workloads**: two typical, two scale and two boundary
 cases, with total profile weights **50/30/20%**. Shapes and values vary, including odd boundary
 sizes. This gives 36 workload/cell combinations per family, 216 for overall, per environment/root seed.
-The suite is synthetic inference, not trained-model accuracy or backpropagation.
+The promotion suite is synthetic inference, not trained-model accuracy or backpropagation. An
+optional, local diagnostic suite can add trained image, UCI-HAR sensor and appliance-energy
+time-series fixtures for supported MLP, normalized MLP, ResNet, MobileNet and Mixer boards. Those
+rows are reported separately and do not change admission. Transformer remains synthetic until a
+compatible real fixture exists.
 
 A kernel affects a score only through the models that call it. No current model uses
 `convTranspose`, a convolution shape other than `ConvShape.simple`, or pooling other than
@@ -32,16 +36,36 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 
 ## Measurement
 
-1. Build candidate and reference once for the target CPU, then reuse validated cached binaries
-   across family jobs. Build time is not scored.
-2. Calibrate repetitions on the reference, using two warmed best-of-three passes. Candidate and
-   reference use the same repetition counts for every workload/cell.
-3. Run paired rounds, alternating which binary runs first and using one CPU affinity where supported.
-   Each reported duration is the best of the configured inner repetitions.
-4. Require matching output checksums. Model/input preparation and output hashing are outside timing.
+1. Build the shipped baseline, candidate and current champion once for the target CPU, then reuse
+   validated cached binaries across family jobs. Build time is not scored.
+2. Each timed cell/workload runs once per fresh subprocess, so submitted global state cannot carry
+   from one repetition of that cell into the next. Inputs are prepared outside timing and are
+   distinct within and across repetitions. Champion and candidate receive the same matched input
+   sequence.
+3. Run paired rounds, alternating execution order and using one CPU affinity where supported. The
+   reported duration is the median across configured independent subprocesses.
+4. Check matching output checksums. The baseline is measured separately on fewer rounds, once per
+   fresh process; its timings are diagnostic and do not affect promotion. The exact
+   baseline source hash and its per-request timings are stored with each measurement result.
+5. Model/input preparation and output hashing are outside kernel timing; process startup and all
+   measurement preparation remain visible in the overall stage duration. Real rows report model
+   load and input-selection preparation separately, retain sampled fixture indices, and include raw
+   inner timings.
 
-The development config generator uses **11 rounds, best of 3, 50 ms cells**. These are local
-configuration defaults, not a promise about production. Read `/v1/competitions/torchlean/boards`
+The real suite is opt-in and uses local fixtures only. Add one or more switches to
+`scripts/exact-config.py --output <path>`: `--real-image-zoo`, `--real-uci-har`, or
+`--real-appliance-mixer`. Each switch requires the corresponding local files under
+`data/real-model-backtest/`; the generated config records each selected asset's hash. Use no switch
+for synthetic-only configuration when real assets are unavailable. Every benchmark worker must
+have the same relative asset paths and hashes before real workloads are enabled. The selected
+adapter validates tensor counts and dimensions before timing. Assets are mounted read-only into
+each fresh benchmark process; no network fetch occurs. The compact image-zoo, UCI-HAR and appliance
+fixtures are small task-trained research models, not claims of externally pretrained SOTA coverage.
+
+The development config generator uses **11 paired rounds, 3 fresh processes per candidate and
+reference round, and 3 baseline diagnostic rounds**. The baseline runs once per selected round.
+These are local configuration defaults, not a promise about production. Read
+`/v1/competitions/torchlean/boards`
 and submission reports for live policy and frozen evaluation settings. Full processing also includes
 proof checking, native builds and queue waiting; it is longer than the timed inference.
 Default measurement ceilings are 20 minutes for overall and 6 minutes for one family;
@@ -80,7 +104,7 @@ when the budget ran out; the stopped run only bounds its own side's time from be
 measured result, not an error. The decision's `timeout` names the phase, the limit, the
 allowance, the cell that was running, how many cells and rounds had finished, each side's
 finished runs with their mean time, and how long the stopped run had been going. The failed job
-keeps what the worker had measured by then: the calibration, the completed rounds, the round in
+keeps what the worker had measured by then: completed rounds, the round in
 progress and the stopped run's finished rows. A build that runs out of time is also `timed-out`,
 with `phase: "build"`. `benchmark-failed` is kept for everything else that stops an entry: a
 crash, a failed native build, or invalid output.

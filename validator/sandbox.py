@@ -195,6 +195,8 @@ def run(
     env_extra: dict | None = None,
     memory_mb: int = _BUILD_MEMORY_MB,
     layer: Path = LAYER,
+    input_file: Path | None = None,
+    asset_files: dict[str, Path] | None = None,
 ):
     # Runs `cmd` in bwrap with no network, a minimal environment and a `memory_mb` scope. Only the
     # system programs and libraries, the toolchain, the Lean workspace and `pinned` (absent before
@@ -227,6 +229,26 @@ def run(
         wipe(SCRATCH)
         shutil.copytree(CONFIG, SCRATCH, symlinks=True)
         box += ["--bind", str(SCRATCH), str(CONFIG)]
+    if input_file is not None:
+        if input_file.is_symlink() or not input_file.is_file():
+            raise ValueError("benchmark input seed file must be a regular file")
+        if _SANDBOX:
+            box += ["--ro-bind", str(input_file.resolve()), "/benchmark-input-seeds"]
+            env_extra = (env_extra or {}) | {"BENCH_INPUT_SEED_FILE": "/benchmark-input-seeds"}
+        else:
+            env_extra = (env_extra or {}) | {"BENCH_INPUT_SEED_FILE": str(input_file.resolve())}
+    for asset_id, asset_path in (asset_files or {}).items():
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", asset_id):
+            raise ValueError("invalid benchmark asset id")
+        if asset_path.is_symlink() or not asset_path.is_file():
+            raise ValueError(f"benchmark asset is not a regular file: {asset_id}")
+        if _SANDBOX:
+            target = f"/benchmark-assets/{asset_id}.bin"
+            if not any(
+                box[i : i + 2] == ["--dir", "/benchmark-assets"] for i in range(len(box) - 1)
+            ):
+                box += ["--dir", "/benchmark-assets"]
+            box += ["--ro-bind", str(asset_path.resolve()), target]
     fsize = ["prlimit", f"--fsize={_FILE_MB * 2**20}", "--"] if _FILE_MB > 0 else []
     argv = (
         ["setpriv", "--pdeathsig", "KILL", "--"]
@@ -236,30 +258,34 @@ def run(
         + cmd
     )
     t0 = time.monotonic()
-    with subprocess.Popen(
-        argv,
-        cwd=LIB,
-        env=sandbox_env(env_extra),
-        text=True,
-        start_new_session=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    ) as proc:
-        try:
-            out, _ = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            out, _ = proc.communicate()
-            logger.warning(f"[run] {Path(cmd[0]).name} timed out after {timeout:.0f}s")
-            return 124, out
-        except BaseException:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            raise
-    logger.debug(
-        f"[run] {' '.join(cmd[:3])} exit={proc.returncode} in {time.monotonic() - t0:.1f}s"
-    )
-    return proc.returncode, out
+    try:
+        with subprocess.Popen(
+            argv,
+            cwd=LIB,
+            env=sandbox_env(env_extra),
+            text=True,
+            start_new_session=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        ) as proc:
+            try:
+                out, _ = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                out, _ = proc.communicate()
+                logger.warning(f"[run] {Path(cmd[0]).name} timed out after {timeout:.0f}s")
+                return 124, out
+            except BaseException:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate()
+                raise
+        logger.debug(
+            f"[run] {' '.join(cmd[:3])} exit={proc.returncode} in {time.monotonic() - t0:.1f}s"
+        )
+        return proc.returncode, out
+    finally:
+        if _SANDBOX:
+            wipe(SCRATCH)
 
 
 class Budget:

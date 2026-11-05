@@ -1,8 +1,9 @@
-"""Build time and calibration/measurement time have independent, bounded clocks."""
+"""Build and measurement time are bounded independently; samples use fresh processes."""
 
 import hashlib
 import json
 import shutil
+import struct
 import sys
 from pathlib import Path
 
@@ -32,10 +33,7 @@ def clock(monkeypatch):
 
 
 def timing(**extra):
-    return (
-        dict(rounds=1, inner=1, cell_ms=1, run_seconds=10, build_seconds=10, benchmark_seconds=4)
-        | extra
-    )
+    return dict(rounds=1, inner=1, run_seconds=10, build_seconds=10, benchmark_seconds=4) | extra
 
 
 @pytest.fixture
@@ -87,9 +85,9 @@ def measurement(tmp_path, monkeypatch, clock):
 def test_build_does_not_consume_measurement_time_and_durations_are_recorded(measurement):
     request, caps = measurement
     result = benchmark.measure(request, b"candidate", b"reference")
-    assert caps == pytest.approx([4, 3.5, 2.5, 1.5])
+    assert caps == pytest.approx([4, 3])
     assert result["stage_seconds"] == pytest.approx(
-        dict(build=9, calibration=1.5, rounds=2, benchmark=3.5)
+        dict(build=9, baseline_process=0, rounds=2, benchmark=2)
     )
     assert result["timing_seconds"] == pytest.approx(2)
     assert sandbox.WORK.read_bytes() == b"operator source"
@@ -105,7 +103,7 @@ def test_shared_preparation_is_charged_to_build_not_benchmark(measurement, clock
     assert sandbox.WORK.read_bytes() == b"operator source"
 
 
-def test_calibration_consumes_the_same_budget_as_rounds(measurement, clock, monkeypatch):
+def test_first_paired_process_consumes_the_benchmark_budget(measurement, clock, monkeypatch):
     request, caps = measurement
 
     def calibrate(command, timeout, **kwargs):
@@ -123,42 +121,13 @@ def test_calibration_consumes_the_same_budget_as_rounds(measurement, clock, monk
 def test_shared_round_deadline_blames_the_side_that_used_it(measurement, clock, monkeypatch, slow):
     # The deadline runs out during the fast side's run: the slow side is still at fault.
     request, _ = measurement
-    request["timing"] = timing(rounds=2, benchmark_seconds=9.5)
+    request["timing"] = timing(rounds=2, benchmark_seconds=5)
     rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
 
     def run(command, timeout, **kwargs):
         seconds = 3 if Path(command[-1]).name == slow else 1
         clock.advance(min(seconds, timeout))
         return (124, "") if seconds > timeout else (0, rows)
-
-    monkeypatch.setattr(sandbox, "run", run)
-    with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout") as exc:
-        benchmark.measure(request, b"candidate", b"reference")
-    assert exc.value.kind == slow
-
-
-@pytest.mark.parametrize(
-    "slow, seconds, budget",
-    [
-        # Calibration 4s; then R2 C2.4 | C2.4 R2 | R2, and the candidate is stopped 0.7s in.
-        ("candidate", {"reference": 2, "candidate": 2.4}, 15.5),
-        # Calibration 4.8s; then R2.4 C2 | C2, and the reference is stopped 0.5s in.
-        ("reference", {"reference": 2.4, "candidate": 2}, 11.7),
-    ],
-)
-def test_a_side_with_one_more_finished_run_is_not_blamed_for_its_total(
-    measurement, clock, monkeypatch, slow, seconds, budget
-):
-    # When the deadline strikes, the faster side has finished one run more, so its total time is
-    # larger; per run it is still the faster one.
-    request, _ = measurement
-    request["timing"] = timing(rounds=3, benchmark_seconds=budget)
-    rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
-
-    def run(command, timeout, **kwargs):
-        cost = seconds[Path(command[-1]).name]
-        clock.advance(min(cost, timeout))
-        return (124, "") if cost > timeout else (0, rows)
 
     monkeypatch.setattr(sandbox, "run", run)
     with pytest.raises(benchmark.MeasurementFailure, match="benchmark-timeout") as exc:
@@ -231,14 +200,91 @@ def test_start_markers_are_not_rows(monkeypatch, clock):
     rows = benchmark.run_binary(
         Path("bench"), request, {}, 1, "reference", benchmark.Deadline("benchmark", 10)
     )
-    assert rows == {f"{w['id']}|{CELL}": (100, 123) for w in workloads(42)}
+    expected_checksum = ((2166136261 ^ 123) * 16777619) % 2**32
+    assert {key: value for key, value in rows.items() if not key.startswith("__")} == {
+        f"{w['id']}|{CELL}": (100, expected_checksum) for w in workloads(42)
+    }
+
+
+def test_each_sample_uses_a_new_process_and_distinct_seed_file(monkeypatch, clock):
+    draws = workloads(42)
+    request = {"timing": timing(inner=3), "cells": [CELL], "seed": 42, "workloads": draws}
+    keys = {f"{draw['id']}|{CELL}": 1 for draw in draws}
+    inputs = benchmark.make_input_sequences(request, keys, 3)
+    calls = []
+    output = "\n".join(f"{draw['id']}|{CELL} true 100 123" for draw in draws)
+
+    def run(command, timeout, **kwargs):
+        calls.append((kwargs["env_extra"]["BENCH_INNER"], kwargs["input_file"].read_text()))
+        return 0, output
+
+    monkeypatch.setattr(sandbox, "run", run)
+    rows = benchmark.run_binary(
+        Path("bench"), request, keys, 3, "candidate", benchmark.Deadline("benchmark", 10), inputs
+    )
+    assert len(calls) == 3
+    assert all(inner == "1" for inner, _ in calls)
+    assert len({seeds for _, seeds in calls}) == 3
+    assert rows["__raw_ns__"] == {f"{draw['id']}|{CELL}": [100, 100, 100] for draw in draws}
+    for draw in draws:
+        samples = [inputs[f"{draw['id']}|{CELL}"][i][0] for i in range(3)]
+        assert len(set(samples)) == 3
+
+
+def test_real_sample_selection_stays_distinct_across_rounds():
+    spec = {"id": "har-mlp", "family": "mlp", "samples_per_run": 2, "sample_count": 12}
+    request = {"workloads": [], "cells": [], "real_workloads": [spec]}
+    used = set()
+    first = benchmark.make_input_sequences(request, {}, 2, used_real_samples=used)
+    second = benchmark.make_input_sequences(request, {}, 2, used_real_samples=used)
+    selected = first["har-mlp|mlp"] + second["har-mlp|mlp"]
+    flattened = [index for group in selected for index in group]
+    assert len(flattened) == len(set(flattened)) == 8
+    benchmark.make_input_sequences(request, {}, 2, used_real_samples=used)
+    with pytest.raises(benchmark.MeasurementFailure, match="more distinct samples than remain"):
+        benchmark.make_input_sequences(request, {}, 2, used_real_samples=used)
+
+
+def test_planted_in_memory_memo_cannot_survive_between_samples(tmp_path, monkeypatch):
+    # This executable mimics the reported attack: repeat the same request and return a cached
+    # result after its first call. The harness must start it afresh for each timed sample.
+    executable = tmp_path / "memo-bench"
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "memo = {}\n"
+        "seed_file = os.environ['BENCH_INPUT_SEED_FILE']\n"
+        "seed = open(seed_file).read().strip().split('=')[1]\n"
+        "cached = seed in memo\n"
+        "memo[seed] = True\n"
+        "print('s0|mlp:b1:normal true ' + ('1' if cached else '100') + ' 123')\n"
+    )
+    executable.chmod(0o755)
+    monkeypatch.setattr(sandbox, "_SANDBOX", False)
+    monkeypatch.setattr(sandbox, "_BENCH_MEMORY_MB", 0)
+    monkeypatch.setattr(sandbox, "_FILE_MB", 0)
+    monkeypatch.setattr(sandbox, "_BENCH_CPU", "")
+    draw = workloads(42)[0]
+    request = {"timing": timing(inner=3), "cells": [CELL], "seed": 42, "workloads": [draw]}
+    # Intentionally keep the input identical: this isolates process reset from seed randomization.
+    inputs = {f"{draw['id']}|{CELL}": [[42], [42], [42]]}
+    result = benchmark.run_binary(
+        executable,
+        request,
+        {f"{draw['id']}|{CELL}": 1},
+        3,
+        "candidate",
+        benchmark.Deadline("benchmark", 10),
+        inputs,
+    )
+    assert result["__raw_ns__"][f"{draw['id']}|{CELL}"] == [100, 100, 100]
 
 
 def test_a_timeout_keeps_what_the_measurement_had_reached(measurement, clock, monkeypatch):
     # Round two runs the candidate first; the reference then runs out of the shared deadline,
     # which the slower candidate used most of.
     request, _ = measurement
-    request["timing"] = timing(rounds=2, benchmark_seconds=9.5)
+    request["timing"] = timing(rounds=2, benchmark_seconds=6.5)
     rows = "\n".join(f"{w['id']}|{CELL} true 100 123" for w in workloads(42))
 
     def run(command, timeout, **kwargs):
@@ -251,31 +297,25 @@ def test_a_timeout_keeps_what_the_measurement_had_reached(measurement, clock, mo
         benchmark.measure(request, b"candidate", b"reference")
     error = json.loads(json.dumps(exc.value.error()))
     assert error["kind"] == "candidate"
-    # The reason names the side at fault, not the reference whose run was stopped.
-    assert error["reason"] == (
-        "benchmark-timeout: candidate runs take longer than the reference's, which was stopped "
-        "when the shared 9.5s benchmark budget ran out"
-    )
     timeout, partial = error["timeout"], error["partial"]
     assert {k: timeout[k] for k in ("limit", "side", "running", "allowance_seconds")} == {
         "limit": "budget",
         "side": "candidate",
-        "running": "reference",
-        "allowance_seconds": 0.5,
+        "running": "candidate",
+        "allowance_seconds": 2.5,
     }
-    # Blame went by time per run: the candidate finished two at 3s, the reference one at 1s.
+    # The first paired round completed before the second candidate process timed out.
     assert timeout["runs"] == {
         "reference": {"finished": 1, "mean_seconds": 1},
-        "candidate": {"finished": 2, "mean_seconds": 3},
+        "candidate": {"finished": 1, "mean_seconds": 3},
     }
-    assert timeout["stopped_after_seconds"] == 0.5
+    assert timeout["stopped_after_seconds"] == 2.5
     names = [f"{w['id']}|{CELL}" for w in workloads(42)]
-    assert partial["calibration"] == dict.fromkeys(names, 100)
     assert set(partial["repetitions"]) == set(names)
     assert [r["reference_first"] for r in partial["rounds"]] == [True]
-    assert partial["round_in_progress"] == {"candidate": {n: [100, 123] for n in names}}
+    assert set(partial["round_in_progress"]) == {"input_plan"}
     assert partial["rounds_planned"] == 2
-    assert partial["build_seconds"] == 9 and partial["benchmark_seconds"] == 9.5
+    assert partial["build_seconds"] == 9 and partial["benchmark_seconds"] == 6.5
     assert sandbox.WORK.read_bytes() == b"operator source"
 
 
@@ -292,7 +332,8 @@ def test_a_crash_keeps_the_measurement_but_is_no_timeout(measurement, monkeypatc
     error = exc.value.error()
     assert error["kind"] == "candidate" and "timeout" not in error
     assert error["partial"]["rounds"] == [] and set(error["partial"]["round_in_progress"]) == {
-        "reference"
+        "input_plan",
+        "reference",
     }
 
 
@@ -378,6 +419,151 @@ def test_invalid_phase_budgets_rejected(field, value):
 
 def test_supervisor_covers_both_phases_plus_shutdown_margin():
     assert supervisor_seconds(timing(build_seconds=480, benchmark_seconds=900)) == 1440
+
+
+def test_sandboxed_run_removes_writable_config_scratch_after_child_exit(tmp_path, monkeypatch):
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "lakefile.olean").write_text("read only source")
+    seed_file = tmp_path / "seeds.txt"
+    seed_file.write_text("s0|mlp:b1:normal=42\n")
+    asset_file = tmp_path / "weights.bin"
+    asset_file.write_bytes(b"fixture")
+    scratch = tmp_path / "scratch"
+    monkeypatch.setattr(sandbox, "CONFIG", config)
+    monkeypatch.setattr(sandbox, "SCRATCH", scratch)
+    monkeypatch.setattr(sandbox, "HERE", tmp_path / "repo")
+    monkeypatch.setattr(sandbox, "LIB", tmp_path / "lean")
+    monkeypatch.setattr(sandbox, "ELAN", tmp_path / "elan")
+    monkeypatch.setattr(sandbox, "_SYSTEM", ())
+    monkeypatch.setattr(sandbox, "_SANDBOX", True)
+    monkeypatch.setattr(sandbox, "require_backend", lambda: None)
+
+    class Child:
+        pid = 0
+        returncode = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def communicate(self, input=None, timeout=None):
+            (scratch / "writable-marker").write_text("created by child")
+            return "ok", None
+
+    spawned = {}
+
+    def popen(argv, **kwargs):
+        spawned.update(argv=argv, env=kwargs["env"])
+        return Child()
+
+    monkeypatch.setattr(sandbox.subprocess, "Popen", popen)
+    removed = []
+
+    def wipe(path):
+        removed.append(path)
+        shutil.rmtree(path, ignore_errors=True)
+
+    monkeypatch.setattr(sandbox, "wipe", wipe)
+    code, output = sandbox.run(
+        ["true"], 10, input_file=seed_file, asset_files={"weights": asset_file}
+    )
+    assert (code, output) == (0, "ok")
+    assert any(
+        spawned["argv"][i : i + 3]
+        == ["--ro-bind", str(seed_file.resolve()), "/benchmark-input-seeds"]
+        for i in range(len(spawned["argv"]) - 2)
+    )
+    assert any(
+        spawned["argv"][i : i + 3]
+        == ["--ro-bind", str(asset_file.resolve()), "/benchmark-assets/weights.bin"]
+        for i in range(len(spawned["argv"]) - 2)
+    )
+    assert spawned["env"]["BENCH_INPUT_SEED_FILE"] == "/benchmark-input-seeds"
+    assert removed[-1] == scratch
+    assert not scratch.exists()
+
+
+def test_measure_reports_paired_real_rows_and_baseline_grounding(tmp_path, monkeypatch, clock):
+    monkeypatch.setattr(sandbox, "HERE", tmp_path)
+    monkeypatch.setattr(sandbox, "WORK", tmp_path / "lean/work/Submission.lean")
+    monkeypatch.setattr(sandbox, "check_limits", lambda: None)
+    monkeypatch.setattr(sandbox, "prepare_shared", lambda **kw: None)
+    monkeypatch.setattr(benchmark, "machine_identity", lambda: "a" * 64)
+    monkeypatch.setattr(benchmark.fingerprint, "benchmark", lambda: "b" * 64)
+    baseline_path = tmp_path / "kernels/exact/baseline/Kernel.lean"
+    baseline_path.parent.mkdir(parents=True)
+    baseline_path.write_bytes(b"baseline source")
+    asset = tmp_path / "real.bin"
+    tensors = [32 * 784, 32, 16 * 32, 16, 10 * 16, 10, 2 * 784, 2]
+    with asset.open("wb") as stream:
+        for count in tensors:
+            stream.write(struct.pack("<I", count))
+            stream.write(bytes(count * 4))
+    real = {
+        "id": "digits-mlp",
+        "family": "mlp",
+        "model": "small-mlp",
+        "dataset": "digits",
+        "adapter": "image-zoo-v1",
+        "asset_path": "real.bin",
+        "asset_sha256": benchmark.file_hash(asset),
+        "asset_revision": "fixture-v1",
+        "sample_count": 2,
+        "samples_per_run": 1,
+    }
+    request = {
+        "environment": "test",
+        "identity": "a" * 64,
+        "seed": 42,
+        "candidate_hash": hashlib.sha256(b"candidate source").hexdigest(),
+        "reference_hash": hashlib.sha256(b"reference source").hexdigest(),
+        "baseline_hash": hashlib.sha256(b"baseline source").hexdigest(),
+        "benchmark_identity": "b" * 64,
+        "cells": [CELL],
+        "timing": timing(rounds=1, inner=1, baseline_rounds=1),
+        "workloads": workloads(42),
+        "suites": ("synthetic", "real"),
+        "real_workloads": [real],
+    }
+    binaries = {}
+
+    def build(source, expected, side, deadline):
+        deadline.remaining(side)
+        path = tmp_path / f"{side}.bin"
+        path.write_bytes(source)
+        binaries[side] = path
+        return path
+
+    def run(command, timeout, **kwargs):
+        clock.advance(0.01)
+        env = kwargs["env_extra"]
+        synthetic = [item.split(":", 1)[0] for item in env["BENCH_WORKLOADS"].split(",")]
+        rows = [f"{name}|{CELL} true 100 123" for name in synthetic]
+        rows.append(f"digits-mlp|{CELL} true 120 123")
+        rows.append("REAL_PREP|digits-mlp|200|50")
+        if Path(command[-1]).stem == "baseline":
+            rows = [
+                row.replace(" true 100 ", " true 300 ").replace(" true 120 ", " true 320 ")
+                for row in rows
+            ]
+        return 0, "\n".join(rows)
+
+    monkeypatch.setattr(benchmark, "build", build)
+    monkeypatch.setattr(sandbox, "run", run)
+    result = benchmark.measure(request, b"candidate source", b"reference source", mode="cold")
+    assert result["baseline"]["summary"][f"s0|{CELL}"]["candidate_to_baseline"] == 1 / 3
+    assert result["real"]["summary"]["digits-mlp"]["candidate_to_baseline"] == 120 / 320
+    assert result["real"]["rounds"][0]["workloads"]["digits-mlp"]["sample_indices"] == [
+        result["real"]["rounds"][0]["workloads"]["digits-mlp"]["baseline_sample_indices"]
+    ]
+    assert len(result["rounds"][0]["process_wall_ns"]["candidate"]) == 1
+    assert len(result["baseline"]["rounds"][0]["process_wall_ns"]) == 1
+    from scoring import validate_result
+
+    validate_result(request, result)
 
 
 def test_real_slow_invocation_is_terminated_as_benchmark_timeout(tmp_path, monkeypatch):

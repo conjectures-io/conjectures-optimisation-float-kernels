@@ -109,13 +109,13 @@ measurement their own clocks:
 |---|---:|---:|
 | Cold preparation: shared modules + reference/candidate binaries | 5 min | 16 min |
 | Cached preparation: validate/load both binaries | 2 min | 3 min |
-| Overall measurement, including calibration | 20 min | 20 min |
-| Single-model-family measurement, including calibration | 6 min | 6 min |
+| Overall measurement, including baseline validation | 20 min | 20 min |
+| Single-model-family measurement, including baseline validation | 6 min | 6 min |
 
 The generated config records the environment's `architecture` (`x86_64`/`amd64` or
 `aarch64`/`arm64`). An environment without an architecture uses the conservative ARM64
 build defaults. One-model boards default to six minutes; multi-model boards to twenty.
-Rounds, inner measurements and cell targets remain 11 / 3 / 50 ms.
+Paired rounds and fresh-process repetitions are 11 / 3 by default.
 
 Override only the values that need changing:
 
@@ -153,7 +153,8 @@ preparation failures remain infrastructure errors. Hitting the outer `supervisor
 safety net is an infrastructure error because it cannot reliably identify the responsible side.
 Proof-only verification retains its separately configured `verification_seconds` limit.
 
-Successful results record `preparation.mode` and its budget, plus `stage_seconds` for build, calibration, rounds and total measurement;
+Successful results record `preparation.mode` and its budget, plus `stage_seconds` for build,
+baseline process time, rounds and total measurement. Per-process wall times are also retained;
 `timing_seconds` remains the round timing for existing analysis tools. The benchmark fingerprint
 covers the execution-budget helper. Deploy identical code on coordinator and workers and
 regenerate or review configs using `scripts/exact-config.py`.

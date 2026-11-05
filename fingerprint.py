@@ -26,10 +26,14 @@ BENCHMARK_FILES = (
     + CONTRACT
     + [
         "validator/benchmark.py",
+        "validator/config.py",
         "validator/timing.py",
         "validator/multiseed.py",
+        "validator/workload.py",
         "lean/bench/ExactSuite.lean",
+        "lean/bench/RealSuite.lean",
         "lean/bench/MainExact.lean",
+        "kernels/exact/baseline/Kernel.lean",
     ]
 )
 PINNED = sorted(set(PROOF_FILES + BENCHMARK_FILES))

@@ -7,7 +7,7 @@ import benchmark
 import pytest
 import sandbox
 from config import MeasurementRequest, measurement_hash
-from multiseed import calibrated_counts, workloads
+from multiseed import workloads
 from scoring import assess
 
 
@@ -23,7 +23,6 @@ def pair():
         timing=dict(
             rounds=11,
             inner=3,
-            cell_ms=50,
             run_seconds=300,
             build_seconds=480,
             benchmark_seconds=900,
@@ -126,12 +125,6 @@ def test_request_cannot_override_workload_policy(pair, field):
         MeasurementRequest.parse(req)
 
 
-def test_calibration_uses_actual_previous_counts_and_rounds_up():
-    assert calibrated_counts({"a": (30_000_000, 0)}, 50) == {"a": 2}
-    assert calibrated_counts({"a": (60_000_000, 0)}, 50, {"a": 2}) == {"a": 2}
-    assert calibrated_counts({"a": (1, 0)}, 50) == {"a": 1_000_000}
-
-
 @pytest.mark.parametrize("bad", ["duplicate", "missing", "unknown", "checksum"])
 def test_binary_protocol_rejects_bad_rows(pair, monkeypatch, bad):
     req, _, _ = pair
@@ -158,7 +151,9 @@ def test_binary_protocol_translates_workloads_and_repetitions(pair, monkeypatch)
     def run(command, timeout, **kw):
         env = kw["env_extra"]
         assert env["BENCH_CELLS"] == "cnn:b1:normal"
-        assert env["BENCH_REPS"] == "s0|cnn:b1:normal=7"
+        assert env["BENCH_REPS"] == ",".join(f"{w['id']}|cnn:b1:normal=1" for w in req["workloads"])
+        assert env["BENCH_INNER"] == "1"
+        assert kw["input_file"].is_file()
         assert env["BENCH_WORKLOADS"] == ",".join(
             f"{w['id']}:{w['seed']}:{w['profile']}" for w in req["workloads"]
         )
@@ -168,9 +163,13 @@ def test_binary_protocol_translates_workloads_and_repetitions(pair, monkeypatch)
     rows = benchmark.run_binary(
         Path("unused"),
         req,
-        {"s0|resnet:b1:normal": 7},
+        {f"{w['id']}|resnet:b1:normal": 1 for w in req["workloads"]},
         3,
         "reference",
         benchmark.Deadline("benchmark", 10),
     )
-    assert set(rows) == {f"s{i}|resnet:b1:normal" for i in range(6)}
+    assert {key for key in rows if not key.startswith("__")} == {
+        f"s{i}|resnet:b1:normal" for i in range(6)
+    }
+    assert rows["__raw_ns__"]["s0|resnet:b1:normal"] == [100, 100, 100]
+    assert len(rows["__process_wall_ns__"]) == 3

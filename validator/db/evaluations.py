@@ -224,10 +224,13 @@ class EvaluationsDb:
                     request = {k: st[k] for k in ("environment", "identity", "seed")} | {
                         "candidate_hash": sub.source_sha256,
                         "reference_hash": refhash,
+                        "baseline_hash": plan["baseline_hash"],
                         "cells": sorted(plan["cells"]),
                         "timing": st.get("timing", plan["timing"]),
                         "benchmark_identity": plan["benchmark_identity"],
-                        "workloads": workloads(st["seed"]),
+                        "workloads": workloads(st["seed"]) if "synthetic" in plan["suites"] else [],
+                        "suites": plan["suites"],
+                        "real_workloads": plan["real_workloads"],
                     }
                     request_hash = measurement_hash(request)
                     old = s.scalar(

@@ -6,18 +6,22 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
+import secrets
 import socket
+import statistics
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
 import sandbox
 from config import MeasurementRequest, digest, measurement_hash
-from multiseed import calibrated_counts
 from timing import preparation_seconds
+from workload import RealWorkloadSpec, WorkloadSpec
 
 import fingerprint
 
@@ -202,9 +206,10 @@ def cached_binary(expected):
 
 
 def preparation_mode(request):
-    if sandbox.CONFIG.is_dir() and all(
-        cached_binary(request[k]) is not None for k in ("reference_hash", "candidate_hash")
-    ):
+    keys = ["reference_hash", "candidate_hash"]
+    if request.get("baseline_hash") is not None:
+        keys.append("baseline_hash")
+    if sandbox.CONFIG.is_dir() and all(cached_binary(request[k]) is not None for k in keys):
         return "cached"
     return "cold"
 
@@ -268,11 +273,16 @@ def build(source, expected, side, deadline):
 
 def row_names(request):
     # Each row's name as the bench prints it -> its public name, in the order the bench runs them.
-    return {
-        f"{w['id']}|{lean_cell(c)}": f"{w['id']}|{c}"
-        for w in request["workloads"]
-        for c in request["cells"]
-    }
+    rows = {}
+    for draw in request["workloads"]:
+        for cell in request["cells"]:
+            spec = WorkloadSpec.synthetic_cell(draw, cell)
+            rows[f"{draw['id']}|{lean_cell(cell)}"] = spec.id
+    for workload in request.get("real_workloads", ()):
+        family = workload["family"]
+        cell = lean_cell(f"{family}:b1:normal")
+        rows[f"{workload['id']}|{cell}"] = f"{workload['id']}|{family}"
+    return rows
 
 
 def start_marker(line):
@@ -305,14 +315,59 @@ def finished(output, public):
     }
 
 
-def run_binary(binary, request, reps, inner, side, deadline):
-    budget = deadline.remaining(side)
-    timeout = min(request["timing"]["run_seconds"], budget)
+def make_input_sequences(request, reps, groups, used_seeds=None, used_real_samples=None):
+    used = used_seeds if used_seeds is not None else set()
+    used_samples = used_real_samples if used_real_samples is not None else set()
+    result = {}
+    for draw in request["workloads"]:
+        for cell in request["cells"]:
+            key = f"{draw['id']}|{cell}"
+            count = reps.get(key, 1)
+            sequence_groups = []
+            for _ in range(groups):
+                values = []
+                while len(values) < count:
+                    value = secrets.randbits(32)
+                    if value not in used:
+                        used.add(value)
+                        values.append(value)
+                sequence_groups.append(values)
+            result[key] = sequence_groups
+    for workload in request.get("real_workloads", ()):
+        key = f"{workload['id']}|{workload['family']}"
+        if workload["samples_per_run"] * groups > workload["sample_count"]:
+            raise MeasurementFailure(
+                "infrastructure",
+                f"real workload {workload['id']} needs more distinct samples per round",
+            )
+        available = [
+            index
+            for index in range(workload["sample_count"])
+            if (workload["id"], index) not in used_samples
+        ]
+        count = workload["samples_per_run"] * groups
+        if count > len(available):
+            raise MeasurementFailure(
+                "infrastructure",
+                f"real workload {workload['id']} needs more distinct samples than remain",
+            )
+        selected = secrets.SystemRandom().sample(available, count)
+        used_samples.update((workload["id"], index) for index in selected)
+        result[key] = [
+            selected[i * workload["samples_per_run"] : (i + 1) * workload["samples_per_run"]]
+            for i in range(groups)
+        ]
+    return result
+
+
+def run_binary(binary, request, reps, inner, side, deadline, input_sequences=None):
+    if input_sequences is None:
+        input_sequences = make_input_sequences(request, reps, inner)
     extra = {
         "BENCH_CELLS": ",".join(lean_cell(c) for c in request["cells"]),
         "BENCH_REPS": ",".join(f"{lean_cell(c)}={n}" for c, n in reps.items()),
         "BENCH_SEED": str(request["seed"]),
-        "BENCH_INNER": str(inner),
+        "BENCH_INNER": "1",
         "LEAN_ABORT_ON_PANIC": "1",
     }
     extra["BENCH_WORKLOADS"] = ",".join(
@@ -321,55 +376,139 @@ def run_binary(binary, request, reps, inner, side, deadline):
     extra["BENCH_REPS"] = ",".join(
         f"{k.split('|')[0]}|{lean_cell(k.split('|')[1])}={n}" for k, n in reps.items()
     )
+    real_assets = {}
+    real_entries = []
+    for item in request.get("real_workloads", ()):
+        asset_id = item["id"]
+        path = (sandbox.HERE / item["asset_path"]).resolve()
+        real_assets[asset_id] = path
+        mounted = f"/benchmark-assets/{asset_id}.bin" if sandbox._SANDBOX else str(path)
+        real_entries.append(
+            "|".join(
+                (asset_id, item["adapter"], item["family"], mounted, str(item["samples_per_run"]))
+            )
+        )
+    extra["BENCH_REAL_WORKLOADS"] = ",".join(real_entries)
     command = [str(binary)]
     if sandbox._BENCH_CPU:
         command = ["taskset", "-c", sandbox._BENCH_CPU, *command]
-    started = time.monotonic()
-    code, output = sandbox.run(
-        command,
-        timeout,
-        env_extra=extra,
-        memory_mb=sandbox._BENCH_MEMORY_MB,
-    )
-    seconds = time.monotonic() - started
     public = row_names(request)
-    if code == 124:
-        # The per-run cap is this side's own; running out of the shared deadline is decided by
-        # each side's time per run.
-        shared = budget < request["timing"]["run_seconds"]
-        deadline.fail(
-            side,
-            f"{side} invocation exceeded its {timeout:g}s time allowance",
-            shared=shared,
-            stopped_after=seconds,
-            limit="budget" if shared else "invocation",
-            allowance_seconds=round(timeout, 3),
-            **finished(output, public),
-        )
-    deadline.finished(side, seconds)
-    deadline.remaining(side)
-    if code:
-        raise MeasurementFailure(side, f"bench exit {code}: {output[-1000:]}")
-    rows = {}
-    for line in output.splitlines():
-        if start_marker(line):
-            continue
-        fields = line.split()
-        if len(fields) != 4 or fields[1] != "true" or public.get(fields[0]) in rows:
-            raise MeasurementFailure("infrastructure", "invalid or duplicate benchmark row")
-        try:
-            ns, checksum = int(fields[2]), int(fields[3])
-        except ValueError as exc:
-            raise MeasurementFailure("infrastructure", "noninteger benchmark output") from exc
-        if ns <= 0 or not 0 <= checksum < 2**32:
-            raise MeasurementFailure("infrastructure", "invalid duration or checksum")
-        if fields[0] not in public:
-            raise MeasurementFailure("infrastructure", "unknown benchmark cell")
-        rows[public[fields[0]]] = (ns, checksum)
-    if set(rows) != set(public.values()):
-        raise MeasurementFailure("infrastructure", "missing or extra benchmark cells")
-    deadline.remaining(side)
-    return rows
+    groups = []
+    process_wall_ns = []
+    with tempfile.TemporaryDirectory(prefix="bench-inputs-") as directory:
+        seed_file = Path(directory) / "input-seeds.txt"
+        for repetition in range(inner):
+            seed_rows = []
+            for printed_key, public_key in public.items():
+                groups_for_key = input_sequences.get(public_key)
+                real_item = next(
+                    (
+                        item
+                        for item in request.get("real_workloads", ())
+                        if public_key == f"{item['id']}|{item['family']}"
+                    ),
+                    None,
+                )
+                count = real_item["samples_per_run"] if real_item else reps.get(public_key, 1)
+                if (
+                    not isinstance(groups_for_key, list)
+                    or len(groups_for_key) != inner
+                    or len(groups_for_key[repetition]) < count
+                ):
+                    raise MeasurementFailure("infrastructure", "input seed plan is incomplete")
+                seed_rows.append(
+                    printed_key + "=" + ";".join(map(str, groups_for_key[repetition][:count]))
+                )
+            seed_file.write_text("\n".join(seed_rows) + "\n")
+            budget = deadline.remaining(side)
+            timeout = min(request["timing"]["run_seconds"], budget)
+            started = time.monotonic()
+            code, output = sandbox.run(
+                command,
+                timeout,
+                env_extra=extra,
+                memory_mb=sandbox._BENCH_MEMORY_MB,
+                input_file=seed_file,
+                asset_files=real_assets,
+            )
+            seconds = time.monotonic() - started
+            if code == 124:
+                # A fresh child per timed repetition keeps candidate-global state out of the next run.
+                # A shared-deadline timeout is attributed using all completed side runs so far.
+                shared = budget < request["timing"]["run_seconds"]
+                deadline.fail(
+                    side,
+                    f"{side} invocation exceeded its {timeout:g}s time allowance",
+                    shared=shared,
+                    stopped_after=seconds,
+                    limit="budget" if shared else "invocation",
+                    allowance_seconds=round(timeout, 3),
+                    **finished(output, public),
+                )
+            deadline.finished(side, seconds)
+            deadline.remaining(side)
+            if code:
+                raise MeasurementFailure(side, f"bench exit {code}: {output[-1000:]}")
+            rows = {}
+            real_preparation = {}
+            for line in output.splitlines():
+                if start_marker(line):
+                    continue
+                prep_fields = line.split("|")
+                if len(prep_fields) == 4 and prep_fields[0] == "REAL_PREP":
+                    try:
+                        real_preparation[prep_fields[1]] = (
+                            int(prep_fields[2]),
+                            int(prep_fields[3]),
+                        )
+                    except ValueError as exc:
+                        raise MeasurementFailure(
+                            "infrastructure", "invalid real prep timing"
+                        ) from exc
+                    continue
+                fields = line.split()
+                if len(fields) != 4 or fields[1] != "true" or fields[0] not in public:
+                    raise MeasurementFailure("infrastructure", "invalid benchmark row")
+                key = public[fields[0]]
+                if key in rows:
+                    raise MeasurementFailure("infrastructure", "duplicate benchmark row")
+                try:
+                    ns, checksum = int(fields[2]), int(fields[3])
+                except ValueError as exc:
+                    raise MeasurementFailure(
+                        "infrastructure", "noninteger benchmark output"
+                    ) from exc
+                if ns <= 0 or not 0 <= checksum < 2**32:
+                    raise MeasurementFailure("infrastructure", "invalid duration or checksum")
+                rows[key] = (ns, checksum)
+            if set(rows) != set(public.values()):
+                raise MeasurementFailure("infrastructure", "missing or extra benchmark cells")
+            if set(real_preparation) != {item["id"] for item in request.get("real_workloads", ())}:
+                raise MeasurementFailure(
+                    "infrastructure", "missing real workload preparation timing"
+                )
+            groups.append((rows, real_preparation))
+            process_wall_ns.append(round(seconds * 1e9))
+
+    result = {}
+    for cell in groups[0][0]:
+        combined_checksum = 2166136261
+        for group, _ in groups:
+            combined_checksum = ((combined_checksum ^ group[cell][1]) * 16777619) % 2**32
+        result[cell] = (int(statistics.median(g[cell][0] for g, _ in groups)), combined_checksum)
+    result["__raw_ns__"] = {cell: [rows[cell][0] for rows, _ in groups] for cell in groups[0][0]}
+    result["__process_wall_ns__"] = process_wall_ns
+    if request.get("real_workloads"):
+        result["__real_preparation_ns__"] = {
+            item["id"]: {
+                "model_load_ns": int(statistics.median(prep[item["id"]][0] for _, prep in groups)),
+                "input_preparation_ns": int(
+                    statistics.median(prep[item["id"]][1] for _, prep in groups)
+                ),
+            }
+            for item in request["real_workloads"]
+        }
+    return result
 
 
 def measure(request, candidate, reference, mode=None):
@@ -380,9 +519,42 @@ def measure(request, candidate, reference, mode=None):
         raise MeasurementFailure(
             "infrastructure", "checkout does not match pinned verifier/benchmark"
         )
-    for content, key in ((candidate, "candidate_hash"), (reference, "reference_hash")):
+    sources = [(candidate, "candidate_hash"), (reference, "reference_hash")]
+    baseline = None
+    if request.get("baseline_hash") is not None:
+        baseline_path = sandbox.HERE / "kernels/exact/baseline/Kernel.lean"
+        try:
+            baseline = baseline_path.read_bytes()
+        except OSError as exc:
+            raise MeasurementFailure("infrastructure", f"shipped baseline unavailable: {exc}")
+        sources.append((baseline, "baseline_hash"))
+    for content, key in sources:
         if hashlib.sha256(content).hexdigest() != request[key]:
             raise MeasurementFailure("infrastructure", "immutable source hash mismatch")
+    for item in request.get("real_workloads", ()):
+        source_path = sandbox.HERE / item["asset_path"]
+        path = source_path.resolve()
+        try:
+            path.relative_to(sandbox.HERE.resolve())
+        except ValueError as exc:
+            raise MeasurementFailure(
+                "infrastructure", "real workload path escapes checkout"
+            ) from exc
+        if (
+            not path.is_file()
+            or source_path.is_symlink()
+            or path.stat().st_size > 512 * 2**20
+            or file_hash(path) != item["asset_sha256"]
+        ):
+            raise MeasurementFailure(
+                "infrastructure", f"real workload asset missing or hash mismatch: {item['id']}"
+            )
+        try:
+            RealWorkloadSpec.parse(item).validate_asset(path)
+        except (OSError, ValueError) as exc:
+            raise MeasurementFailure(
+                "infrastructure", f"invalid real workload asset {item['id']}: {exc}"
+            ) from exc
     sandbox.check_limits()
     # sandbox.run uses shared Lake/overlay scratch paths; hold this checkout lock throughout.
     with (
@@ -398,11 +570,15 @@ def measure(request, candidate, reference, mode=None):
             build_clock = Deadline("build", preparation_seconds(request["timing"], mode))
             sandbox._budget.reset(build_clock.seconds, deadline=build_clock.end)
             if mode == "cached":
-                ref, sub = (
-                    cached_binary(request["reference_hash"]),
-                    cached_binary(request["candidate_hash"]),
-                )
-                if ref is None or sub is None or not sandbox.CONFIG.is_dir():
+                ref = cached_binary(request["reference_hash"])
+                sub = cached_binary(request["candidate_hash"])
+                base = cached_binary(request["baseline_hash"]) if baseline is not None else None
+                if (
+                    ref is None
+                    or sub is None
+                    or (baseline is not None and base is None)
+                    or not sandbox.CONFIG.is_dir()
+                ):
                     raise MeasurementFailure(
                         "infrastructure",
                         "cached preparation unavailable; retry with cold preparation",
@@ -421,6 +597,11 @@ def measure(request, candidate, reference, mode=None):
                     raise MeasurementFailure(
                         "infrastructure", f"shared build preparation: {exc}"
                     ) from exc
+                base = (
+                    build(baseline, request["baseline_hash"], "baseline", build_clock)
+                    if baseline is not None
+                    else None
+                )
                 ref = build(reference, request["reference_hash"], "reference", build_clock)
                 sub = build(candidate, request["candidate_hash"], "candidate", build_clock)
             build_clock.remaining("infrastructure" if mode == "cached" else "candidate")
@@ -428,44 +609,195 @@ def measure(request, candidate, reference, mode=None):
             benchmark_clock = Deadline("benchmark", request["timing"]["benchmark_seconds"])
             # What the measurement has reached, kept with a failure that stops it partway.
             rounds = []
+            real_rounds = []
             partial = {
                 "build_seconds": build_seconds,
                 "rounds": rounds,
+                "real_rounds": real_rounds,
                 "rounds_planned": request["timing"]["rounds"],
             }
             try:
-                initial = run_binary(ref, request, {}, 3, "reference", benchmark_clock)
-                partial["calibration"] = {c: ns for c, (ns, _) in initial.items()}
-                reps = calibrated_counts(initial, request["timing"]["cell_ms"])
-                checked = run_binary(ref, request, reps, 3, "reference", benchmark_clock)
-                reps = calibrated_counts(checked, request["timing"]["cell_ms"], reps)
+                # One inference per fresh subprocess is the cache boundary. Repeating a cell
+                # inside MainExact would let submitted global state survive between its timed
+                # calls, even when each call had a distinct input.
+                reps = {
+                    f"{draw['id']}|{cell}": 1
+                    for draw in request["workloads"]
+                    for cell in request["cells"]
+                }
+                partial["measurement_policy"] = {
+                    "samples_per_process": 1,
+                    "fresh_process_each_sample": True,
+                }
                 partial["repetitions"] = reps
-                # Calibration runs only the reference; the rounds share what is left between both
-                # sides.
+                baseline_reps = {}
+                baseline_rounds = []
+                if base is not None:
+                    baseline_reps = dict.fromkeys(reps, 1)
+                    baseline_rounds_count = request["timing"].get("baseline_rounds", 3)
+                    partial["baseline_repetitions"] = baseline_reps
+                # Each paired measurement has one inference per fresh process. The `inner`
+                # setting controls independent processes per paired round, not calls within one.
                 benchmark_clock.share()
                 t0 = time.monotonic()
+                used_input_seeds = set()
+                used_real_samples = set()
                 for i in range(request["timing"]["rounds"]):
-                    sides = [("reference", ref), ("candidate", sub)]
-                    if i % 2:
-                        sides.reverse()
+                    baseline_this_round = base is not None and i < baseline_rounds_count
+                    side_binaries = {"reference": ref, "candidate": sub}
+                    pair_order = (
+                        ["reference", "candidate"] if i % 2 == 0 else ["candidate", "reference"]
+                    )
+                    if baseline_this_round:
+                        side_binaries["baseline"] = base
+                        baseline_position = i % 3
+                        side_order = pair_order.copy()
+                        side_order.insert(baseline_position, "baseline")
+                    else:
+                        side_order = pair_order
+                    run_reps = reps
+                    paired_inputs = make_input_sequences(
+                        request,
+                        run_reps,
+                        request["timing"]["inner"],
+                        used_seeds=used_input_seeds,
+                        used_real_samples=used_real_samples,
+                    )
+                    baseline_inputs = {
+                        key: [sequences[i % len(sequences)]]
+                        for key, sequences in paired_inputs.items()
+                    }
+                    paired_plan = {
+                        "synthetic": {
+                            key: [group[0] for group in groups]
+                            for key, groups in paired_inputs.items()
+                            if key in reps
+                        },
+                        "real": {
+                            item["id"]: paired_inputs[f"{item['id']}|{item['family']}"]
+                            for item in request.get("real_workloads", ())
+                        },
+                    }
                     # A side that finished before the other was stopped is kept with the failure.
-                    observed = partial["round_in_progress"] = {}
-                    for side, binary in sides:
+                    observed = partial["round_in_progress"] = {"input_plan": paired_plan}
+                    for side in side_order:
+                        repetitions = baseline_reps if side == "baseline" else reps
                         observed[side] = run_binary(
-                            binary, request, reps, request["timing"]["inner"], side, benchmark_clock
+                            side_binaries[side],
+                            request,
+                            repetitions,
+                            1 if side == "baseline" else request["timing"]["inner"],
+                            side,
+                            benchmark_clock,
+                            baseline_inputs if side == "baseline" else paired_inputs,
                         )
                     cells = {}
                     for c in reps:
                         a, b = observed["reference"][c], observed["candidate"][c]
                         if a[1] != b[1]:
                             raise MeasurementFailure("checksum", f"output mismatch on {c}")
+                        if baseline_this_round and observed["baseline"][c][1] != a[1]:
+                            raise MeasurementFailure("checksum", f"baseline output mismatch on {c}")
                         cells[c] = {
                             "reference_ns": a[0],
                             "candidate_ns": b[0],
                             "reference_checksum": a[1],
                             "candidate_checksum": b[1],
+                            "reference_inner_ns": observed["reference"]["__raw_ns__"][c],
+                            "candidate_inner_ns": observed["candidate"]["__raw_ns__"][c],
                         }
                     rounds.append({"reference_first": i % 2 == 0, "cells": cells})
+                    rounds[-1]["input_plan"] = paired_plan
+                    rounds[-1]["process_wall_ns"] = {
+                        side: observed[side]["__process_wall_ns__"]
+                        for side in ("reference", "candidate")
+                    }
+                    if request.get("real_workloads"):
+                        real_cells = {}
+                        for item in request["real_workloads"]:
+                            key = f"{item['id']}|{item['family']}"
+                            ref_row = observed["reference"][key]
+                            candidate_row = observed["candidate"][key]
+                            if ref_row[1] != candidate_row[1]:
+                                raise MeasurementFailure(
+                                    "checksum", f"real workload output mismatch on {item['id']}"
+                                )
+                            if baseline_this_round and observed["baseline"][key][1] != ref_row[1]:
+                                raise MeasurementFailure(
+                                    "checksum",
+                                    f"real baseline output mismatch on {item['id']}",
+                                )
+                            row = {
+                                "reference_ns": ref_row[0],
+                                "candidate_ns": candidate_row[0],
+                                "reference_checksum": ref_row[1],
+                                "candidate_checksum": candidate_row[1],
+                                "reference_inner_ns": observed["reference"]["__raw_ns__"][key],
+                                "candidate_inner_ns": observed["candidate"]["__raw_ns__"][key],
+                                "reference_model_load_ns": observed["reference"][
+                                    "__real_preparation_ns__"
+                                ][item["id"]]["model_load_ns"],
+                                "candidate_model_load_ns": observed["candidate"][
+                                    "__real_preparation_ns__"
+                                ][item["id"]]["model_load_ns"],
+                                "reference_input_preparation_ns": observed["reference"][
+                                    "__real_preparation_ns__"
+                                ][item["id"]]["input_preparation_ns"],
+                                "candidate_input_preparation_ns": observed["candidate"][
+                                    "__real_preparation_ns__"
+                                ][item["id"]]["input_preparation_ns"],
+                                "samples": item["samples_per_run"],
+                                "sample_indices": paired_inputs[key],
+                                "baseline_sample_indices": (
+                                    paired_inputs[key][0] if baseline_this_round else None
+                                ),
+                            }
+                            if baseline_this_round:
+                                base_row = observed["baseline"][key]
+                                row.update(
+                                    baseline_ns=base_row[0],
+                                    baseline_checksum=base_row[1],
+                                    baseline_inner_ns=observed["baseline"]["__raw_ns__"][key],
+                                    baseline_model_load_ns=observed["baseline"][
+                                        "__real_preparation_ns__"
+                                    ][item["id"]]["model_load_ns"],
+                                    baseline_input_preparation_ns=observed["baseline"][
+                                        "__real_preparation_ns__"
+                                    ][item["id"]]["input_preparation_ns"],
+                                )
+                            real_cells[item["id"]] = row
+                        real_rounds.append({"paired_round": i, "workloads": real_cells})
+                    if baseline_this_round:
+                        baseline_rounds.append(
+                            {
+                                "paired_round": i,
+                                "input_plan": {
+                                    "synthetic": {
+                                        key: [groups[0][0]]
+                                        for key, groups in paired_inputs.items()
+                                        if key in reps
+                                    },
+                                    "real": {
+                                        item["id"]: [
+                                            paired_inputs[f"{item['id']}|{item['family']}"][0]
+                                        ]
+                                        for item in request.get("real_workloads", ())
+                                    },
+                                },
+                                "cells": {
+                                    c: {
+                                        "baseline_ns": ns,
+                                        "baseline_checksum": checksum,
+                                        "requests": baseline_reps[c],
+                                        "baseline_inner_ns": observed["baseline"]["__raw_ns__"][c],
+                                        "baseline_ns_per_request": round(ns / baseline_reps[c], 3),
+                                    }
+                                    for c in reps
+                                    for ns, checksum in [observed["baseline"][c]]
+                                },
+                                "process_wall_ns": observed["baseline"]["__process_wall_ns__"],
+                            }
+                        )
                     del partial["round_in_progress"]
                 round_seconds = time.monotonic() - t0
                 benchmark_clock.remaining("candidate")
@@ -474,6 +806,118 @@ def measure(request, candidate, reference, mode=None):
                 raise
             if fingerprint.benchmark() != request["benchmark_identity"]:
                 raise MeasurementFailure("infrastructure", "checkout changed during benchmark")
+            real_summaries = {}
+            for item in request.get("real_workloads", ()):
+                observations = [row["workloads"][item["id"]] for row in real_rounds]
+                candidate_median = int(
+                    statistics.median(row["candidate_ns"] for row in observations)
+                )
+                reference_median = int(
+                    statistics.median(row["reference_ns"] for row in observations)
+                )
+                baseline_values = [
+                    row["baseline_ns"] for row in observations if "baseline_ns" in row
+                ]
+                baseline_median = (
+                    int(statistics.median(baseline_values)) if baseline_values else None
+                )
+                real_summaries[item["id"]] = {
+                    "family": item["family"],
+                    "model": item["model"],
+                    "dataset": item["dataset"],
+                    "samples_per_run": item["samples_per_run"],
+                    "candidate_median_ns": candidate_median,
+                    "reference_median_ns": reference_median,
+                    "candidate_to_reference": candidate_median / reference_median,
+                    "baseline_median_ns": baseline_median,
+                    "candidate_to_baseline": (
+                        candidate_median / baseline_median if baseline_median else None
+                    ),
+                    "candidate_model_load_median_ns": int(
+                        statistics.median(row["candidate_model_load_ns"] for row in observations)
+                    ),
+                    "reference_model_load_median_ns": int(
+                        statistics.median(row["reference_model_load_ns"] for row in observations)
+                    ),
+                    "candidate_input_preparation_median_ns": int(
+                        statistics.median(
+                            row["candidate_input_preparation_ns"] for row in observations
+                        )
+                    ),
+                    "reference_input_preparation_median_ns": int(
+                        statistics.median(
+                            row["reference_input_preparation_ns"] for row in observations
+                        )
+                    ),
+                    "baseline_model_load_median_ns": int(
+                        statistics.median(
+                            row["baseline_model_load_ns"]
+                            for row in observations
+                            if "baseline_model_load_ns" in row
+                        )
+                    )
+                    if baseline_median
+                    else None,
+                    "baseline_input_preparation_median_ns": int(
+                        statistics.median(
+                            row["baseline_input_preparation_ns"]
+                            for row in observations
+                            if "baseline_input_preparation_ns" in row
+                        )
+                    )
+                    if baseline_median
+                    else None,
+                }
+            real_families = {}
+            for family in sorted({item["family"] for item in request.get("real_workloads", ())}):
+                family_rows = {
+                    item["id"]: real_summaries[item["id"]]
+                    for item in request["real_workloads"]
+                    if item["family"] == family
+                }
+                reference_ratios = [row["candidate_to_reference"] for row in family_rows.values()]
+                baseline_ratios = [
+                    row["candidate_to_baseline"]
+                    for row in family_rows.values()
+                    if row["candidate_to_baseline"] is not None
+                ]
+                real_families[family] = {
+                    "workloads": family_rows,
+                    "equal_weight_candidate_to_reference_geomean": math.exp(
+                        sum(math.log(value) for value in reference_ratios) / len(reference_ratios)
+                    ),
+                    "equal_weight_candidate_to_baseline_geomean": (
+                        math.exp(
+                            sum(math.log(value) for value in baseline_ratios) / len(baseline_ratios)
+                        )
+                        if baseline_ratios
+                        else None
+                    ),
+                }
+            baseline_summary = {}
+            if base is not None:
+                for cell in reps:
+                    values = [row["cells"][cell]["baseline_ns"] for row in baseline_rounds]
+                    baseline_median = int(statistics.median(values))
+                    candidate_median = int(
+                        statistics.median(row["cells"][cell]["candidate_ns"] for row in rounds)
+                    )
+                    reference_median = int(
+                        statistics.median(row["cells"][cell]["reference_ns"] for row in rounds)
+                    )
+                    baseline_per_request = baseline_median / baseline_reps[cell]
+                    candidate_per_request = candidate_median / reps[cell]
+                    reference_per_request = reference_median / reps[cell]
+                    baseline_summary[cell] = {
+                        "baseline_median_ns": baseline_median,
+                        "baseline_repetitions": baseline_reps[cell],
+                        "baseline_ns_per_request": baseline_per_request,
+                        "candidate_median_ns_per_request": candidate_per_request,
+                        "reference_median_ns_per_request": reference_per_request,
+                        "candidate_to_baseline": candidate_per_request / baseline_per_request,
+                        "reference_to_baseline": reference_per_request / baseline_per_request,
+                        "interpretation": "unpaired diagnostic; admission remains candidate/reference",
+                    }
             return {
                 "request_hash": measurement_hash(request),
                 "workloads": request["workloads"],
@@ -486,13 +930,28 @@ def measure(request, candidate, reference, mode=None):
                     "candidate_binary": file_hash(sub),
                     "reference_binary": file_hash(ref),
                 },
-                "calibration": partial["calibration"],
+                "measurement_policy": partial["measurement_policy"],
                 "repetitions": reps,
                 "rounds": rounds,
+                "baseline": {
+                    "source_hash": request["baseline_hash"],
+                    "rounds": baseline_rounds,
+                    "repetitions": baseline_reps,
+                    "summary": baseline_summary,
+                }
+                if baseline is not None
+                else None,
+                "real": {
+                    "workloads": request.get("real_workloads", []),
+                    "rounds": real_rounds,
+                    "summary": real_summaries,
+                    "families": real_families,
+                },
                 "timing_seconds": round_seconds,
                 "stage_seconds": {
                     "build": build_seconds,
-                    "calibration": t0 - benchmark_clock.started,
+                    "baseline_process": sum(sum(row["process_wall_ns"]) for row in baseline_rounds)
+                    / 1e9,
                     "rounds": round_seconds,
                     "benchmark": benchmark_clock.elapsed(),
                 },

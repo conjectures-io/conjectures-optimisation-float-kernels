@@ -11,13 +11,19 @@ import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from multiseed import workloads
+from multiseed import WorkloadRecord, workload_records, workloads
 from timing import DEFAULT_TIMING, build_defaults, validate_timing
+from workload import RealWorkloadSpec
 
 MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
 KINDS = ("normal", "wide", "sparse")
-VERSION = "exact-boards-v3-multiseed"
+VERSION = "exact-boards-v5-fresh-process-real-workloads"
+BASELINE_SOURCE = Path(__file__).resolve().parents[1] / "kernels/exact/baseline/Kernel.lean"
+
+
+def baseline_hash() -> str:
+    return hashlib.sha256(BASELINE_SOURCE.read_bytes()).hexdigest()
 
 
 def digest(value: object) -> str:
@@ -37,10 +43,15 @@ class MeasurementRequest:
     timing: dict
     benchmark_identity: str
     workloads: list[dict]
+    baseline_hash: str | None = None
+    suites: tuple[str, ...] = ("synthetic",)
+    real_workloads: tuple[dict, ...] = ()
 
     @classmethod
     def parse(cls, request):
-        if set(request) != set(cls.__dataclass_fields__):
+        fields = set(cls.__dataclass_fields__)
+        required = fields - {"baseline_hash", "suites", "real_workloads"}
+        if not required <= set(request) or set(request) - fields:
             raise ValueError("invalid measurement request fields")
         cells = request["cells"]
         if not isinstance(cells, (list, tuple)) or not cells or len(set(cells)) != len(cells):
@@ -50,12 +61,50 @@ class MeasurementRequest:
             raise ValueError("unknown measurement cell")
         for key in ("identity", "candidate_hash", "reference_hash", "benchmark_identity"):
             sha(request[key])
+        if request.get("baseline_hash") is not None:
+            sha(request["baseline_hash"])
         if type(request["seed"]) is not int or not 0 <= request["seed"] < 2**32:
             raise ValueError("invalid measurement seed")
-        if request["workloads"] != workloads(request["seed"]):
-            raise ValueError("workload plan mismatch")
+        suites = tuple(request.get("suites", ("synthetic",)))
+        if (
+            not suites
+            or "synthetic" not in suites
+            or len(set(suites)) != len(suites)
+            or set(suites) - {"synthetic", "real"}
+        ):
+            raise ValueError("suites must include synthetic and may include real")
+        try:
+            records = tuple(WorkloadRecord.parse(item) for item in request["workloads"])
+            real_records = tuple(
+                RealWorkloadSpec.parse(item) for item in request.get("real_workloads", ())
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid workload plan: {exc}") from exc
+        if ("synthetic" in suites and records != workload_records(request["seed"])) or (
+            "synthetic" not in suites and records
+        ):
+            raise ValueError("synthetic workload plan mismatch")
+        if ("real" in suites and not real_records) or ("real" not in suites and real_records):
+            raise ValueError("real suite selection and workload list disagree")
+        if len({item.id for item in real_records}) != len(real_records):
+            raise ValueError("real workload ids must be unique")
         validate_timing(request["timing"])
-        return cls(**(request | {"cells": tuple(sorted(cells))}))
+        if any(
+            item.samples_per_run * request["timing"]["inner"] * request["timing"]["rounds"]
+            > item.sample_count
+            for item in real_records
+        ):
+            raise ValueError("real workload needs enough unique samples for every timed process")
+        return cls(
+            **(
+                request
+                | {
+                    "cells": tuple(sorted(cells)),
+                    "suites": suites,
+                    "real_workloads": tuple(item.json() for item in real_records),
+                }
+            )
+        )
 
     def identity_hash(self):
         return digest(asdict(self))
@@ -100,6 +149,8 @@ class Config:
     seed_mode: str = "fixed"
     # Plan uploads the API tagged `dev` (a development deployment); production plans only subnet.
     dev_intake: bool = False
+    suites: tuple[str, ...] = ("synthetic",)
+    real_workloads: tuple[RealWorkloadSpec, ...] = ()
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
@@ -129,15 +180,59 @@ class Config:
             "seed_mode",
             "seed_count",
             "dev_intake",
+            "benchmark",
         }
         if set(raw) - allowed:
             raise ValueError(f"unknown configuration keys: {set(raw) - allowed}")
         data = copy.deepcopy(raw)
+        benchmark = data.pop("benchmark", {})
+        if not isinstance(benchmark, dict) or set(benchmark) - {"suites", "real_workloads"}:
+            raise ValueError("benchmark accepts only suites and real_workloads")
+        suites = tuple(benchmark.get("suites", ("synthetic",)))
+        if (
+            not suites
+            or "synthetic" not in suites
+            or len(set(suites)) != len(suites)
+            or set(suites) - {"synthetic", "real"}
+        ):
+            raise ValueError("benchmark.suites must include synthetic and may include real")
+        real_workloads = tuple(
+            RealWorkloadSpec.parse(item) for item in benchmark.get("real_workloads", ())
+        )
+        if len({item.id for item in real_workloads}) != len(real_workloads):
+            raise ValueError("real workload ids must be unique")
+        if ("real" in suites and not real_workloads) or ("real" not in suites and real_workloads):
+            raise ValueError("benchmark real suite and real_workloads must be enabled together")
+        if "real" in suites:
+            for workload in real_workloads:
+                root = Path(__file__).resolve().parents[1]
+                asset_source = root / workload.asset_path
+                asset = asset_source.resolve()
+                try:
+                    asset.relative_to(root)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"real workload asset escapes repository: {workload.id}"
+                    ) from exc
+                if (
+                    not asset.is_file()
+                    or asset_source.is_symlink()
+                    or asset.stat().st_size > 512 * 2**20
+                    or hashlib.sha256(asset.read_bytes()).hexdigest() != workload.asset_sha256
+                ):
+                    raise ValueError(f"real workload asset missing or hash mismatch: {workload.id}")
+                workload.validate_asset(asset)
         timing_overrides = data.get("timing", {})
         data["timing"] = DEFAULT_TIMING | timing_overrides
         if "cached_build_seconds" not in timing_overrides:
             data["timing"]["cached_build_seconds"] = min(180, data["timing"]["build_seconds"])
         validate_timing(data["timing"])
+        if "real" in suites and any(
+            item.samples_per_run * data["timing"]["inner"] * data["timing"]["rounds"]
+            > item.sample_count
+            for item in real_workloads
+        ):
+            raise ValueError("real workload needs enough unique samples for every timed process")
         data["proof_identity"] = sha(data["proof_identity"])
         data["benchmark_identity"] = sha(data["benchmark_identity"])
         seeds = data.get("seeds", ())
@@ -148,6 +243,8 @@ class Config:
         ):
             raise ValueError("seeds must be unique UInt32 values")
         data["seeds"] = tuple(seeds)
+        data["suites"] = suites
+        data["real_workloads"] = real_workloads
         if data.get("seed_mode") == "fresh" and seeds:
             raise ValueError("fresh mode uses seed_count, not seeds")
         if type(data.get("seed_count", 1)) is not int or not 1 <= data.get("seed_count", 1) <= 100:
@@ -197,7 +294,11 @@ class Config:
             if set(model_weights) - set(MODELS):
                 raise ValueError("unknown workload model")
             local = board.get("timing", {})
-            if set(local) - {"benchmark_seconds", "run_seconds"}:
+            if set(local) - {
+                "benchmark_seconds",
+                "run_seconds",
+                "baseline_rounds",
+            }:
                 raise ValueError("board timing overrides may only change measurement limits")
             board["timing"] = (
                 {
@@ -286,15 +387,20 @@ class Config:
             if weight > 0
             for seed in (self.seeds if self.seed_mode == "fixed" else range(self.seed_count))
         ]
+        real_workloads = [
+            workload.json() for workload in self.real_workloads if workload.family in models
+        ]
+        suites = [name for name in self.suites if name != "real" or real_workloads]
         for st in strata:
             resolved = timing | self.environments[st["environment"]]["timing"]
             if resolved != timing:
                 st["timing"] = resolved
         return {
             "version": VERSION,
-            "workload_policy": "six-workloads-50-30-20-v1",
+            "workload_policy": "six-workloads-50-30-20-v2-fresh-process",
             "board": board,
             "initial_reference": self.boards[board]["reference"]["sha256"],
+            "baseline_hash": baseline_hash(),
             "seed_mode": self.seed_mode,
             "cells": cells,
             "strata": strata,
@@ -302,6 +408,8 @@ class Config:
             "admission": self.admission,
             "proof_identity": self.proof_identity,
             "benchmark_identity": self.benchmark_identity,
+            "suites": suites,
+            "real_workloads": real_workloads,
         }
 
     def identity(self, board: str) -> str:

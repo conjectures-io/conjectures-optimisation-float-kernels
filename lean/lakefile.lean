@@ -18,7 +18,7 @@ lean_lib Submission where
 
 lean_lib BenchCore where
   srcDir := "bench"
-  roots := #[`ExactSuite]
+  roots := #[`ExactSuite, `RealSuite]
 
 -- Research-only references for exactShowcase; not imported by VerifyExact or benchExact.
 lean_lib ScalarReference where

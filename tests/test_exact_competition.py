@@ -32,7 +32,6 @@ def config(tmp_path):
             "timing": {
                 "rounds": 5,
                 "inner": 1,
-                "cell_ms": 1,
                 "run_seconds": 30,
                 "build_seconds": 60,
                 "benchmark_seconds": 120,
@@ -92,6 +91,15 @@ def request_for(config, board="mlp"):
     }
 
 
+def editable_config(config):
+    raw = copy.deepcopy(config.__dict__)
+    raw["benchmark"] = {
+        "suites": list(raw.pop("suites")),
+        "real_workloads": [workload.json() for workload in raw.pop("real_workloads")],
+    }
+    return raw
+
+
 @pytest.mark.parametrize(
     "ratio,outcome", [(1, "above-bar"), (0.9, "qualifies"), (1.2, "guard-failed")]
 )
@@ -138,7 +146,7 @@ def test_bad_evidence(config, change):
 
 
 def test_reward_only_identity_and_paths(config):
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw["rewards"]["rank_shares"] = [0.9, 0.1]
     changed = Config.parse(raw)
     assert config.identity("mlp") == changed.identity("mlp")
@@ -257,7 +265,7 @@ def test_parent_death_kills_worker_subprocess(tmp_path):
 
 
 def test_default_budgets_vary_by_family_and_architecture(config):
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw.pop("timing")
     raw["environments"] = {
         "dev": dict(weight=0.5, identity="a" * 64, architecture="amd64"),
@@ -277,11 +285,11 @@ def test_default_budgets_vary_by_family_and_architecture(config):
     caps = {st["environment"]: st.get("timing", plan["timing"]) for st in plan["strata"]}
     assert (caps["dev"]["build_seconds"], caps["dev"]["cached_build_seconds"]) == (300, 120)
     assert (caps["arm"]["build_seconds"], caps["arm"]["cached_build_seconds"]) == (960, 180)
-    assert Config.parse(copy.deepcopy(configured.__dict__)).public() == configured.public()
+    assert Config.parse(editable_config(configured)).public() == configured.public()
 
 
 def test_environment_limits_are_frozen_and_checked_by_scoring(config):
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw["environments"]["local"]["timing"] = dict(build_seconds=50, cached_build_seconds=20)
     configured = Config.parse(raw)
     plan = configured.plan("mlp")
@@ -310,7 +318,7 @@ def test_environment_limits_are_frozen_and_checked_by_scoring(config):
     ],
 )
 def test_invalid_budget_overrides_fail_before_planning(config, scope, override):
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     key = "local" if scope == "environments" else "mlp"
     raw[scope][key]["timing"] = override
     with pytest.raises(ValueError):
@@ -349,7 +357,7 @@ def test_winner_only_rewards_keep_six_independent_pools(config):
 
 
 def test_winner_only_policy_does_not_change_benchmark_identity(config):
-    raw = copy.deepcopy(config.__dict__)
+    raw = editable_config(config)
     raw["rewards"]["rank_shares"] = [1.0, 0.0]
     updated = Config.parse(raw)
     for board in config.boards:

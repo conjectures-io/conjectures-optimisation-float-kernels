@@ -196,7 +196,6 @@ def test_benchmark_events_follow_fenced_writes(monkeypatch, error, saved, event,
             "timing": {
                 "rounds": 1,
                 "inner": 1,
-                "cell_ms": 1,
                 "run_seconds": 1,
                 "build_seconds": 1,
                 "benchmark_seconds": 1,
@@ -229,7 +228,7 @@ def test_benchmark_events_follow_fenced_writes(monkeypatch, error, saved, event,
 def test_a_candidate_timeout_is_reported_as_a_result_not_a_failure(monkeypatch):
     capture = Capture()
     axiom.init("torchlean-benchmark-worker", client=capture)
-    timing = dict(rounds=1, inner=1, cell_ms=1, run_seconds=1, build_seconds=1, benchmark_seconds=1)
+    timing = dict(rounds=1, inner=1, run_seconds=1, build_seconds=1, benchmark_seconds=1)
     job = SimpleNamespace(id=3, token="private-token", lease_seconds=30, request={"timing": timing})
     saved = []
     repo = SimpleNamespace(

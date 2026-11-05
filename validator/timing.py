@@ -6,7 +6,7 @@ SUPERVISOR_GRACE_SECONDS = 60
 DEFAULT_TIMING = dict(
     rounds=11,
     inner=3,
-    cell_ms=50,
+    baseline_rounds=3,
     run_seconds=300,
     build_seconds=960,
     cached_build_seconds=180,
@@ -23,8 +23,9 @@ def build_defaults(architecture: str = "arm64") -> dict:
 
 
 def validate_timing(timing: dict) -> None:
-    required = {"rounds", "inner", "cell_ms", "run_seconds", "build_seconds", "benchmark_seconds"}
-    if not required <= timing.keys() or set(timing) - required - {"cached_build_seconds"}:
+    required = {"rounds", "inner", "run_seconds", "build_seconds", "benchmark_seconds"}
+    optional = {"cached_build_seconds", "baseline_rounds"}
+    if not required <= timing.keys() or set(timing) - required - optional:
         raise ValueError("timing requires " + ", ".join(sorted(required)))
     for key, value in timing.items():
         if (
@@ -34,8 +35,10 @@ def validate_timing(timing: dict) -> None:
             or value <= 0
         ):
             raise ValueError(f"timing {key} must be finite and positive")
-    if any(type(timing[k]) is not int for k in ("rounds", "inner")):
-        raise ValueError("rounds and inner must be integers")
+    if any(
+        type(timing[k]) is not int for k in ("rounds", "inner", "baseline_rounds") if k in timing
+    ):
+        raise ValueError("round counts must be integers")
     if timing.get("cached_build_seconds", 0) > timing["build_seconds"]:
         raise ValueError("cached build limit must not exceed the cold build limit")
 
