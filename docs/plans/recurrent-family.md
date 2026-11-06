@@ -33,10 +33,10 @@ Evidence (this machine, AMD Ryzen 5 PRO laptop):
   `exp` to millions of bits. The enclosures now use constant bounds there (`|x| > 16` for tanh,
   `x > 32` and `x < −128` for sigmoid), proved in `contains_tanhEnclosure` and
   `contains_sigmoidEnclosure`.
-- Seven trained fixtures (UCI-HAR LSTM and GRU, Appliance GRU, MNIST-rows LSTM, Spoken Arabic Digit
-  LSTM, Tiny Shakespeare LSTM, MIT-BIH GRU) evaluated with `realEval` (the bit-exact spec):
-  accuracy equal to PyTorch's and argmax agreement 100% on the evaluated prefixes, largest
-  output difference 1e-5.
+- Nine trained fixtures (UCI-HAR LSTM and GRU, Appliance GRU, MNIST-rows LSTM, Spoken Arabic Digit
+  LSTM, Tiny Shakespeare LSTM, MIT-BIH GRU, Speech Commands GRU and LSTM→GRU), each scored on its
+  full test pool with `realEval` (the bit-exact spec): accuracy or RMSE equal to PyTorch's, argmax
+  agreement 100%, largest output difference 6e-5. Results: `training/recurrent/README.md`.
 - Cost: one correctly rounded activation is about 20 µs. Synthetic `rnn:b1` cells take
   about 65–250 ms (mean about 120 ms); real fixtures 90–310 ms per inference (about 1.5 s for one
   of each). The recurrent family's measurement plan comes to about 3 minutes against its 6-minute
@@ -46,15 +46,18 @@ Evidence (this machine, AMD Ryzen 5 PRO laptop):
   `ExactSuiteProofs`, `ExactDev` and `WorkloadAudit` had been broken since 15402ba (the
   generalised convolution); they are ported here. Python: 488 tests pass.
 
+- Audits: the differential and shape audits were ported upstream (e62e762, fe7e362 from
+  `feat/competition-upgrade-ops`, cherry-picked here). `exactAudit --selftest` catches 69/69 mutants
+  (four recurrent ones), and the incumbent matches the spec on 8,360 cases. 68 operator theorems
+  use only the standard axioms (`scripts/check-exact-proofs.py`).
+
 Still open:
 
-- `exactAudit` and `auditExactShapes` (`ExactAuditCore`, `SuiteAudit`) are still on the
-  pre-15402ba shapes on this branch. The port exists as e62e762 on `feat/competition-upgrade-ops`;
-  merge it, then the recurrent audit cases and mutants added here compile.
-- Speech Commands v2 fixtures: loader and configs are written, but the 2.4 GB download and the
-  training were not run. MIT-BIH is under-trained (94.5%, 15 epochs).
-- S-R2 calibration on the benchmark workers; the new asset bundle revision on Hugging Face.
+- Upload the bundle to the Hugging Face asset repo and pin the new revision
+  (`training/recurrent/README.md`, "Publishing to Hugging Face").
+- S-R2 calibration on the benchmark workers.
 - Phase F (`exact-inference`).
+- `exactShowcase` (`stage2/Scalar`) does not build under FloatLib 3; that predates this work.
 
 ## Summary
 
