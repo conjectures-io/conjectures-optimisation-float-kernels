@@ -45,6 +45,7 @@ def layerDescription : Layer → String × Bool
   | .gemm .. => ("gemm", false)
   | .conv _ relu _ _ => ("conv2d", relu)
   | .depthwise _ relu _ _ => ("depthwise", relu)
+  | .convTranspose _ relu _ _ => ("convTranspose", relu)
   | .bn relu .. => ("scaleShift", relu)
   | .maxpool .. => ("maxpool", false)
   | .avgpool .. => ("avgpool", false)

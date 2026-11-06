@@ -67,6 +67,7 @@ def ExactRuntime.Layer.label : Layer → String
   | .gemm m k n _ => s!"gemm {m}×{k}·{k}×{n}"
   | .conv s _ _ _ => s!"conv2d {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
   | .depthwise s _ _ _ => s!"depthwise {s.kh}×{s.kw} {s.cin} on {s.h}×{s.w}"
+  | .convTranspose s _ _ _ => s!"convTranspose {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
   | .bn _ c hw _ _ => s!"scaleShift {c}×{hw}"
   | .maxpool s => s!"maxpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
   | .avgpool s => s!"avgpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
