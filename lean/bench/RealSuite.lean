@@ -127,6 +127,48 @@ def applianceMixerLayers (t : Array (Array Word)) : Except String (List Layer) :
       .linear 24 16 8 false t[offset + 7]! t[offset + 8]!, .addSaved false]
   return block 0 ++ block 9 ++ [.linear 1 192 6 false t[18]! t[19]!]
 
+/-- `recurrent-v1`: tensor 0 is a header of plain integers `[1, T, F, outputs, L, kind₀, H₀, …,
+kind_{L−1}, H_{L−1}]` (kind 0 = LSTM, 1 = GRU); then, per layer, `wih whh bih bhh` in PyTorch's
+layouts (input width `F`, then the previous layer's `H`); then the head weight and bias. The model
+is the layer stack, its last step and the linear head. -/
+def recurrentLayers (size : Nat) (t : Array (Array Word)) : Except String (List Layer) := do
+  let hdr := t[0]!.map UInt32.toNat
+  if hdr.size < 5 || hdr[0]! != 1 then throw "recurrent-v1 header must start with version 1"
+  let steps := hdr[1]!
+  let features := hdr[2]!
+  let outputs := hdr[3]!
+  let depth := hdr[4]!
+  if depth == 0 || depth > 2 || hdr.size != 5 + 2 * depth then
+    throw "recurrent-v1 header must describe one or two layers"
+  if steps == 0 || steps > 256 || features == 0 || features > 1024 || outputs == 0 ||
+      outputs > 256 then
+    throw "recurrent-v1 header has dimensions outside the adapter's limits"
+  if size != steps * features then throw "recurrent-v1 input must hold T × F words"
+  if t.size != 4 * depth + 3 then throw "recurrent-v1 fixture has the wrong tensor count"
+  let mut layers : Array Layer := #[]
+  let mut width := features
+  for l in [0:depth] do
+    let kind := hdr[5 + 2 * l]!
+    let hidden := hdr[6 + 2 * l]!
+    if kind > 1 || hidden == 0 || hidden > 64 then
+      throw "recurrent-v1 layers must be LSTM (0) or GRU (1) with hidden size 1 to 64"
+    let gates := if kind == 0 then 4 else 3
+    let wih := t[1 + 4 * l]!
+    let whh := t[2 + 4 * l]!
+    let bih := t[3 + 4 * l]!
+    let bhh := t[4 + 4 * l]!
+    if wih.size != gates * hidden * width || whh.size != gates * hidden * hidden ||
+        bih.size != gates * hidden || bhh.size != gates * hidden then
+      throw s!"recurrent-v1 layer {l} has tensors of the wrong size"
+    layers := layers.push (if kind == 0 then .lstm steps width hidden wih whh bih bhh
+      else .gru steps width hidden wih whh bih bhh)
+    width := hidden
+  let w := t[1 + 4 * depth]!
+  let b := t[2 + 4 * depth]!
+  if w.size != outputs * width || b.size != outputs then
+    throw "recurrent-v1 head has tensors of the wrong size"
+  return layers.toList ++ [.lastStep steps width, .linear 1 width outputs false w b]
+
 def prepare (adapter family : String) (size : Nat) (tensors : Array (Array Word)) : Except String (List Layer) := do
   if tensors.isEmpty || size == 0 then throw "fixture requires weights and a positive input size"
   let layers ← if adapter == "image-zoo-v1" then
@@ -136,6 +178,8 @@ def prepare (adapter family : String) (size : Nat) (tensors : Array (Array Word)
     else if adapter == "uci-har-v1" then sensorLayers family size tensors
     else if adapter == "appliance-mixer-v1" && family == "mixer" then
       applianceMixerLayers tensors
+    else if adapter == "recurrent-v1" && family == "recurrent" then
+      recurrentLayers size tensors
     else throw s!"unsupported adapter/family pair {adapter}/{family}"
   return layers
 

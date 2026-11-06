@@ -68,14 +68,18 @@ def ExactRuntime.Layer.label : Layer → String
   | .conv s _ _ _ => s!"conv2d {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
   | .depthwise s _ _ _ => s!"depthwise {s.kh}×{s.kw} {s.cin} on {s.h}×{s.w}"
   | .bn _ c hw _ _ => s!"scaleShift {c}×{hw}"
-  | .maxpool c h w k => s!"maxpool {k}×{k} {c}×{h}×{w}"
-  | .avgpool c h w k => s!"avgpool {k}×{k} {c}×{h}×{w}"
+  | .convTranspose s _ _ _ => s!"convTranspose {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
+  | .maxpool s => s!"maxpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
+  | .avgpool s => s!"avgpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
   | .rmsnorm rows n _ _ => s!"rmsnorm {rows}×{n}"
   | .layernorm rows n _ _ _ => s!"layernorm {rows}×{n}"
   | .save => "save"
   | .addSaved _ => "addRelu"
   | .attention T heads d _ _ _ _ _ _ _ _ _ => s!"attention {T} tokens, {heads}×{d}"
   | .silu => "silu"
+  | .lstm T i H _ _ _ _ => s!"lstm {T} steps, {i}→{H}"
+  | .gru T i H _ _ _ _ => s!"gru {T} steps, {i}→{H}"
+  | .lastStep T n => s!"lastStep {T}×{n}"
 
 /-- One sample of a model, layer by layer. -/
 def profile (model : String) : IO Unit := do

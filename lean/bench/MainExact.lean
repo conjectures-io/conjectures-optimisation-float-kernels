@@ -51,6 +51,7 @@ def realCellModel (family : String) : String :=
   | "resnet" => "cnn"
   | "mobilenet" => "mnet"
   | "normalized_mlp" => "nmlp"
+  | "recurrent" => "rnn"
   | _ => family
 
 def main : IO UInt32 := do

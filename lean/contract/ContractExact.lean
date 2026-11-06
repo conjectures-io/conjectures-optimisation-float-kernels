@@ -1,6 +1,7 @@
 import ExactToolkit.Values
 import ExactToolkit.StableNorm
 import ExactToolkit.SqrtProof
+import ExactToolkit.Activation
 import FloatLib.Floats.Formats.BinaryInterchange.Transcendentals.CorrectlyRounded.Runtime
 
 /-!
@@ -28,14 +29,16 @@ exact sum of the products, rounded once), and a kernel says where its operands c
 | attn | `scores` | per head, each output a `dotOf` over a query row and a key row; optional causal mask (−∞ above the diagonal) |
 | attn | `mix` | per head, each output a `dotOf` over a row of weights and a column of values |
 | attn | `softmax` | per row: FloatLib's `maximum`, then `exp (x − max)`, their exact sum, and each `div` by it |
-| attn | `silu` | `x · sigmoid x`, with `sigmoid x = 1 / (1 + exp (−x))`, FloatLib's steps in this order |
+| attn | `silu` | `x · sigmoid x`, one rounding after the correctly rounded `sigmoid` |
+| rnn | `lstm` | per step, each gate a `dotOf` over `[x_t; h; 1; 1]` and `[w_ih; w_hh; b_ih; b_hh]`; correctly rounded `sigmoid`/`tanh`; `c' = f·c + i·g` and `h' = o · tanh c'` each rounded once |
+| rnn | `gru` | per step, `r`, `z` as LSTM gates; `n = tanh(w_in·x + b_in + r·(w_hn·h + b_hn))` with the inner sum rounded once; `h' = (1 − z)·n + z·h` rounded once |
 
 Each dot-based spec is written once over a dot product (`linearWith dot …`) and the spec is that
 definition with `dotOf`; an entry may use the same definitions with a faster proved dot product.
 
 An entry provides one `Kernels` record and proves `Obligation`: each kernel equals its spec. Then
-every model runs exactly as the spec models do (`runModel_eq`). Each of the six families has its own
-obligation, for family boards.
+every model runs exactly as the spec models do (`runModel_eq`). Each of the seven families has its
+own obligation, for family proofs.
 -/
 
 namespace ExactRuntime
@@ -458,13 +461,95 @@ def rowMax (n : Nat) (x : Array Word) (r : Nat) : Word :=
 /-- The `softmax` spec: `softmaxWith` run with FloatLib's dot product. -/
 def softmaxSpec := softmaxWith dotOf
 
-/-- `1 / (1 + exp (-x))`, FloatLib's steps in this order. -/
-def sigmoidW (w : Word) : Word :=
-  toWord (Model.div (ofW oneW) (Model.add (ofW oneW) (ofW (expW (negW w)))))
+/-- The logistic sigmoid `1 / (1 + e^(−x))`, correctly rounded (`ExactToolkit.Activation`). -/
+abbrev sigmoidW (w : Word) : Word := sigmoidCR w
+
+/-- `tanh x`, correctly rounded (`ExactToolkit.Activation`). -/
+abbrev tanhW (w : Word) : Word := tanhCR w
 
 /-- SiLU (swish): `x · sigmoid x`, one more rounding. -/
 def siluSpec (x : Array Word) : Array Word :=
   x.map fun w => toWord (Model.mul (ofW w) (ofW (sigmoidW w)))
+
+/-! ## Recurrent layers (`T` steps of `inW` inputs, hidden size `H`, zero initial state)
+
+The input `x` is `T × inW`, row-major (time-major). Weights follow PyTorch's `nn.LSTM`/`nn.GRU`
+layout: `wih` is `G·H × inW`, `whh` is `G·H × H`, `bih` and `bhh` are `G·H`, gate blocks in
+PyTorch's order (`G = 4`: `i, f, g, o` for the LSTM; `G = 3`: `r, z, n` for the GRU). The output
+is every step's hidden state, `T × H`. The initial `h` and `c` are `+0` words, and they are terms
+of the dot products like any other value. -/
+
+/-- Pre-activation of gate row `k` at step `t`: the exact dot of `[x_t; h; 1; 1]` with
+`[wih[k]; whh[k]; bih[k]; bhh[k]]`, rounded once. -/
+@[inline] def gateWith (dot : DotFn) (inW H : Nat) (x wih whh bih bhh h : Array Word)
+    (t k : Nat) : Word :=
+  dot (inW + H + 2)
+    (fun j => if j < inW then x[t * inW + j]! else if j < inW + H then h[j - inW]! else oneW)
+    (fun j => if j < inW then wih[k * inW + j]!
+      else if j < inW + H then whh[k * H + (j - inW)]!
+      else if j = inW + H then bih[k]! else bhh[k]!)
+
+/-- Run `step` for `t = 0, …, T − 1` from `init`; the output is each step's first state component
+(the hidden state, `H` words), `T × H`. -/
+def recurWith (T H : Nat) (step : Nat → Array Word × Array Word → Array Word × Array Word)
+    (init : Array Word × Array Word) : Array Word :=
+  let hs := ((List.range T).foldl
+    (fun (acc : (Array Word × Array Word) × Array (Array Word)) t =>
+      let st := step t acc.1
+      (st, acc.2.push st.1)) (init, #[])).2
+  Array.ofFn (n := T * H) fun q => (hs[q.val / H]!)[q.val % H]!
+
+/-- One LSTM step on `(h, c)`: gates `i f o = sig a`, `g = tanh a`;
+`c' = f·c + i·g` (an exact two-term dot, rounded once); `h' = o · tanh c'` (one rounding). -/
+@[specialize] def lstmStepWith (dot : DotFn) (sig tanh : Word → Word) (inW H : Nat)
+    (x wih whh bih bhh : Array Word) (t : Nat) (st : Array Word × Array Word) :
+    Array Word × Array Word :=
+  let pre := Array.ofFn (n := 4 * H) fun k => gateWith dot inW H x wih whh bih bhh st.1 t k.val
+  let cell := Array.ofFn (n := H) fun u =>
+    dot 2 (fun j => if j = 0 then sig pre[H + u.val]! else sig pre[u.val]!)
+      (fun j => if j = 0 then (st.2)[u.val]! else tanh pre[2 * H + u.val]!)
+  let hidden := Array.ofFn (n := H) fun u =>
+    toWord (Model.mul (ofW (sig pre[3 * H + u.val]!)) (ofW (tanh (cell[u.val]!))))
+  (hidden, cell)
+
+/-- An LSTM layer: every step's hidden state, `T × H`. -/
+@[specialize] def lstmWith (dot : DotFn) (sig tanh : Word → Word) (T inW H : Nat)
+    (x wih whh bih bhh : Array Word) : Array Word :=
+  recurWith T H (lstmStepWith dot sig tanh inW H x wih whh bih bhh)
+    (Array.replicate H 0, Array.replicate H 0)
+
+/-- One GRU step on `h`: `r z = sig a`; `hn = R(whh[n]·h + bhh[n])`;
+`n = tanh (R(wih[n]·x_t + bih[n] + r·hn))` (one exact dot with `hn` as a term);
+`h' = R(n − z·n + z·h)` (the exact three-term dot `[n, n, h]·[1, −z, z]`). The second state
+component is unused. -/
+@[specialize] def gruStepWith (dot : DotFn) (sig tanh : Word → Word) (inW H : Nat)
+    (x wih whh bih bhh : Array Word) (t : Nat) (st : Array Word × Array Word) :
+    Array Word × Array Word :=
+  let h := st.1
+  let r := Array.ofFn (n := H) fun u => sig (gateWith dot inW H x wih whh bih bhh h t u.val)
+  let z := Array.ofFn (n := H) fun u =>
+    sig (gateWith dot inW H x wih whh bih bhh h t (H + u.val))
+  let hn := Array.ofFn (n := H) fun u =>
+    dot (H + 1) (fun j => if j < H then h[j]! else oneW)
+      (fun j => if j < H then whh[(2 * H + u.val) * H + j]! else bhh[2 * H + u.val]!)
+  let n := Array.ofFn (n := H) fun u => tanh <| dot (inW + 2)
+    (fun j => if j < inW then x[t * inW + j]! else if j = inW then oneW else hn[u.val]!)
+    (fun j => if j < inW then wih[(2 * H + u.val) * inW + j]!
+      else if j = inW then bih[2 * H + u.val]! else r[u.val]!)
+  let h' := Array.ofFn (n := H) fun u =>
+    dot 3 (fun j => if j = 2 then h[u.val]! else n[u.val]!)
+      (fun j => if j = 0 then oneW else if j = 1 then negW z[u.val]! else z[u.val]!)
+  (h', st.2)
+
+/-- A GRU layer: every step's hidden state, `T × H`. -/
+@[specialize] def gruWith (dot : DotFn) (sig tanh : Word → Word) (T inW H : Nat)
+    (x wih whh bih bhh : Array Word) : Array Word :=
+  recurWith T H (gruStepWith dot sig tanh inW H x wih whh bih bhh) (Array.replicate H 0, #[])
+
+/-- The `lstm` spec: FloatLib's dot product and the correctly rounded activations. -/
+def lstmSpec := lstmWith dotOf sigmoidW tanhW
+/-- The `gru` spec: FloatLib's dot product and the correctly rounded activations. -/
+def gruSpec := gruWith dotOf sigmoidW tanhW
 
 /-! ## The kernels, by family -/
 
@@ -506,8 +591,20 @@ structure AttnKernels where
 /-- The attention family's specs. -/
 def specAttn : AttnKernels := ⟨scoresSpec, mixSpec, softmaxSpec, siluSpec⟩
 
-/-- An entry's 17 kernels, by family. `attn` defaults to the specs, so an entry that doesn't name
-it still compiles and proves its obligation. -/
+/-- A recurrent kernel: `T inW H x wih whh bih bhh`, every step's hidden state. -/
+abbrev RecurrentFn :=
+  Nat → Nat → Nat → Array Word → Array Word → Array Word → Array Word → Array Word → Array Word
+
+/-- The recurrent family: whole-sequence LSTM and GRU layers. -/
+structure RecurrentKernels where
+  lstm : RecurrentFn
+  gru : RecurrentFn
+
+/-- The recurrent family's specs. -/
+def specRnn : RecurrentKernels := ⟨lstmSpec, gruSpec⟩
+
+/-- An entry's 19 kernels, by family. `attn` and `rnn` default to the specs, so an entry that
+doesn't name them still compiles and proves its obligation. -/
 structure Kernels where
   core : CoreKernels
   dense : DenseKernels
@@ -515,6 +612,7 @@ structure Kernels where
   elem : ElementKernels
   norm : NormKernels
   attn : AttnKernels := specAttn
+  rnn : RecurrentKernels := specRnn
 
 /-- The core family's specs. -/
 def specCore : CoreKernels := ⟨sumSpec, dotSpec⟩
@@ -526,8 +624,8 @@ def specConv : ConvKernels := ⟨conv2dSpec, depthwiseSpec, convTransposeSpec⟩
 def specElem : ElementKernels := ⟨avgpoolSpec, maxpoolSpec, addReluSpec, scaleShiftSpec⟩
 /-- The normalisation family's specs. -/
 def specNorm : NormKernels := ⟨rmsnormSpec, layernormSpec⟩
-/-- All 17 specs: what an entry's kernels must equal. -/
-def specKernels : Kernels := ⟨specCore, specDense, specConv, specElem, specNorm, specAttn⟩
+/-- All 19 specs: what an entry's kernels must equal. -/
+def specKernels : Kernels := ⟨specCore, specDense, specConv, specElem, specNorm, specAttn, specRnn⟩
 
 /-- The obligation an entry proves: each of its kernels equals the spec. -/
 def Obligation (K : Kernels) : Prop := K = specKernels
@@ -544,22 +642,26 @@ def ElementObligation (k : ElementKernels) : Prop := k = specElem
 def NormObligation (k : NormKernels) : Prop := k = specNorm
 /-- The attention family equals its specs. -/
 def AttnObligation (k : AttnKernels) : Prop := k = specAttn
+/-- The recurrent family equals its specs. -/
+def RnnObligation (k : RecurrentKernels) : Prop := k = specRnn
 
-/-- Champions of the six families together meet the whole obligation. -/
+/-- The seven families' proofs together meet the whole obligation. -/
 theorem obligation_of_families (K : Kernels) (h1 : CoreObligation K.core)
     (h2 : DenseObligation K.dense) (h3 : ConvObligation K.conv) (h4 : ElementObligation K.elem)
-    (h5 : NormObligation K.norm) (h6 : AttnObligation K.attn) : Obligation K := by
-  obtain ⟨c, d, v, e, n, a⟩ := K
+    (h5 : NormObligation K.norm) (h6 : AttnObligation K.attn) (h7 : RnnObligation K.rnn) :
+    Obligation K := by
+  obtain ⟨c, d, v, e, n, a, r⟩ := K
   simp only [CoreObligation, DenseObligation, ConvObligation, ElementObligation,
-    NormObligation, AttnObligation] at h1 h2 h3 h4 h5 h6
-  subst h1 h2 h3 h4 h5 h6
+    NormObligation, AttnObligation, RnnObligation] at h1 h2 h3 h4 h5 h6 h7
+  subst h1 h2 h3 h4 h5 h6 h7
   rfl
 
 /-! ## Models: a list of layers, run on each sample -/
 
 /-- One layer of a model; `save` and `addSaved` make residual connections. `attention` is
 multi-head self-attention on `T` tokens: projections by `linear`, then `scores`, `softmax`, `mix`
-and the output projection. -/
+and the output projection. `lstm` and `gru` turn `T × inW` into every step's `T × H` hidden state;
+`lastStep T n` keeps the last of `T` rows of `n` words (no arithmetic). -/
 inductive Layer where
   | linear (rows inW outW : Nat) (relu : Bool) (w b : Array Word)
   | gemm (m k n : Nat) (a : Array Word)       -- left-multiply the activation (`k × n`) by `a`
@@ -575,6 +677,9 @@ inductive Layer where
   | addSaved (relu : Bool)                    -- add the remembered activation (residual)
   | attention (T heads d : Nat) (causal : Bool) (wq bq wk bk wv bv wo bo : Array Word)
   | silu
+  | lstm (T inW H : Nat) (wih whh bih bhh : Array Word)
+  | gru (T inW H : Nat) (wih whh bih bhh : Array Word)
+  | lastStep (T n : Nat)
 
 /-- One layer on `(activation, saved)`. -/
 def Layer.apply (K : Kernels) : Layer → Array Word × Array Word → Array Word × Array Word
@@ -598,6 +703,9 @@ def Layer.apply (K : Kernels) : Layer → Array Word × Array Word → Array Wor
     let p := K.attn.softmax (heads * T) T (K.attn.scores heads T d causal q k)
     (K.dense.linear T c c false (K.attn.mix heads T d p v) wo bo, s)
   | .silu, (x, s) => (K.attn.silu x, s)
+  | .lstm T inW H wih whh bih bhh, (x, s) => (K.rnn.lstm T inW H x wih whh bih bhh, s)
+  | .gru T inW H wih whh bih bhh, (x, s) => (K.rnn.gru T inW H x wih whh bih bhh, s)
+  | .lastStep T n, (x, s) => (x.extract ((T - 1) * n) (T * n), s)
 
 /-- Run `layers` on each of `samples` consecutive inputs of `size` words; concatenate outputs. -/
 def runModel (K : Kernels) (layers : List Layer) (samples size : Nat) (x : Array Word) :

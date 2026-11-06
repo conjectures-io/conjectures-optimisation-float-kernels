@@ -30,6 +30,12 @@ def shapeRecord (l : Layer) (shape : Nat × Nat) : Json := Id.run do
       ("attention", #[T,heads,d], (ws.map Array.size).sum, (bs.map Array.size).sum,
         ws.all (·.all finiteWord) && bs.all (·.all finiteWord), 0)
     | .silu => ("silu", #[], 0, 0, true, 0)
+    | .lstm T i H wih whh bih bhh | .gru T i H wih whh bih bhh =>
+      let ws : List (Array Word) := [wih, whh]
+      let bs : List (Array Word) := [bih, bhh]
+      (if wih.size == 4 * H * i then "lstm" else "gru", #[T, i, H], (ws.map Array.size).sum,
+        (bs.map Array.size).sum, ws.all (·.all finiteWord) && bs.all (·.all finiteWord), 0)
+    | .lastStep T n => ("lastStep", #[T, n], 0, 0, true, 0)
   return Json.mkObj [("op", toJson op), ("dims", toJson dims),
     ("weights", toJson weights), ("bias", toJson bias), ("parameters_finite", toJson finite),
     ("eps", toJson epsilon), ("input", toJson shape.1), ("saved", toJson shape.2),

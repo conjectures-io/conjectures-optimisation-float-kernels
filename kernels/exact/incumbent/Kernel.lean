@@ -15,7 +15,8 @@ digits of `pos - neg` and rounds from the top two digits and a sticky bit, which
 its inputs, weights and bias in place and its proof is one rewrite. Max pooling keeps its running
 maximum as a word and compares finite words by their exact values (`maxW`, proved against
 FloatLib's `maximum`). The residual add and batch norm use their specs. Attention's `scores` and
-`mix` and softmax's exact sum use `dotFn` too; `exp`, and so SiLU, use their specs.
+`mix` and softmax's exact sum use `dotFn` too; `exp`, and so SiLU, use their specs. The LSTM and
+GRU gates and state updates use `dotFn`; their `sigmoid` and `tanh` are the specs'.
 -/
 
 namespace Submission
@@ -803,10 +804,11 @@ def kernels : Kernels where
   elem := ⟨avgpoolWith dotFn, maxpoolW, addReluSpec, scaleShiftSpec⟩
   norm := ⟨rmsnormWith dotFn, layernormWith dotFn⟩
   attn := ⟨scoresWith dotFn, mixWith dotFn, softmaxWith dotFn, siluSpec⟩
+  rnn := ⟨lstmWith dotFn sigmoidW tanhW, gruWith dotFn sigmoidW tanhW⟩
 
 theorem correct : Obligation kernels := by
   simp only [Obligation, kernels, specKernels, specCore, specDense, specConv, specElem, specNorm,
-    specAttn, linearSpec, gemmSpec, conv2dSpec, depthwiseSpec, convTransposeSpec, avgpoolSpec,
+    specAttn, specRnn, lstmSpec, gruSpec, linearSpec, gemmSpec, conv2dSpec, depthwiseSpec, convTransposeSpec, avgpoolSpec,
     rmsnormSpec, layernormSpec, scoresSpec, mixSpec, softmaxSpec, maxpoolW_eq, dotFn_eq_dotOf,
     funext sumX_eq_spec, funext fun a => funext (dotX_eq_spec a)]
 

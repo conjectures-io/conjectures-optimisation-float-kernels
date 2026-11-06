@@ -3,8 +3,9 @@ import ContractExact
 /-!
 # The exact-runtime suite: inputs and models, shared by the gate's bench and the dev bench
 
-Everything is drawn from a seed: data of one of three types, and the six models (MLP,
-ResNet-style CNN, MobileNet-style CNN, normalised MLP, Mixer-style block, transformer block).
+Everything is drawn from a seed: data of one of three types, and the seven models (MLP,
+ResNet-style CNN, MobileNet-style CNN, normalised MLP, Mixer-style block, transformer block,
+recurrent LSTM → GRU classifier).
 -/
 
 namespace ExactSuite
@@ -45,6 +46,16 @@ Sparse workloads retain half-zero weights. All preparation is outside inference 
 def wts (kind : String) (seed : UInt32) (k fanIn n : Nat) : Array Word :=
   let divisor := ofW (natW (max 1 (Nat.sqrt fanIn)))
   let scale := FloatLib.Floats.Formats.BinaryInterchange.Model.div (ofW (natW 4)) divisor
+  (gen (if kind == "sparse" then "sparse" else "normal") n
+      (seed + 101 * k.toUInt32)).map fun w =>
+    toWord (FloatLib.Floats.Formats.BinaryInterchange.Model.mul (ofW w) scale)
+
+/-- Weights scaled by fan-in with an explicit `gain` (`wts` uses 4, for ReLU layers). Recurrent
+gates use a smaller gain so that their pre-activations mostly stay out of `sigmoid`/`tanh`
+saturation, as in trained models. -/
+def wtsGain (gain : Nat) (kind : String) (seed : UInt32) (k fanIn n : Nat) : Array Word :=
+  let divisor := ofW (natW (max 1 (Nat.sqrt fanIn)))
+  let scale := FloatLib.Floats.Formats.BinaryInterchange.Model.div (ofW (natW gain)) divisor
   (gen (if kind == "sparse" then "sparse" else "normal") n
       (seed + 101 * k.toUInt32)).map fun w =>
     toWord (FloatLib.Floats.Formats.BinaryInterchange.Model.mul (ofW w) scale)
@@ -129,6 +140,17 @@ def tfmLayers (kind : String) (seed : UInt32) (T heads d classes : Nat) : List L
    .linear T (2 * c) c false (w 14 (2 * c) (c * 2 * c)) (b 15 c), .addSaved false,
    .linear 1 (T * c) classes false (w 16 (T * c) (classes * T * c)) (b 17 classes)]
 
+/-- A recurrent classifier on `T` steps of `F` features: an LSTM with hidden size `H`, a GRU with
+hidden size `H` over its outputs (so every workload runs both kernels), the last step, and a
+linear classifier. -/
+def rnnLayers (kind : String) (seed : UInt32) (T F H classes : Nat) : List Layer :=
+  let w := wtsGain 2 kind seed
+  let b := biases seed
+  [.lstm T F H (w 1 (F + H) (4 * H * F)) (w 2 (F + H) (4 * H * H)) (b 3 (4 * H)) (b 4 (4 * H)),
+   .gru T H H (w 5 (2 * H) (3 * H * H)) (w 6 (2 * H) (3 * H * H)) (b 7 (3 * H)) (b 8 (3 * H)),
+   .lastStep T H,
+   .linear 1 H classes false (wts kind seed 9 H (classes * H)) (b 10 classes)]
+
 /-- A cell's checksum: an FNV-1a hash of its output words. -/
 def hashArr (v : Array UInt32) : UInt32 := v.foldl (fun h x => (h ^^^ x) * 16777619) 2166136261
 
@@ -158,12 +180,13 @@ structure Cell where
 /-- `model:batch:kind`, the name the gate reads. -/
 def Cell.name (c : Cell) : String := s!"{c.model}:b{c.batch}:{c.kind}"
 
-/-- The 36 cells: 6 models × 2 batch sizes × 3 data types. -/
+/-- The 42 cells: 7 models × 2 batch sizes × 3 data types. -/
 def cells : List Cell :=
   ["normal", "wide", "sparse"].flatMap fun kind =>
     [⟨"mlp", 1, kind⟩, ⟨"mlp", 8, kind⟩, ⟨"cnn", 1, kind⟩, ⟨"cnn", 4, kind⟩,
      ⟨"mnet", 1, kind⟩, ⟨"mnet", 4, kind⟩, ⟨"nmlp", 1, kind⟩, ⟨"nmlp", 8, kind⟩,
-     ⟨"mixer", 1, kind⟩, ⟨"mixer", 4, kind⟩, ⟨"tfm", 1, kind⟩, ⟨"tfm", 4, kind⟩]
+     ⟨"mixer", 1, kind⟩, ⟨"mixer", 4, kind⟩, ⟨"tfm", 1, kind⟩, ⟨"tfm", 4, kind⟩,
+     ⟨"rnn", 1, kind⟩, ⟨"rnn", 4, kind⟩]
 
 /-- A cell's model, with sizes drawn from `seed`, and how to run it: the layers, the number of
 samples, the words per sample. -/
@@ -184,6 +207,11 @@ def cellModel (c : Cell) (seed : UInt32) : List Layer × Nat × Nat :=
     let T := pick 6 8 9
     let heads := pick 7 2 3
     (tfmLayers c.kind seed T heads 16 10, c.batch, T * heads * 16)
+  | "rnn" =>
+    let T := pick 6 8 9
+    let F := pick 7 8 9
+    let H := 8 * pick 3 2 3
+    (rnnLayers c.kind seed T F H 10, c.batch, T * F)
   | _ =>
     let T := pick 6 8 9
     let C := pick 7 16 33
@@ -246,6 +274,15 @@ def profileModel (c : Cell) (seed : UInt32) (profile : String) : List Layer × N
         else if scale then 24 + 8 * draw 6 3 else 8 + draw 6 9
       let heads := if scale then 4 else 2 + draw 7 3
       return (tfmLayers c.kind seed tokens heads 16 10, c.batch, tokens * heads * 16)
+    | "rnn" =>
+      -- Sized for the cost of `sigmoid`/`tanh`, which dominates recurrent inference.
+      let steps := if boundary then 9 + 2 * draw 6 5
+        else if scale then 24 + draw 6 17 else 8 + draw 6 9
+      let features := if boundary then edge (8 + 8 * draw 7 2) 6
+        else if scale then 16 + draw 7 17 else 8 + draw 7 17
+      let hidden := if boundary then [15, 17, 31, 33][draw 3 4]!
+        else if scale then 32 else 16 + 8 * draw 3 3
+      return (rnnLayers c.kind seed steps features hidden 10, c.batch, steps * features)
     | _ =>
       let tokens := if boundary then 9 + 2 * draw 6 5
         else if scale then 20 + 2 * draw 6 7 else 8 + draw 6 9

@@ -244,12 +244,27 @@ def runCase (E S : Kernels) (malformed : Bool) (kernel kind : String) (seed : UI
   | "silu" =>
     let x := maybeShort malformed r[15]! (arr (dl 0 0 32 32 1069) 1)
     ⟨s!"n={x.size}", E.attn.silu x, S.attn.silu x⟩
+  | "lstm" | "gru" =>
+    -- short sequences keep the spec's correctly rounded activations affordable; `long` runs many
+    -- steps (state carried across steps), `many` many hidden units
+    let (T, i, H) := if kind == "many" then (d 0 1 3, d 1 1 3, d 2 4 9)
+      else (dl 0 1 4 12 25, d 1 1 4, d 2 1 4)
+    let G := if kernel == "lstm" then 4 else 3
+    let x := maybeShort malformed r[15]! (arr (T * i) 1)
+    let wih := arr (G * H * i) 2
+    let whh := arr (G * H * H) 3
+    let bih := arr (G * H) 4
+    let bhh := arr (G * H) 5
+    let shape := s!"T={T} inW={i} H={H}"
+    if kernel == "lstm" then
+      ⟨shape, E.rnn.lstm T i H x wih whh bih bhh, S.rnn.lstm T i H x wih whh bih bhh⟩
+    else ⟨shape, E.rnn.gru T i H x wih whh bih bhh, S.rnn.gru T i H x wih whh bih bhh⟩
   | _ => ⟨"unknown kernel", #[], #[0]⟩
 
-/-- The 16 kernels, as `runCase` names them. -/
+/-- The 18 audited kernels (all but `convTranspose`), as `runCase` names them. -/
 def kernelNames : List String :=
   ["sum", "dot", "linear", "gemm", "conv2d", "depthwise", "avgpool", "maxpool", "addRelu",
-    "scaleShift", "rmsnorm", "layernorm", "scores", "mix", "softmax", "silu"]
+    "scaleShift", "rmsnorm", "layernorm", "scores", "mix", "softmax", "silu", "lstm", "gru"]
 
 /-! ## The audit -/
 
@@ -467,6 +482,34 @@ def withSum (f : Array UInt32 → UInt32) : Kernels :=
 /-- Replace the attention family. -/
 def withAttn (a : AttnKernels) : Kernels := { specKernels with attn := a }
 
+/-- Replace the recurrent family. -/
+def withRnn (a : RecurrentKernels) : Kernels := { specKernels with rnn := a }
+
+/-- The sigmoid before it was correctly rounded: `1 / (1 + exp (−x))` in three roundings. -/
+def stagedSigmoid (w : Word) : Word :=
+  toWord (Model.div (ofW oneW) (Model.add (ofW oneW) (ofW (expW (negW w)))))
+
+/-- `tanh x = 2·σ(2x) − 1` in FloatLib steps: cancels near zero. -/
+def tanhViaSigmoid (w : Word) : Word :=
+  let s := sigmoidW (toWord (Model.add (ofW w) (ofW w)))
+  toWord (Model.sub (Model.add (ofW s) (ofW s)) (ofW oneW))
+
+/-- The spec's dot, except that two-term dots (the LSTM cell update) round each product and the
+sum. -/
+def twoTermRounded : DotFn := fun n fa fb =>
+  if n == 2 then
+    toWord (Model.add (Model.mul (ofW (fa 0)) (ofW (fb 0))) (Model.mul (ofW (fa 1)) (ofW (fb 1))))
+  else dotOf n fa fb
+
+/-- The spec's dot, except that the three-term GRU update is `(1 − z)·n + z·h` with `1 − z`
+rounded first (PyTorch's arithmetic, not the exact sum). -/
+def gruUpdateRounded : DotFn := fun n fa fb =>
+  if n == 3 then
+    let z := fb 2
+    toWord (Model.fma (Model.sub (ofW oneW) (ofW z)) (ofW (fa 0))
+      (Model.mul (ofW z) (ofW (fa 2))))
+  else dotOf n fa fb
+
 /-- Softmax with its own exponent argument, sum and final step (the spec: `x - max`, the exact
 sum, a division). -/
 def softmaxWithSteps (shift : Word → Word → Word) (sum : Array Word → Word)
@@ -482,6 +525,14 @@ def divW (a b : Word) : Word := toWord (Model.div (ofW a) (ofW b))
 
 /-- The mutants, one plausible bug each. -/
 def mutants : List Mutant := [
+  ⟨"lstm uses the staged sigmoid", "lstm", withRnn { specRnn with
+    lstm := lstmWith dotOf stagedSigmoid tanhW }⟩,
+  ⟨"lstm rounds the cell update's products", "lstm", withRnn { specRnn with
+    lstm := lstmWith twoTermRounded sigmoidW tanhW }⟩,
+  ⟨"gru computes tanh as 2σ(2x) − 1", "gru", withRnn { specRnn with
+    gru := gruWith dotOf sigmoidW tanhViaSigmoid }⟩,
+  ⟨"gru rounds 1 − z before its update", "gru", withRnn { specRnn with
+    gru := gruWith gruUpdateRounded sigmoidW tanhW }⟩,
   ⟨"softmax skips the max subtraction", "softmax", withAttn { specAttn with
     softmax := softmaxWithSteps (fun a _ => a) sumSpec divW }⟩,
   ⟨"softmax multiplies by the sum's reciprocal", "softmax", withAttn { specAttn with

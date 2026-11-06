@@ -57,6 +57,12 @@ def AttentionValid (T heads d : Nat) (x wq bq wk bk wv bv wo bo : Array Word) : 
     [wq, wk, wv, wo].all (·.size == heads * d * (heads * d)) = true ∧
     [bq, bk, bv, bo].all (·.size == heads * d) = true
 
+/-- `T` steps of `inW` inputs and hidden size `H` with `G` gate blocks (4 LSTM, 3 GRU):
+`G·H × inW` and `G·H × H` weights and two `G·H` biases. -/
+def RecurrentValid (G T inW H : Nat) (x wih whh bih bhh : Array Word) : Prop :=
+  T > 0 ∧ inW > 0 ∧ H > 0 ∧ x.size = T * inW ∧ wih.size = G * H * inW ∧
+    whh.size = G * H * H ∧ bih.size = G * H ∧ bhh.size = G * H
+
 instance (r i o : Nat) (x w b : Array Word) : Decidable (LinearValid r i o x w b) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
 instance (batch m k n : Nat) (a b : Array Word) : Decidable (GemmValid batch m k n a b) :=
@@ -74,6 +80,10 @@ instance (s : PoolShape) (x : Array Word) : Decidable (PoolValid s x) := by
 instance (T heads d : Nat) (x wq bq wk bk wv bv wo bo : Array Word) :
     Decidable (AttentionValid T heads d x wq bq wk bk wv bv wo bo) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
+
+instance (G T inW H : Nat) (x wih whh bih bhh : Array Word) :
+    Decidable (RecurrentValid G T inW H x wih whh bih bhh) :=
+  inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
 
 /-- A fast path can assume validity while the exposed function remains universally equal. -/
 def guarded {α β : Type} (valid : α → Prop) [DecidablePred valid]
@@ -104,6 +114,9 @@ def Layer.valid (l : Layer) (state : Array Word × Array Word) : Bool :=
     | .attention T heads d _ wq bq wk bk wv bv wo bo =>
       decide (AttentionValid T heads d x wq bq wk bk wv bv wo bo)
     | .silu => !x.isEmpty
+    | .lstm T inW H wih whh bih bhh => decide (RecurrentValid 4 T inW H x wih whh bih bhh)
+    | .gru T inW H wih whh bih bhh => decide (RecurrentValid 3 T inW H x wih whh bih bhh)
+    | .lastStep T n => T > 0 && n > 0 && x.size == T * n
 
 /-- Validate before calling any miner code; the rejected branch does not evaluate it. -/
 def Layer.checked (K : Kernels) (l : Layer) (state : Array Word × Array Word) :
@@ -173,6 +186,14 @@ theorem checked_layer_eq (K : Kernels) (l : Layer) (st out : Array Word × Array
 
 @[simp] theorem siluSpec_size (x : Array Word) : (siluSpec x).size = x.size := by
   simp [siluSpec]
+
+@[simp] theorem lstmSpec_size (T inW H : Nat) (x wih whh bih bhh : Array Word) :
+    (lstmSpec T inW H x wih whh bih bhh).size = T * H := by
+  simp [lstmSpec, lstmWith, recurWith]
+
+@[simp] theorem gruSpec_size (T inW H : Nat) (x wih whh bih bhh : Array Word) :
+    (gruSpec T inW H x wih whh bih bhh).size = T * H := by
+  simp [gruSpec, gruWith, recurWith]
 
 theorem rmsnorm_stable_on_domain (r n : Nat) (eps : Word) (x g : Array Word)
     (h : stableNormDomain r n eps x g = true) :
