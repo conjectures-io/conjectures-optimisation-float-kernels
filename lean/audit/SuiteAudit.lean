@@ -12,12 +12,19 @@ def shapeRecord (l : Layer) (shape : Nat × Nat) : Json := Id.run do
     | .gemm m k n a => ("gemm", #[m,k,n], a.size, 0, a.all finiteWord, 0)
     | .conv s _ w b | .depthwise s _ w b =>
       (if let .conv .. := l then "conv2d" else "depthwise",
-        #[s.cin,s.h,s.w,s.cout,s.kh,s.kw,s.stride,s.pad], w.size, b.size,
+        #[s.cin,s.h,s.w,s.cout,s.kh,s.kw,s.strideH,s.strideW,s.padT,s.padL,s.padB,s.padR,
+          s.dilH,s.dilW,s.groups], w.size, b.size,
         w.all finiteWord && b.all finiteWord, 0)
+    | .convTranspose s _ w b =>
+      ("convTranspose", #[s.cin,s.h,s.w,s.cout,s.kh,s.kw,s.strideH,s.strideW,
+        s.padT,s.padL,s.padB,s.padR,s.dilH,s.dilW,s.groups,s.outPadH,s.outPadW],
+        w.size, b.size, w.all finiteWord && b.all finiteWord, 0)
     | .bn _ c hw s t => ("scaleShift", #[c,hw], s.size, t.size,
         s.all finiteWord && t.all finiteWord, 0)
-    | .maxpool c h w k => ("maxpool", #[c,h,w,k], 0, 0, true, 0)
-    | .avgpool c h w k => ("avgpool", #[c,h,w,k], 0, 0, true, 0)
+    | .maxpool s => ("maxpool", #[s.c,s.h,s.w,s.kh,s.kw,s.strideH,s.strideW,
+        s.padT,s.padL,s.padB,s.padR], 0, 0, true, 0)
+    | .avgpool s => ("avgpool", #[s.c,s.h,s.w,s.kh,s.kw,s.strideH,s.strideW,
+        s.padT,s.padL,s.padB,s.padR], 0, 0, true, 0)
     | .rmsnorm r n eps g => ("rmsnorm", #[r,n], g.size, 0,
         g.all finiteWord && finiteWord eps && rationalWord eps > 0, eps.toNat)
     | .layernorm r n eps g b => ("layernorm", #[r,n], g.size, b.size,

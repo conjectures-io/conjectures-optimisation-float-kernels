@@ -161,13 +161,18 @@ def runCase (E S : Kernels) (malformed : Bool) (kernel kind : String) (seed : UI
     -- `long`: conv2d windows of 270–405 terms (30–45 input channels, 3×3, on a small image),
     -- depthwise windows up to 9×9; `many`: up to 17 output channels (depthwise: 17 channels)
     let s : ConvShape :=
-      if kind == "long" && kernel == "conv2d" then ⟨d 0 30 16, d 1 2 3, d 2 2 3, d 3 1 3, 3, 3, d 6 1 2, d 7 0 3⟩
-      else if kind == "long" then ⟨d 0 1 3, d 1 3 8, d 2 3 8, d 3 1 3, d 4 1 9, d 5 1 9, d 6 1 3, d 7 0 4⟩
-      else if kind == "many" then ⟨if kernel == "conv2d" then d 0 1 2 else d 0 1 17, d 1 1 5, d 2 1 5, d 3 1 17,
-        d 4 1 3, d 5 1 3, d 6 1 2, d 7 0 2⟩
-      else ⟨d 0 1 3, d 1 1 6, d 2 1 6, d 3 1 3, d 4 1 3, d 5 1 3, d 6 1 2, d 7 0 2⟩
+      if kind == "long" && kernel == "conv2d" then
+        .simple (d 0 30 16) (d 1 2 3) (d 2 2 3) (d 3 1 3) 3 3 (d 6 1 2) (d 7 0 3)
+      else if kind == "long" then
+        .simple (d 0 1 3) (d 1 3 8) (d 2 3 8) (d 3 1 3) (d 4 1 9) (d 5 1 9) (d 6 1 3) (d 7 0 4)
+      else if kind == "many" then
+        .simple (if kernel == "conv2d" then d 0 1 2 else d 0 1 17)
+          (d 1 1 5) (d 2 1 5) (d 3 1 17) (d 4 1 3) (d 5 1 3) (d 6 1 2) (d 7 0 2)
+      else .simple (d 0 1 3) (d 1 1 6) (d 2 1 6) (d 3 1 3)
+          (d 4 1 3) (d 5 1 3) (d 6 1 2) (d 7 0 2)
     let inp := maybeShort malformed r[15]! (arr (s.cin * s.h * s.w) 1)
-    let shape := s!"cin={s.cin} {s.h}x{s.w} cout={s.cout} k={s.kh}x{s.kw} stride={s.stride} pad={s.pad}"
+    let shape := s!"cin={s.cin} {s.h}x{s.w} cout={s.cout} k={s.kh}x{s.kw} " ++
+      s!"stride={s.strideH}x{s.strideW} pad={s.padT},{s.padL},{s.padB},{s.padR}"
     if kernel == "conv2d" then
       let wts := arr (s.cout * s.cin * s.kh * s.kw) 2
       let b := arr s.cout 3
@@ -179,9 +184,10 @@ def runCase (E S : Kernels) (malformed : Bool) (kernel kind : String) (seed : UI
   | "avgpool" | "maxpool" =>
     let (c, h, w, k) := (dm 0 1 3 1 17, dl 1 1 7 1 16, dl 2 1 7 1 16, dl 3 1 3 1 5)
     let inp := maybeShort malformed r[15]! (arr (c * h * w) 1)
+    let pool := PoolShape.square c h w k
     let shape := s!"c={c} {h}x{w} k={k}"
-    if kernel == "avgpool" then ⟨shape, E.elem.avgpool c h w k inp, S.elem.avgpool c h w k inp⟩
-    else ⟨shape, E.elem.maxpool c h w k inp, S.elem.maxpool c h w k inp⟩
+    if kernel == "avgpool" then ⟨shape, E.elem.avgpool pool inp, S.elem.avgpool pool inp⟩
+    else ⟨shape, E.elem.maxpool pool inp, S.elem.maxpool pool inp⟩
   | "addRelu" =>
     let n := dl 0 0 32 32 1069
     let a := arr n 1
@@ -303,7 +309,7 @@ def flushSum : Kernels :=
 /-- `maxpool` that loses the sign of a −0 result. -/
 def zeroSignMaxpool : Kernels :=
   { specKernels with elem := { specElem with
-      maxpool := fun c h w k inp => (maxpoolSpec c h w k inp).map fun v =>
+      maxpool := fun s inp => (maxpoolSpec s inp).map fun v =>
         if v == 0x80000000 then 0 else v } }
 
 /-- `dot` that rounds after every product and every sum, left to right. -/
@@ -354,8 +360,10 @@ def foldDotFn : DotFn := fun n fa fb => toWord <| (List.range n).foldl (fun acc 
 /-- Element `t` of a window with out-of-image reads clamped to the edge instead of zero. -/
 def windowClamp (s : ConvShape) (inp : Array UInt32) (y x t : Nat) : UInt32 :=
   let c := t / (s.kh * s.kw)
-  let yy := min (s.h - 1) ((y * s.stride + t / s.kw % s.kh) - s.pad)
-  let xx := min (s.w - 1) ((x * s.stride + t % s.kw) - s.pad)
+  let dy := t / s.kw % s.kh
+  let dx := t % s.kw
+  let yy := min (s.h - 1) (y * s.strideH + dy * s.dilH - s.padT)
+  let xx := min (s.w - 1) (x * s.strideW + dx * s.dilW - s.padL)
   inp[(c * s.h + yy) * s.w + xx]!
 
 /-- One mutant: a name, the kernel it changes, and the kernels with the change. -/
@@ -554,22 +562,25 @@ def mutants : List Mutant := [
       depthwiseSpec s relu inp (Array.ofFn (n := s.cin * (s.kh * s.kw)) fun i =>
         wts[i.val % (s.kh * s.kw)]!) b } }⟩,
   ⟨"avgpool divides by k, not k²", "avgpool", { specKernels with elem := { specElem with
-    avgpool := fun c h w k inp => Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-      let ch := q.val / (h / k * (w / k))
-      let y := q.val / (w / k) % (h / k)
-      let x := q.val % (w / k)
-      toWord (Model.div (ofW (dotOf (k * k) (poolAt h w k inp ch y x) (fun _ => oneW)))
-        (ofW (natW k))) } }⟩,
+    avgpool := fun s inp => Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+      let ch := q.val / (s.ho * s.wo)
+      let y := q.val / s.wo % s.ho
+      let x := q.val % s.wo
+      let win := s.window y x
+      let total := dotOf (win.rows * win.cols) (poolCell s inp ch win) (fun _ => oneW)
+      toWord (Model.div (ofW total) (ofW (natW s.kh))) } }⟩,
   ⟨"avgpool rounds every step of its sum", "avgpool", { specKernels with elem := { specElem with
     avgpool := avgpoolWith foldDotFn } }⟩,
   ⟨"maxpool loses the sign of −0", "maxpool", zeroSignMaxpool⟩,
   ⟨"maxpool ignores NaNs", "maxpool", { specKernels with elem := { specElem with
-    maxpool := fun c h w k inp => Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-      let ch := q.val / (h / k * (w / k))
-      let y := q.val / (w / k) % (h / k)
-      let x := q.val % (w / k)
-      toWord <| (List.range (k * k)).foldl (fun acc t =>
-        Model.maximumNumber acc (ofW (poolAt h w k inp ch y x t))) (ofW (poolAt h w k inp ch y x 0)) } }⟩,
+    maxpool := fun s inp => Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+      let ch := q.val / (s.ho * s.wo)
+      let y := q.val / s.wo % s.ho
+      let x := q.val % s.wo
+      let win := s.window y x
+      toWord <| (List.range (win.rows * win.cols)).foldl (fun acc t =>
+        Model.maximumNumber acc (ofW (poolCell s inp ch win t)))
+        (ofW (poolCell s inp ch win 0)) } }⟩,
   ⟨"addRelu returns the canonical NaN", "addRelu", { specKernels with elem := { specElem with
     addRelu := fun relu a b => (addReluSpec relu a b).map fun r => if isNaNW r then 0x7FC00000 else r } }⟩,
   ⟨"scaleShift rounds twice (no fma)", "scaleShift", { specKernels with elem := { specElem with
