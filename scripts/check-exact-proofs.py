@@ -14,6 +14,7 @@ MODULES = [
     "ExactToolkit.SqrtProof",
     "ExactToolkit.TensorProofs",
     "ExactToolkit.ModelProofs",
+    "ExactToolkit.ActivationProof",
     "ExactSuiteProofs",
 ]
 ALLOWED = {"propext", "Classical.choice", "Quot.sound"}

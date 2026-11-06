@@ -1,4 +1,5 @@
 import ExactSuiteProofs
+import ExactToolkit.ActivationProof
 
 /-! Additional operator-side mathematical facts, checked separately from miner proofs. -/
 
@@ -86,3 +87,13 @@ end ExactRuntime.Audit
 #print axioms ExactSuite.accepted_cell_output_size
 #print axioms ExactSuite.prepared_sample_size
 #print axioms ExactSuite.accepted_cell_sample_shapes
+#print axioms ExactRuntime.lstmSpec_size
+#print axioms ExactRuntime.gruSpec_size
+#print axioms ExactRuntime.compareTanh_eq_real
+#print axioms ExactRuntime.compareSigmoid_eq_real
+#print axioms ExactRuntime.contains_tanhEnclosure
+#print axioms ExactRuntime.contains_sigmoidEnclosure
+#print axioms ExactRuntime.toReal_tanhModel
+#print axioms ExactRuntime.toReal_sigmoidModel
+#print axioms ExactSuite.rnn_wellShaped
+#print axioms ExactSuite.rnn_outputShape
