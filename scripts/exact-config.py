@@ -30,7 +30,10 @@ def fixture_lines(
         raise ValueError(f"unsupported fixture format: {target}")
     assets_dir = assets_dir.resolve()
     asset_paths = {}
-    for name, digest_key in (("weights_path", "weights_sha256"), ("samples_path", "samples_sha256")):
+    for name, digest_key in (
+        ("weights_path", "weights_sha256"),
+        ("samples_path", "samples_sha256"),
+    ):
         relative = Path(manifest[name])
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"fixture asset path must stay inside {assets_dir}: {relative}")
@@ -90,7 +93,10 @@ def main():
         "--assets-dir",
         type=Path,
         default=Path(os.environ.get("TORCHLEAN_BENCHMARK_ASSETS", ROOT / "data/benchmark/assets")),
-        help="local fixture bundle (default: data/benchmark/assets; may be overridden by TORCHLEAN_BENCHMARK_ASSETS)",
+        help=(
+            "local fixture bundle (default: data/benchmark/assets; may be overridden by "
+            "TORCHLEAN_BENCHMARK_ASSETS)"
+        ),
     )
     parser.add_argument(
         "--quick", action="store_true", help="development only: one paired and baseline round"
@@ -151,7 +157,9 @@ def main():
     try:
         assets_dir.relative_to(ROOT.resolve())
     except ValueError:
-        parser.error("--assets-dir must be inside this repository so workers can sandbox the assets")
+        parser.error(
+            "--assets-dir must be inside this repository so workers can sandbox the assets"
+        )
     proof, bench = fingerprint.proof(), fingerprint.benchmark()
     rounds, inner, baseline_rounds = (
         (1, 1, 1) if args.quick else (args.rounds, args.inner, args.baseline_rounds)
