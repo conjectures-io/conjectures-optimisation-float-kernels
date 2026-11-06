@@ -14,7 +14,7 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/float-kernels-matplotlib")
 
 ROOT = Path(__file__).resolve().parents[1]
-MODELS = ["mlp", "cnn", "mnet", "nmlp", "mixer", "tfm"]
+MODELS = ["mlp", "cnn", "mnet", "nmlp", "mixer", "tfm", "rnn"]
 KINDS = ["normal", "wide", "sparse"]
 
 
@@ -57,12 +57,20 @@ def main():
     if keys[0] != keys[1]:
         raise ValueError("Runs must use the same seeds, shapes and sample counts")
     values = [seed_values(run, args.variant) for run in runs]
+    # Plot only the families these audits recorded; older runs predate later families.
+    models = [m for m in MODELS if any(r["cell"].startswith(m + ":") for r in runs[0])]
     output = args.root / "visualizations" / (args.baseline + "-vs-" + args.candidate)
     output.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(
-        5, 3, figsize=(12, 13), sharex=True, sharey="row", constrained_layout=True
+        len(models),
+        3,
+        figsize=(12, 2.6 * len(models)),
+        sharex=True,
+        sharey="row",
+        constrained_layout=True,
+        squeeze=False,
     )
-    for i, model in enumerate(MODELS):
+    for i, model in enumerate(models):
         positive = [v for run in values for (m, _, _), v in run.items() if m == model and v > 0]
         floor = min(positive + [1e-6]) / 10
         for j, kind in enumerate(KINDS):
@@ -100,8 +108,10 @@ def main():
     figure.savefig(output / ("sensitivity-" + args.variant + ".png"), dpi=160, bbox_inches="tight")
     plt.close(figure)
 
-    figure, axes = plt.subplots(5, 3, figsize=(14, 12), constrained_layout=True)
-    for i, model in enumerate(MODELS):
+    figure, axes = plt.subplots(
+        len(models), 3, figsize=(14, 2.4 * len(models)), constrained_layout=True, squeeze=False
+    )
+    for i, model in enumerate(models):
         for j, kind in enumerate(KINDS):
             ax = axes[i, j]
             for run, color, label in zip(runs, ["#687A89", "#288B65"], ["Baseline", "Refined"]):

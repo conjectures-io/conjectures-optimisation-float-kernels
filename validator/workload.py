@@ -80,6 +80,59 @@ class WorkloadSpec:
         )
 
 
+# `recurrent-v1` caps: they keep one fixture inside the per-family timing budget.
+RECURRENT_VERSION = 1
+RECURRENT_MAX_STEPS = 256
+RECURRENT_MAX_FEATURES = 1024
+RECURRENT_MAX_OUTPUTS = 256
+RECURRENT_MAX_LAYERS = 2
+RECURRENT_MAX_HIDDEN = 64
+RECURRENT_GATES = {0: 4, 1: 3}  # kind 0 = LSTM, kind 1 = GRU
+RECURRENT_MAX_HEADER_WORDS = 5 + 2 * RECURRENT_MAX_LAYERS
+
+
+def recurrent_tensor_lengths(header: tuple[int, ...] | list[int], sample_words: int) -> list[int]:
+    """Every tensor length a `recurrent-v1` weights file must have, header first.
+
+    The header is raw unsigned words `[version, T, F, outputs, L, kind_0, H_0, ...]`; each layer
+    then stores `wih`, `whh`, `bih`, `bhh` (PyTorch gate blocks), and the head `w`, `b`.
+    """
+    if len(header) < 5:
+        raise ValueError("recurrent header must hold version, T, F, outputs and layer count")
+    version, steps, features, outputs, layers = header[:5]
+    if version != RECURRENT_VERSION:
+        raise ValueError(f"unsupported recurrent header version {version}")
+    for name, value, cap in (
+        ("steps", steps, RECURRENT_MAX_STEPS),
+        ("features", features, RECURRENT_MAX_FEATURES),
+        ("outputs", outputs, RECURRENT_MAX_OUTPUTS),
+        ("layer count", layers, RECURRENT_MAX_LAYERS),
+    ):
+        if not 1 <= value <= cap:
+            raise ValueError(f"recurrent {name} must be between 1 and {cap}, not {value}")
+    if len(header) != 5 + 2 * layers:
+        raise ValueError(f"recurrent header for {layers} layer(s) must hold {5 + 2 * layers} words")
+    if sample_words != steps * features:
+        raise ValueError(
+            f"recurrent sample_words {sample_words} must equal T*F = {steps * features}"
+        )
+    expected = [len(header)]
+    width = features
+    for layer in range(layers):
+        kind, hidden = header[5 + 2 * layer : 7 + 2 * layer]
+        if kind not in RECURRENT_GATES:
+            raise ValueError(f"recurrent layer {layer} has unknown kind {kind}")
+        if not 1 <= hidden <= RECURRENT_MAX_HIDDEN:
+            raise ValueError(
+                f"recurrent layer {layer} hidden size must be between 1 and "
+                f"{RECURRENT_MAX_HIDDEN}, not {hidden}"
+            )
+        rows = RECURRENT_GATES[kind] * hidden
+        expected += [rows * width, rows * hidden, rows, rows]
+        width = hidden
+    return expected + [outputs * width, outputs]
+
+
 @dataclass(frozen=True)
 class RealWorkloadSpec:
     """A local fixture with separately pinned weights and fixed-width sample records."""
@@ -117,6 +170,7 @@ class RealWorkloadSpec:
             "image-zoo-v1": {"mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"},
             "uci-har-v1": {"mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"},
             "appliance-mixer-v1": {"mixer"},
+            "recurrent-v1": {"recurrent"},
         }
         if raw["adapter"] not in adapters or raw["family"] not in adapters[raw["adapter"]]:
             raise ValueError("unsupported real workload adapter/family pair")
@@ -147,6 +201,7 @@ class RealWorkloadSpec:
     def validate_assets(self, weights: Path, samples: Path) -> None:
         """Check pinned weights and the sample-record dimensions before timing."""
         lengths = []
+        first_words: tuple[int, ...] = ()
         size_bytes = weights.stat().st_size
         offset = 0
         with weights.open("rb") as stream:
@@ -158,14 +213,37 @@ class RealWorkloadSpec:
                 offset += 4
                 if count > (size_bytes - offset) // 4:
                     raise ValueError(f"{self.id}: truncated tensor data")
+                if (
+                    self.adapter == "recurrent-v1"
+                    and not lengths
+                    and count <= RECURRENT_MAX_HEADER_WORDS
+                ):
+                    # Only a recurrent header is read; every other tensor is skipped.
+                    first_words = struct.unpack(f"<{count}I", stream.read(count * 4))
+                else:
+                    stream.seek(count * 4, 1)
                 lengths.append(count)
-                stream.seek(count * 4, 1)
                 offset += count * 4
         if not lengths:
             raise ValueError(f"{self.id}: empty weights file")
         input_size = self.sample_words
         if samples.stat().st_size != self.sample_count * input_size * 4:
             raise ValueError(f"{self.id}: sample file size does not match sample metadata")
+        if self.adapter == "recurrent-v1":
+            if lengths[0] != len(first_words):
+                raise ValueError(
+                    f"{self.id}: recurrent header has {lengths[0]} words; "
+                    f"at most {RECURRENT_MAX_HEADER_WORDS} are allowed"
+                )
+            try:
+                expected = recurrent_tensor_lengths(first_words, input_size)
+            except ValueError as exc:
+                raise ValueError(f"{self.id}: {exc}") from None
+            if lengths != expected:
+                raise ValueError(
+                    f"{self.id}: tensor count or shape does not match recurrent adapter header"
+                )
+            return
         if self.adapter == "uci-har-v1":
             if input_size % 128:
                 raise ValueError(f"{self.id}: invalid UCI-HAR input dimensions")

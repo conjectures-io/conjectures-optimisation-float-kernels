@@ -828,14 +828,16 @@ def test_invalid_budget_overrides_fail_before_planning(config, scope, override):
         Config.parse(raw)
 
 
-def test_winner_only_rewards_keep_six_independent_pools(config):
+def test_winner_only_rewards_keep_seven_independent_pools(config):
+    family_weight = 0.5 / 6
     boards = {
         "overall": 0.5,
-        "mlp": 0.1,
-        "resnet": 0.1,
-        "mobilenet": 0.1,
-        "normalized_mlp": 0.1,
-        "mixer": 0.1,
+        "mlp": family_weight,
+        "resnet": family_weight,
+        "mobilenet": family_weight,
+        "normalized_mlp": family_weight,
+        "mixer": family_weight,
+        "recurrent": family_weight,
     }
     publication = {
         "version": "tensor-top2-v1",

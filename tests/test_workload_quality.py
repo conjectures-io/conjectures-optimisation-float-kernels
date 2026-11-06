@@ -27,7 +27,7 @@ def record():
 
 def complete_records():
     result = []
-    for family in ["mlp", "cnn", "mnet", "nmlp", "mixer", "tfm"]:
+    for family in ["mlp", "cnn", "mnet", "nmlp", "mixer", "tfm", "rnn"]:
         for batch in [1, 8] if family in ["mlp", "nmlp"] else [1, 4]:
             for kind in ["normal", "wide", "sparse"]:
                 for sample in range(1 if family in ["mlp", "nmlp"] else batch):

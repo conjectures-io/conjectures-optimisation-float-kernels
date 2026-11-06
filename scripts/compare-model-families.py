@@ -34,6 +34,7 @@ LEAN_MODELS = {
     "normalized_mlp": "nmlp",
     "mixer": "mixer",
     "transformer": "tfm",
+    "recurrent": "rnn",
 }
 SCORING_PATH = ROOT / "validator/scoring.py"
 CONFIG_PATH = ROOT / "validator/config.py"

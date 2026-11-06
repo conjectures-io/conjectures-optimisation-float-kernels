@@ -111,7 +111,9 @@ def test_replay_keeps_family_gain_separate_from_other_families(tmp_path):
     assert decisions["overall"]["score"] == pytest.approx(0.5 ** (1 / len(experiment.MODELS)))
     assert decisions["mobilenet"]["outcome"] == "qualifies"
     assert decisions["overall"]["outcome"] == "qualifies"
-    for board in ("mlp", "resnet", "normalized_mlp", "mixer", "transformer"):
+    assert {"recurrent:b1:normal", "recurrent:b4:sparse"} <= set(experiment.CELLS)
+    assert experiment.LEAN_MODELS["recurrent"] == "rnn"
+    for board in ("mlp", "resnet", "normalized_mlp", "mixer", "transformer", "recurrent"):
         assert decisions[board]["score"] == pytest.approx(1)
         assert decisions[board]["outcome"] == "above-bar"
     assert (tmp_path / "visualizations/family-comparison.svg").exists()

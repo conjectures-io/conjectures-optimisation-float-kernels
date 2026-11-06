@@ -15,13 +15,16 @@ from multiseed import WorkloadRecord, workload_records
 from timing import DEFAULT_TIMING, build_defaults, validate_timing
 from workload import RealWorkloadSpec
 
-MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
+MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer", "recurrent")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
 KINDS = ("normal", "wide", "sparse")
-VERSION = "exact-boards-v12-fresh-process-warmups"
+# The scored small-device competition. Transformer cells stay measurable when a config names
+# them explicitly, but no default board or synthetic plan includes them.
+DEFAULT_MODELS = tuple(model for model in MODELS if model != "transformer")
+VERSION = "exact-boards-v13-recurrent"
 WARMUP_POLICY = "independent-unscored-input-v1"
 BASELINE_SOURCE = Path(__file__).resolve().parents[1] / "kernels/exact/baseline/Kernel.lean"
-DEFAULT_SYNTHETIC_CELLS = tuple(f"{model}:b1:{kind}" for model in MODELS for kind in KINDS)
+DEFAULT_SYNTHETIC_CELLS = tuple(f"{model}:b1:{kind}" for model in DEFAULT_MODELS for kind in KINDS)
 
 
 def baseline_hash() -> str:

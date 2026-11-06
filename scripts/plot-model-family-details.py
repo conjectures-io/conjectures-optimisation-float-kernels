@@ -24,7 +24,19 @@ def plot(directory):
         return
     shutil.copy2(__file__, directory / "summaries/details-plot-source.py")
     manifest = json.loads((directory / "raw/manifest.json").read_text())
-    boards = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
+    known = (
+        "overall",
+        "mlp",
+        "resnet",
+        "mobilenet",
+        "normalized_mlp",
+        "mixer",
+        "transformer",
+        "recurrent",
+    )
+    # Plot only the boards this experiment recorded; older runs predate later families.
+    boards = [board for board in known if any(r["board"] == board for r in rows)]
+    grid_rows = math.ceil(len(boards) / 3)
     groups = sorted({(r["candidate"], r["reference"]) for r in rows})
     seeds = sorted({r["seed"] for r in rows})
     colours = dict(zip(seeds, plt.get_cmap("tab10").colors, strict=False))
@@ -37,8 +49,12 @@ def plot(directory):
             fig.savefig(output / f"{name}.{suffix}", dpi=170, bbox_inches="tight")
         plt.close(fig)
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, max(6, len(groups) * 1.1)), squeeze=False)
-    for board, ax in zip(boards, axes.flat, strict=True):
+    fig, axes = plt.subplots(
+        grid_rows, 3, figsize=(15, max(3 * grid_rows, len(groups) * 1.1)), squeeze=False
+    )
+    for ax in axes.flat[len(boards) :]:
+        ax.set_visible(False)
+    for board, ax in zip(boards, axes.flat, strict=False):
         for i, group in enumerate(groups):
             matches = [
                 r for r in rows if (r["candidate"], r["reference"]) == group and r["board"] == board
@@ -84,7 +100,12 @@ def plot(directory):
         json.loads(p.read_text())
         for p in sorted((directory / "raw/sessions").glob("*/result.json"))
     ]
-    fig, axes = plt.subplots(len(groups), 6, figsize=(21, max(3, len(groups) * 2.7)), squeeze=False)
+    fig, axes = plt.subplots(
+        len(groups),
+        len(boards),
+        figsize=(3.5 * len(boards), max(3, len(groups) * 2.7)),
+        squeeze=False,
+    )
     order_rows = []
     for i, group in enumerate(groups):
         for j, board in enumerate(boards):
@@ -184,7 +205,7 @@ def plot(directory):
         plt.Line2D([], [], color=f"C{j}", marker="o", linestyle="", label=b)
         for j, b in enumerate(boards)
     ]
-    fig.legend(handles=handles, loc="upper center", ncol=6, bbox_to_anchor=(0.5, 1.04))
+    fig.legend(handles=handles, loc="upper center", ncol=len(boards), bbox_to_anchor=(0.5, 1.04))
     save(fig, "guard-and-order")
     (directory / "index.html").write_text(
         "<!doctype html><meta charset=utf-8><title>Model-family experiment</title>"

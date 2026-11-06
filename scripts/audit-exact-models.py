@@ -60,6 +60,17 @@ def shape_step(layer, shape):
         assert (weights, bias) == (4 * c * c, 4 * c)
     elif op == "silu":
         assert size > 0
+    elif op in ("lstm", "gru"):
+        steps, inputs, hidden = d
+        gates = 4 if op == "lstm" else 3
+        assert min(d) > 0 and size == steps * inputs
+        assert weights == gates * hidden * inputs + gates * hidden * hidden
+        assert bias == 2 * gates * hidden
+        size = steps * hidden
+    elif op == "lastStep":
+        steps, width = d
+        assert min(d) > 0 and size == steps * width and weights == bias == 0
+        size = width
     else:
         raise ValueError(op)
     assert layer["parameters_finite"] and layer["valid"]
@@ -70,7 +81,7 @@ def shape_step(layer, shape):
 def check_model(model):
     family, batch, kind = model["cell"].split(":")
     batch = int(batch.removeprefix("b"))
-    assert family in {"mlp", "cnn", "mnet", "nmlp", "mixer", "tfm"}
+    assert family in {"mlp", "cnn", "mnet", "nmlp", "mixer", "tfm", "rnn"}
     assert kind in {"normal", "wide", "sparse"}
     assert model["input_length"] == model["samples"] * model["input_size"]
     assert model["samples"] == (1 if family in {"mlp", "nmlp"} else batch)
@@ -104,7 +115,7 @@ def main():
     if run.stderr.strip():
         raise RuntimeError(run.stderr)
     models = [json.loads(line) for line in run.stdout.splitlines()]
-    assert len(models) == len(seeds) * 36
+    assert len(models) == len(seeds) * 42
     assert len({(m["seed"], m["cell"]) for m in models}) == len(models)
     for model in models:
         check_model(model)

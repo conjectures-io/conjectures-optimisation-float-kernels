@@ -1350,3 +1350,118 @@ def test_worker_freezes_preparation_mode_for_child_and_watchdog(monkeypatch):
     command, seconds = seen[0]
     assert command[command.index("--preparation-mode") + 1] == "cached"
     assert seconds == 66  # Two seconds cached preparation, four measurement, sixty grace.
+
+
+def recurrent_competition(tmp_path):
+    from config import DEFAULT_MODELS, Config
+
+    source = tmp_path / "Kernel.lean"
+    source.write_bytes(b"initial reference")
+    reference = {"path": str(source), "sha256": hashlib.sha256(b"initial reference").hexdigest()}
+    boards = {"overall": {"models": dict.fromkeys(DEFAULT_MODELS, 1 / len(DEFAULT_MODELS))}}
+    boards |= {model: {"models": {model: 1.0}} for model in DEFAULT_MODELS}
+    for board in boards.values():
+        board["reference"] = dict(reference)
+    return Config.parse(
+        {
+            "boards": boards,
+            "environments": {"local": {"weight": 1, "identity": "a" * 64}},
+            "seeds": [42],
+            "timing": {"rounds": 5, "inner": 1, "run_seconds": 30, "build_seconds": 60},
+            "admission": dict(bar=0.97, guard=1.1, draws=100, quantile=0.05, min_rounds=5),
+            "rewards": {
+                "board_weights": {name: 1 / len(boards) for name in boards},
+                "rank_shares": [1.0, 0.0],
+                "paused_policy": "preserve",
+            },
+            "proof_identity": "b" * 64,
+            "benchmark_identity": "c" * 64,
+        }
+    )
+
+
+def test_recurrent_board_gets_the_single_family_budget_and_overall_the_shared_one(tmp_path):
+    configured = recurrent_competition(tmp_path)
+    assert configured.plan("recurrent")["timing"]["benchmark_seconds"] == 360
+    assert configured.plan("overall")["timing"]["benchmark_seconds"] == 1200
+    assert set(configured.plan("recurrent")["cells"]) == {
+        f"recurrent:b1:{kind}" for kind in ("normal", "wide", "sparse")
+    }
+    overall = configured.plan("overall")["cells"]
+    assert {cell.split(":")[0] for cell in overall} == {
+        "mlp",
+        "resnet",
+        "mobilenet",
+        "normalized_mlp",
+        "mixer",
+        "recurrent",
+    }
+    # Six families share the overall budget equally; recurrent gets one sixth.
+    recurrent_weight = sum(w for cell, w in overall.items() if cell.startswith("recurrent:"))
+    assert recurrent_weight == pytest.approx(1 / 6)
+
+
+def test_real_recurrent_workloads_are_scoped_to_recurrent_and_overall(tmp_path):
+    from dataclasses import replace
+
+    workload = benchmark.RealWorkloadSpec.parse(
+        dict(
+            id="har-gru",
+            family="recurrent",
+            model="gru-h32",
+            dataset="uci-har",
+            adapter="recurrent-v1",
+            weights_path="data/benchmark/assets/weights/recurrent-v1/har/weights.bin",
+            weights_sha256="d" * 64,
+            samples_path="data/benchmark/assets/samples/recurrent-v1/har/samples.bin",
+            samples_sha256="e" * 64,
+            asset_revision="f" * 64,
+            sample_count=8,
+            sample_words=128 * 9,
+            samples_per_run=1,
+        )
+    )
+    configured = replace(
+        recurrent_competition(tmp_path),
+        suites=("synthetic", "real"),
+        real_workloads=(workload,),
+        suite_weights={"synthetic": 0.5, "real": 0.5},
+    )
+    for board in ("recurrent", "overall"):
+        plan = configured.plan(board)
+        assert plan["suites"] == ["synthetic", "real"]
+        assert [item["id"] for item in plan["real_workloads"]] == ["har-gru"]
+    plan = configured.plan("mixer")
+    assert plan["suites"] == ["synthetic"] and plan["real_workloads"] == []
+    assert plan["suite_weights"] == {"synthetic": 1.0}
+
+
+@pytest.mark.parametrize(
+    "cell,accepted",
+    [
+        ("recurrent:b1:normal", True),
+        ("recurrent:b4:sparse", True),
+        ("recurrent:b8:normal", False),
+        ("transformer:b4:wide", True),
+        ("rnn:b1:normal", False),
+    ],
+)
+def test_measurement_requests_accept_recurrent_cells_at_batches_one_and_four(cell, accepted):
+    from config import MeasurementRequest
+
+    request = dict(
+        identity="a" * 64,
+        benchmark_identity="b" * 64,
+        environment="test",
+        seed=42,
+        workloads=workloads(42),
+        candidate_hash="c" * 64,
+        reference_hash="d" * 64,
+        cells=[cell],
+        timing=timing(),
+    )
+    if accepted:
+        assert MeasurementRequest.parse(request).cells == (cell,)
+    else:
+        with pytest.raises(ValueError, match="unknown measurement cell"):
+            MeasurementRequest.parse(request)

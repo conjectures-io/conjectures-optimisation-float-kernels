@@ -14,7 +14,16 @@ from statistics import median
 from model_family_policy import confirm, revise
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/kernel-optimization-plots")
-BOARDS = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
+BOARDS = (
+    "overall",
+    "mlp",
+    "resnet",
+    "mobilenet",
+    "normalized_mlp",
+    "mixer",
+    "transformer",
+    "recurrent",
+)
 
 
 def block_upper(scores, length, draws=2000):
@@ -191,15 +200,17 @@ def summarize(directories, output):
     for directory in directories:
         selected = [r for r in rows if r["dataset"] == directory.name]
         pairs = sorted({(r["candidate"], r["reference"]) for r in selected})
+        # Runs record only the families they measured; older runs predate later boards.
+        boards = [board for board in BOARDS if any(r["board"] == board for r in selected)]
         text += [
             f"## {directory.name}",
             "",
-            "| Candidate / reference | " + " | ".join(BOARDS) + " |",
-            "|---|" + "---|" * len(BOARDS),
+            "| Candidate / reference | " + " | ".join(boards) + " |",
+            "|---|" + "---|" * len(boards),
         ]
         for candidate, reference in pairs:
             values = []
-            for board in BOARDS:
+            for board in boards:
                 matches = [
                     r
                     for r in selected
@@ -224,10 +235,15 @@ def summarize(directories, output):
             "The median is descriptive, not a pooled admission statistic.",
             "",
         ]
-        fig, axes = plt.subplots(2, 3, figsize=(17, max(7, len(pairs) * 1.2)))
+        grid_rows = math.ceil(len(boards) / 3)
+        fig, axes = plt.subplots(
+            grid_rows, 3, figsize=(17, max(3.5 * grid_rows, len(pairs) * 1.2)), squeeze=False
+        )
+        for ax in axes.flat[len(boards) :]:
+            ax.set_visible(False)
         seeds = sorted({r["seed"] for r in selected})
         colours = {seed: plt.get_cmap("tab10")(i) for i, seed in enumerate(seeds)}
-        for board, ax in zip(BOARDS, axes.flat, strict=True):
+        for board, ax in zip(boards, axes.flat, strict=False):
             for i, (candidate, reference) in enumerate(pairs):
                 matches = [
                     r
@@ -353,7 +369,7 @@ def summarize(directories, output):
                     for r in selected
                     if (r["candidate"], r["reference"], r["board"]) == (c, ref, board)
                 )
-                for board in BOARDS
+                for board in boards
             ]
             for c, ref in pairs
         ]
@@ -366,7 +382,7 @@ def summarize(directories, output):
             aspect="auto",
         )
         for i, (candidate, reference) in enumerate(pairs):
-            for j, board in enumerate(BOARDS):
+            for j, board in enumerate(boards):
                 matches = [
                     a
                     for a in attempts
@@ -380,7 +396,7 @@ def summarize(directories, output):
                 ax.text(
                     j, i, f"{values[i][j]:.3f}×\n{text_label}", ha="center", va="center", fontsize=9
                 )
-        ax.set_xticks(range(len(BOARDS)), BOARDS)
+        ax.set_xticks(range(len(boards)), boards)
         ax.set_yticks(range(len(pairs)), [f"{c} / {ref}" for c, ref in pairs])
         ax.set_title(
             f"{directory.name}: median session ratios (descriptive); "
