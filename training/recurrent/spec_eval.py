@@ -81,7 +81,11 @@ def evaluate(manifest_path: Path, assets: Path, limit: int | None, jobs: int) ->
         spec_acc = float(np.mean(spec.argmax(axis=1) == labels))
         torch_acc = float(np.mean(torch_out.argmax(axis=1) == labels))
         agree = float(np.mean(spec.argmax(axis=1) == torch_out.argmax(axis=1)))
-        result |= {"spec_accuracy": spec_acc, "torch_accuracy": torch_acc, "argmax_agreement": agree}
+        result |= {
+            "spec_accuracy": spec_acc,
+            "torch_accuracy": torch_acc,
+            "argmax_agreement": agree,
+        }
         result["accepted"] = (
             result["finite"] and abs(spec_acc - torch_acc) <= 0.005 and agree >= 0.995
         )
