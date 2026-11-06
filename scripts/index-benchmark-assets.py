@@ -64,7 +64,8 @@ def main() -> None:
             actual = sha256(asset_path)
             if actual != manifest.get(digest_key):
                 parser.error(
-                    f"checksum mismatch for {asset_path}: expected {manifest.get(digest_key)}, got {actual}"
+                    f"checksum mismatch for {asset_path}: "
+                    f"expected {manifest.get(digest_key)}, got {actual}"
                 )
             entry[f"{path_key.removesuffix('_path')}_size_bytes"] = asset_path.stat().st_size
         fixtures.append(entry)

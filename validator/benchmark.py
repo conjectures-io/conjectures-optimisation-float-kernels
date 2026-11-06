@@ -1581,7 +1581,17 @@ def measure_bundle(request, candidate, references, mode=None, progress_callback=
     role_cache = {}
     trusted_runner = runner or run_binary
 
-    def shared_runner(binary, board_request_value, reps, inner, side, deadline, input_sequences):
+    def shared_runner(
+        binary,
+        board_request_value,
+        reps,
+        inner,
+        side,
+        deadline,
+        input_sequences,
+        *,
+        warmup_sequences=None,
+    ):
         if side not in ("candidate", "baseline", "reference"):
             return trusted_runner(
                 binary,
@@ -1591,12 +1601,20 @@ def measure_bundle(request, candidate, references, mode=None, progress_callback=
                 side,
                 deadline,
                 input_sequences,
+                **({"warmup_sequences": warmup_sequences} if warmup_sequences is not None else {}),
             )
         keys = set(row_names(board_request_value).values())
         cache_key = side, str(binary)
         cache_pass = input_sequences.get("__cache_pass__")
+        warmup_inputs = (
+            {key: warmup_sequences.get(key) for key in keys}
+            if warmup_sequences is not None
+            else None
+        )
         for cached in role_cache.get(cache_key, ()):
             if cached.get("cache_pass") != cache_pass:
+                continue
+            if cached.get("warmup_inputs") != warmup_inputs:
                 continue
             if not keys <= set(cached["rows"]):
                 continue
@@ -1625,6 +1643,7 @@ def measure_bundle(request, candidate, references, mode=None, progress_callback=
             side,
             deadline,
             input_sequences,
+            **({"warmup_sequences": warmup_sequences} if warmup_sequences is not None else {}),
         )
         role_cache.setdefault(cache_key, []).append(
             {
@@ -1636,6 +1655,7 @@ def measure_bundle(request, candidate, references, mode=None, progress_callback=
                 "peak_memory_bytes": observed.get("__peak_memory_bytes__"),
                 "cache_pass": cache_pass,
                 "inputs": {key: input_sequences[key] for key in keys},
+                "warmup_inputs": warmup_inputs,
             }
         )
         return observed

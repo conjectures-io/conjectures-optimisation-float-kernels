@@ -213,17 +213,27 @@ def _reshape_schedule(values, timing):
 def reuse_submission_schedules(assignment, previous_plans, timing, real_workloads=()):
     """Keep scheduled inputs stable when a submission is replanned or gains an environment."""
     previous_real = {}
+    previous_real_warmup = {}
     previous_synthetic = {}
+    previous_synthetic_warmup = {}
     for plan in previous_plans:
         plan = getattr(plan, "plan", plan)
         for workload_id, schedule in (plan.get("real_sample_plan") or {}).items():
             values = _flatten_schedule(schedule)
             if len(values) > len(previous_real.get(workload_id, ())):
                 previous_real[workload_id] = values
+        for workload_id, schedule in (plan.get("real_warmup_plan") or {}).items():
+            values = _flatten_schedule(schedule)
+            if len(values) > len(previous_real_warmup.get(workload_id, ())):
+                previous_real_warmup[workload_id] = values
         for key, schedule in (plan.get("synthetic_input_plan") or {}).items():
             values = _flatten_schedule(schedule)
             if len(values) > len(previous_synthetic.get(key, ())):
                 previous_synthetic[key] = values
+        for key, schedule in (plan.get("synthetic_warmup_plan") or {}).items():
+            values = _flatten_schedule(schedule)
+            if len(values) > len(previous_synthetic_warmup.get(key, ())):
+                previous_synthetic_warmup[key] = values
 
     count = timing["rounds"] * timing["inner"]
     real = assignment.get("real_sample_plan") or {}
@@ -259,12 +269,50 @@ def reuse_submission_schedules(assignment, previous_plans, timing, real_workload
                 used.add(seed)
         synthetic[key] = _reshape_schedule(values, timing)
     assignment["synthetic_input_plan"] = synthetic or None
-    assignment["real_warmup_plan"] = (
-        select_real_warmup_plan(real_workloads, timing, real) if real else None
-    )
-    assignment["synthetic_warmup_plan"] = (
-        select_synthetic_warmup_plan(synthetic) if synthetic else None
-    )
+    if real:
+        real_warmup = select_real_warmup_plan(real_workloads, timing, real)
+        for workload in real_workloads:
+            workload_id = workload["id"]
+            old = previous_real_warmup.get(workload_id, [])
+            generated = _flatten_schedule(real_warmup[workload_id])
+            scored = _flatten_schedule(real[workload_id])
+            warmup = [
+                prior
+                if index < len(old) and not set(old[index]).intersection(scored[index])
+                else generated[index]
+                for index, prior in enumerate(old[:count])
+            ]
+            warmup.extend(generated[len(warmup) : count])
+            real_warmup[workload_id] = _reshape_schedule(warmup, timing)
+        assignment["real_warmup_plan"] = real_warmup
+    else:
+        assignment["real_warmup_plan"] = None
+
+    if synthetic:
+        fresh_warmup = select_synthetic_warmup_plan(synthetic)
+        used = {
+            values[0] for schedule in synthetic.values() for values in _flatten_schedule(schedule)
+        }
+        synthetic_warmup = {}
+        for key, schedule in synthetic.items():
+            old = previous_synthetic_warmup.get(key, [])
+            generated = _flatten_schedule(fresh_warmup[key])
+            scored = _flatten_schedule(schedule)
+            selected = []
+            for index in range(count):
+                prior = old[index] if index < len(old) else None
+                if prior is not None and prior[0] not in used:
+                    values = prior
+                else:
+                    values = generated[index]
+                    while values[0] in used:
+                        values = [secrets.randbits(32)]
+                used.add(values[0])
+                selected.append(values)
+            synthetic_warmup[key] = _reshape_schedule(selected, timing)
+        assignment["synthetic_warmup_plan"] = synthetic_warmup
+    else:
+        assignment["synthetic_warmup_plan"] = None
 
 
 def submission_assignment(

@@ -72,8 +72,10 @@ def result(request, ratio=0.9):
     cells = list(expanded(request))
     repetitions = dict.fromkeys(cells, 1)
     rounds = []
+    warmup_policy = request.get("warmup_policy") == "independent-unscored-input-v1"
     for round_index in range(request["timing"]["rounds"]):
         input_plan = {"synthetic": {}, "real": {}}
+        warmup_plan = {"synthetic": {}, "real": {}}
         for cell_index, cell in enumerate(cells):
             planned = (request.get("synthetic_input_plan") or {}).get(cell)
             if planned is None:
@@ -81,27 +83,35 @@ def result(request, ratio=0.9):
             else:
                 seed = planned[round_index][0][0]
             input_plan["synthetic"][cell] = [seed]
-        rounds.append(
-            {
-                "reference_first": round_index % 2 == 0,
-                "input_plan": input_plan,
-                "process_wall_ns": {
-                    "reference": [100_000] * request["timing"]["inner"],
-                    "candidate": [100_000] * request["timing"]["inner"],
-                },
-                "cells": {
-                    cell: {
-                        "reference_ns": 1000,
-                        "candidate_ns": int(1000 * ratio),
-                        "reference_checksum": 123,
-                        "candidate_checksum": 123,
-                        "reference_inner_ns": [1000] * request["timing"]["inner"],
-                        "candidate_inner_ns": [int(1000 * ratio)] * request["timing"]["inner"],
-                    }
-                    for cell in cells
-                },
+            if warmup_policy:
+                warmup = request["synthetic_warmup_plan"][cell]
+                warmup_plan["synthetic"][cell] = [group[0] for group in warmup[round_index]]
+        row = {
+            "reference_first": round_index % 2 == 0,
+            "input_plan": input_plan,
+            "process_wall_ns": {
+                "reference": [100_000] * request["timing"]["inner"],
+                "candidate": [100_000] * request["timing"]["inner"],
+            },
+            "cells": {
+                cell: {
+                    "reference_ns": 1000,
+                    "candidate_ns": int(1000 * ratio),
+                    "reference_checksum": 123,
+                    "candidate_checksum": 123,
+                    "reference_inner_ns": [1000] * request["timing"]["inner"],
+                    "candidate_inner_ns": [int(1000 * ratio)] * request["timing"]["inner"],
+                }
+                for cell in cells
+            },
+        }
+        if warmup_policy:
+            row["warmup_plan"] = warmup_plan
+            row["warmup_ns"] = {
+                side: {key: [100] * request["timing"]["inner"] for key in cells}
+                for side in ("reference", "candidate")
             }
-        )
+        rounds.append(row)
 
     has_baseline = request.get("baseline_hash") is not None
     baseline_count = (
@@ -130,6 +140,24 @@ def result(request, ratio=0.9):
                 },
                 "real": {},
             },
+            **(
+                {
+                    "warmup_plan": {
+                        "synthetic": {
+                            cell: [
+                                rounds[0 if cell in sentinel_synthetic else round_index][
+                                    "warmup_plan"
+                                ]["synthetic"][cell][0]
+                            ]
+                            for cell in cells
+                        },
+                        "real": {},
+                    },
+                    "warmup_ns": {key: 100 for key in cells},
+                }
+                if warmup_policy
+                else {}
+            ),
             "process_wall_ns": [100_000],
             "cells": {
                 cell: {
@@ -178,15 +206,21 @@ def result(request, ratio=0.9):
             ),
         }
     timing = request["timing"]
+    measurement_policy = {
+        "observations_per_workload_per_process": 1,
+        "fresh_process_per_pass": True,
+        "weights_reloaded_each_pass": True,
+        "inference_clock": "supervisor-monotonic-ready-done-v1",
+        "baseline_sentinel_policy": "spaced-same-input-per-family-v1",
+    }
+    if request.get("warmup_policy") == "independent-unscored-input-v1":
+        measurement_policy.update(
+            unscored_warmup_per_row_per_process=True,
+            warmup_inputs_independent_and_frozen=True,
+        )
     return {
         "request_hash": measurement_hash(request),
-        "measurement_policy": {
-            "observations_per_workload_per_process": 1,
-            "fresh_process_per_pass": True,
-            "weights_reloaded_each_pass": True,
-            "inference_clock": "supervisor-monotonic-ready-done-v1",
-            "baseline_sentinel_policy": "spaced-same-input-per-family-v1",
-        },
+        "measurement_policy": measurement_policy,
         "provenance": {"identity": request["identity"], "machine": "test-machine"},
         "workloads": request["workloads"],
         "repetitions": repetitions,
@@ -398,6 +432,53 @@ def test_bundle_runner_executes_candidate_once_for_multiple_references(config, m
         all(row[key] == baseline_inputs_seen[0][key] for key in sentinel_keys)
         for row in baseline_inputs_seen[1:]
     )
+
+
+def test_bundle_runner_forwards_frozen_warmup_sequences(config, monkeypatch):
+    request = request_for(config, "mlp")
+    candidate_source = b"candidate"
+    candidate_hash = hashlib.sha256(candidate_source).hexdigest()
+    reference_source = b"reference"
+    reference_hash = hashlib.sha256(reference_source).hexdigest()
+    request["candidate_hash"] = candidate_hash
+    request["reference_hash"] = reference_hash
+    bundle = bundle_requests({"mlp": request})
+    keys = set(benchmark.row_names(request).values())
+    warmups = {key: [[f"warmup:{key}"]] for key in keys}
+    observed = []
+
+    def fake_run(
+        binary, request, reps, inner, side, deadline, input_sequences, *, warmup_sequences=None
+    ):
+        observed.append((side, warmup_sequences))
+        return {
+            **{key: (100, 42) for key in benchmark.row_names(request).values()},
+            "__raw_ns__": {},
+            "__real_preparation_ns__": {},
+            "__process_wall_ns__": [10],
+            "__peak_memory_bytes__": [None],
+        }
+
+    def fake_measure(request, candidate, reference, mode=None, progress_callback=None, runner=None):
+        inputs = {key: [[f"input:{key}"]] for key in keys}
+        runner(
+            candidate,
+            request,
+            {key: 1 for key in keys},
+            1,
+            "candidate",
+            object(),
+            inputs,
+            warmup_sequences=warmups,
+        )
+        return {"request_hash": measurement_hash(request)}
+
+    monkeypatch.setattr(benchmark, "measure", fake_measure)
+    benchmark.measure_bundle(
+        bundle, candidate_source, {reference_hash: reference_source}, runner=fake_run
+    )
+
+    assert observed == [("candidate", warmups)]
 
 
 def test_baseline_sentinels_are_evenly_spaced():

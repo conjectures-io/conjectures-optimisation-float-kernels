@@ -110,6 +110,24 @@ def test_oversized_evidence_is_dropped_not_the_failure(store, config):
     )
 
 
+def test_baseline_failure_is_accepted_and_requeued_with_evidence(store, config):
+    repo, worker = setup(store, config)
+    accepted(store, config)
+    repo.plan(config)
+    failure = {
+        "kind": "baseline",
+        "reason": "benchmark-timeout: baseline invocation exceeded its 300s time allowance",
+        "timeout": TIMEOUT | {"side": "baseline"},
+        "partial": PARTIAL,
+    }
+    fail_all(worker, failure)
+    with db.session_scope(store.sessions) as s:
+        jobs = list(s.scalars(select(m.BenchmarkJob)))
+    assert len(jobs) == 2
+    assert all(job.state == "queued" for job in jobs)
+    assert all(job.error == failure for job in jobs)
+
+
 def test_the_migration_relabels_timeouts_decided_before_it(store, config, monkeypatch):
     # Decided under the old fail(): kind and reason only, a timeout known by its reason alone.
     monkeypatch.setenv("DATABASE_URL", store.engine.url.render_as_string(hide_password=False))
