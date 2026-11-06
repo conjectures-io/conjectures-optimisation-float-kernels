@@ -18,3 +18,7 @@ validator/.work/
 lean/autoresearch/
 data/benchmark/assets/
 data/benchmark/runs/
+# Recurrent training: raw downloads, prepared arrays, checkpoints and test labels
+data/raw/
+data/recurrent/
+training/recurrent/runs/
