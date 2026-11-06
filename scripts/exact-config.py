@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import sys
 from pathlib import Path
@@ -18,15 +19,30 @@ from benchmark import machine_identity  # noqa: E402
 import fingerprint  # noqa: E402
 
 
-def fixture_lines(fixture_id: str, target: Path, samples_per_run: int) -> list[str]:
+def fixture_lines(
+    fixture_id: str, target: Path, samples_per_run: int, assets_dir: Path
+) -> list[str]:
     manifest_path = target / "manifest.json"
     if not manifest_path.is_file():
         raise ValueError(f"missing sample-addressable fixture {target}")
     manifest = json.loads(manifest_path.read_text())
     if manifest["format"] != "sample-addressable-f32-v1" or manifest["workload_id"] != fixture_id:
         raise ValueError(f"unsupported fixture format: {target}")
-    weights = ROOT / manifest["weights_path"]
-    samples = ROOT / manifest["samples_path"]
+    assets_dir = assets_dir.resolve()
+    asset_paths = {}
+    for name, digest_key in (("weights_path", "weights_sha256"), ("samples_path", "samples_sha256")):
+        relative = Path(manifest[name])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"fixture asset path must stay inside {assets_dir}: {relative}")
+        path = (assets_dir / relative).resolve()
+        path.relative_to(assets_dir)
+        if not path.is_file():
+            raise ValueError(f"missing fixture asset: {path}")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != manifest[digest_key]:
+            raise ValueError(f"fixture asset checksum mismatch: {path}")
+        asset_paths[name] = path
+    weights = asset_paths["weights_path"]
+    samples = asset_paths["samples_path"]
     return [
         "",
         "[[benchmark.real_workloads]]",
@@ -51,10 +67,31 @@ def fixture_lines(fixture_id: str, target: Path, samples_per_run: int) -> list[s
     ]
 
 
+def fixtures_for_adapter(assets_dir: Path, adapter: str) -> list[tuple[str, Path]]:
+    fixtures = []
+    seen_ids = set()
+    for manifest_path in sorted((assets_dir / "models").glob("**/manifest.json")):
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("adapter") != adapter:
+            continue
+        fixture_id = manifest.get("workload_id")
+        if not isinstance(fixture_id, str) or fixture_id in seen_ids:
+            raise ValueError(f"missing or duplicate workload_id in {manifest_path}: {fixture_id!r}")
+        seen_ids.add(fixture_id)
+        fixtures.append((fixture_id, manifest_path.parent))
+    return fixtures
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--environment", default="local")
+    parser.add_argument(
+        "--assets-dir",
+        type=Path,
+        default=Path(os.environ.get("TORCHLEAN_BENCHMARK_ASSETS", ROOT / "data/benchmark/assets")),
+        help="local fixture bundle (default: data/benchmark/assets; may be overridden by TORCHLEAN_BENCHMARK_ASSETS)",
+    )
     parser.add_argument(
         "--quick", action="store_true", help="development only: one paired and baseline round"
     )
@@ -109,6 +146,12 @@ def main():
     if args.output.exists():
         parser.error("output already exists; edit it or choose a new path")
     source = args.reference.resolve()
+    assets_dir = args.assets_dir if args.assets_dir.is_absolute() else ROOT / args.assets_dir
+    assets_dir = assets_dir.resolve()
+    try:
+        assets_dir.relative_to(ROOT.resolve())
+    except ValueError:
+        parser.error("--assets-dir must be inside this repository so workers can sandbox the assets")
     proof, bench = fingerprint.proof(), fingerprint.benchmark()
     rounds, inner, baseline_rounds = (
         (1, 1, 1) if args.quick else (args.rounds, args.inner, args.baseline_rounds)
@@ -204,61 +247,23 @@ def main():
             f"sha256 = {hashlib.sha256(source.read_bytes()).hexdigest()!r}",
         ]
     if args.real_image_zoo:
-        model_dir = ROOT / "data/real-model-backtest/20261102-image-zoo/models"
-        families = ("mlp", "normalized_mlp", "resnet", "mobilenet", "mixer")
-        datasets = ("digits", "mnist", "fashion")
-        fixtures = [
-            (family, dataset, model_dir / f"{family}-{dataset}.bin")
-            for family in families
-            for dataset in datasets
-        ]
-        missing = [str(path) for _, _, path in fixtures if not path.is_file()]
-        if missing:
-            parser.error("--real-image-zoo requires local fixtures; missing: " + ", ".join(missing))
-        for family, dataset, path in fixtures:
-            target = (
-                ROOT
-                / "data/real-model-backtest/20261105-sample-addressable/models/image-zoo"
-                / f"{family}-{dataset}"
-            )
-            fixture_id = "image-zoo-" + family.replace("_", "-") + "-" + dataset
-            lines += fixture_lines(
-                fixture_id,
-                target,
-                1,
-            )
+        fixtures = fixtures_for_adapter(assets_dir, "image-zoo-v1")
+        if not fixtures:
+            parser.error(f"--real-image-zoo requires fixtures under {assets_dir / 'models'}")
+        for fixture_id, target in fixtures:
+            lines += fixture_lines(fixture_id, target, 1, assets_dir)
     if args.real_uci_har:
-        model_dir = ROOT / "data/real-model-backtest/20261102-uci-har"
-        for family in ("mlp", "normalized_mlp", "resnet", "mobilenet", "mixer"):
-            path = model_dir / f"{family}.bin"
-            if not path.is_file():
-                parser.error(f"--real-uci-har requires local fixture {path}")
-            target = (
-                ROOT
-                / "data/real-model-backtest/20261105-sample-addressable/models/uci-har"
-                / family
-            )
-            lines += fixture_lines(
-                "uci-har-" + family.replace("_", "-"),
-                target,
-                1,
-            )
+        fixtures = fixtures_for_adapter(assets_dir, "uci-har-v1")
+        if not fixtures:
+            parser.error(f"--real-uci-har requires fixtures under {assets_dir / 'models'}")
+        for fixture_id, target in fixtures:
+            lines += fixture_lines(fixture_id, target, 1, assets_dir)
     if args.real_appliance_mixer:
-        path = (
-            ROOT
-            / "data/real-model-backtest/20261103-appliance-energy-mixer/appliance-energy-mixer.bin"
-        )
-        if not path.is_file():
-            parser.error(f"--real-appliance-mixer requires local fixture {path}")
-        target = (
-            ROOT
-            / "data/real-model-backtest/20261105-sample-addressable/models/appliance-energy/mixer"
-        )
-        lines += fixture_lines(
-            "appliance-energy-mixer",
-            target,
-            1,
-        )
+        fixtures = fixtures_for_adapter(assets_dir, "appliance-mixer-v1")
+        if not fixtures:
+            parser.error(f"--real-appliance-mixer requires fixtures under {assets_dir / 'models'}")
+        for fixture_id, target in fixtures:
+            lines += fixture_lines(fixture_id, target, 1, assets_dir)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines) + "\n")
     print(args.output)

@@ -77,13 +77,29 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 The real suite is opt-in and uses local fixtures only. Add one or more switches to
 `scripts/exact-config.py --output <path>`: `--real-image-zoo`, `--real-uci-har`, or
 `--real-appliance-mixer`. Use `--synthetic-full` for all batch sizes, or `--synthetic-cell` (repeat
-the option) to define a custom cell set. Each real-suite switch requires the corresponding local files under
-`data/real-model-backtest/`; the generated config records each selected asset's hash. Use no switch
-for synthetic-only configuration when real assets are unavailable. Every benchmark worker must
-have the same relative asset paths and hashes before real workloads are enabled. The selected
-adapter validates tensor counts and dimensions before timing. Assets are mounted read-only into
-each fresh benchmark process; no network fetch occurs. The compact image-zoo, UCI-HAR and appliance
-fixtures are small task-trained research models, not claims of externally pretrained SOTA coverage.
+the option) to define a custom cell set. By default, fixtures are read from
+`data/benchmark/assets/`; choose another repository-local bundle with `--assets-dir PATH` or
+`TORCHLEAN_BENCHMARK_ASSETS=PATH`. The generated config records each selected asset's hash. Use no
+real-suite switch for synthetic-only configuration when assets are unavailable. Every benchmark
+worker must have the same relative asset paths and hashes before real workloads are enabled. The
+selected adapter validates tensor counts and dimensions before timing. Assets are mounted read-only
+into each fresh benchmark process; workers do not fetch assets from the network. The compact
+image-zoo, UCI-HAR and appliance fixtures are small task-trained research models, not claims of
+externally pretrained SOTA coverage.
+
+The current local bundle contains complete held-out input pools: 360 sklearn Digits examples,
+10,000 official MNIST test images, 10,000 official Fashion-MNIST test images, 2,947 UCI-HAR test
+windows, and 2,932 chronological Appliance Energy test windows. A submission still draws only its
+configured number of examples (12 rounds by default); the larger pools expand the hidden sampling
+space without increasing the number of timed inferences.
+
+The local bundle is also prepared as the root of a Hugging Face dataset repository. Its per-fixture
+manifests pin paths and checksums; `scripts/index-benchmark-assets.py` verifies those files and
+regenerates the top-level catalog. To download the private repo, set
+`HF_TOKEN_TORCHLEAN_BENCHMARK` in the environment or ignored `.env` file, then run
+`scripts/download-benchmark-assets.py --revision COMMIT`. It downloads to
+`data/benchmark/assets/` by default and verifies every asset checksum. Use `--destination PATH` for
+a separate local copy. Pin an immutable Hub commit for deployment rather than `main`.
 
 The initial development profile uses **12 paired rounds**, one fresh process per side per round,
 and **3 baseline diagnostic rounds**. A three-round self-comparison was too noisy for admission;
