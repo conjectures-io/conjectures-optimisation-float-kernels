@@ -14,6 +14,8 @@ and follow the [manual](../MANUAL.md) to verify and submit it.
 | `conv` | `conv2d`, `depthwise`, `convTranspose` | Exact dot of the contributing taps plus bias, rounded once; optional ReLU. Grouped, dilated, strided and padded; depthwise is `conv2d` with one group per channel. |
 | `elem` | `avgpool`, `maxpool`, `addRelu`, `scaleShift` | Average/max pooling over `PoolShape` windows, residual addition, channelwise fused scale and shift. |
 | `norm` | `rmsnorm`, `layernorm` | Exact rational statistics with pinned denominator and output rounding. |
+| `attn` | `scores`, `mix`, `softmax`, `silu` | Attention dots, softmax and SiLU (no scored board uses them in this competition). |
+| `rnn` | `lstm`, `gru` | Whole-sequence recurrent layers: exact gate dots, correctly rounded `sigmoid`/`tanh`, exactly rounded state updates. |
 
 The names of these proof/record families are **not** separate reward boards. Boards evaluate
 complete inference models. Every entry supplies every kernel, even when only one is changed.
@@ -30,13 +32,19 @@ The accumulator sums finite products exactly before final binary32 rounding. Its
 that integer representation to FloatLib's exact dot product. Special inputs follow the pinned
 FloatLib semantics.
 
+The recurrent kernels are `lstmWith dotFn sigmoidW tanhW` and `gruWith dotFn sigmoidW tanhW`. Their
+`sigmoid` and `tanh` are the specs, which decide the rounding by exact comparisons and dominate
+recurrent inference time. A proved fast scalar `sigmoid`/`tanh`, rewritten into
+`lstmWith`/`gruWith` like `dotFn`, is the largest single gain available there; reusing decoded
+weights across the `T` steps is the next.
+
 You may use a different representation, traversal or fast path, provided the complete equality
 proof passes.
 
 ## Proof structure
 
-`CoreObligation`, `DenseObligation`, `ConvObligation`, `ElementObligation` and `NormObligation`
-allow family proofs to be composed with `obligation_of_families`. Alternatively, rewrite individual
+`CoreObligation`, `DenseObligation`, `ConvObligation`, `ElementObligation`, `NormObligation`,
+`AttnObligation` and `RnnObligation` allow family proofs to be composed with `obligation_of_families`. Alternatively, rewrite individual
 kernel equalities to prove `Obligation` directly, as the starting file does.
 
 The [toolkit](../lean/contract/ExactToolkit/) supplies word decoding, exact accumulators and
@@ -52,7 +60,7 @@ After setup, copy your entry to `lean/work/Submission.lean` and build the target
 |---|---|
 | `VerifyExact` | Check the complete correctness statement. |
 | `benchExact` | Native inference timings/checksums; see the manual. |
-| `exactDev profile mlp` | Layer costs; also accepts `cnn`, `mnet`, `nmlp`, `mixer`, `tfm`. |
+| `exactDev profile mlp` | Layer costs; also accepts `cnn`, `mnet`, `nmlp`, `mixer`, `tfm`, `rnn`. |
 | `exactDev` | Developer comparisons of exact reductions with reference/native arithmetic. |
 | `exactAudit --json 20 971` | Compare all kernels with their specs on generated and directed cases. |
 | `exactAudit --malformed 20 971` | Include arrays shorter than their declared shapes. |

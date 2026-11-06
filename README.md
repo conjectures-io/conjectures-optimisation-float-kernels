@@ -1,10 +1,10 @@
 # TorchLean kernel competition
 
 Make CPU inference faster while proving that every output matches the pinned specification,
-bit for bit. Submit one Lean file containing all **17 kernels** and a correctness proof.
+bit for bit. Submit one Lean file containing all **19 kernels** and a correctness proof.
 You may improve any subset of the kernels; each submission is evaluated as a complete package.
 
-Six model-family boards—MLP, ResNet, MobileNet, normalized MLP, Mixer and Transformer—and an
+Six model-family boards—MLP, ResNet, MobileNet, normalized MLP, Mixer and Recurrent (LSTM/GRU)—and an
 overall board each have their own champion. The same entry can win several boards. Rewards go to
 the current and previous eligible champion on each board, with allocations published by the API.
 
