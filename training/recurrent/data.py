@@ -16,6 +16,7 @@ import csv
 import gzip
 import hashlib
 import io
+import json
 import struct
 import urllib.request
 import zipfile
@@ -184,13 +185,13 @@ SOURCES: dict[str, Source] = {
                 "https://storage.googleapis.com/download.tensorflow.org/data/"
                 "speech_commands_v0.02.tar.gz",
                 "speech_commands_v0.02.tar.gz",
-                "",  # not downloaded yet (2.4 GB); pin the digest on first download
+                "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
             ),
             RawFile(
                 "https://storage.googleapis.com/download.tensorflow.org/data/"
                 "speech_commands_test_set_v0.02.tar.gz",
                 "speech_commands_test_set_v0.02.tar.gz",
-                "",
+                "cc2a00c1147c2254e9be3fa0f779d8c17421dc349b86366567a8edfa9acd51df",
             ),
         ),
         license="CC BY 4.0",
@@ -803,7 +804,7 @@ def load_mitbih(steps: int = 94, raw_root: Path = RAW_ROOT) -> Dataset:
 
 
 # --------------------------------------------------------------------------------------------
-# Google Speech Commands v2, 12 classes (feature code only; not downloaded)
+# Google Speech Commands v2, 12 classes
 # --------------------------------------------------------------------------------------------
 
 SPEECH_WORDS = ("yes", "no", "up", "down", "left", "right", "on", "off", "stop", "go")
@@ -825,7 +826,14 @@ MFCC_PARAMS = {
 }
 
 
+_FILTERBANKS: dict[str, np.ndarray] = {}
+
+
 def _mel_filterbank(params: dict = MFCC_PARAMS) -> np.ndarray:
+    key = json.dumps(params, sort_keys=True)
+    if key in _FILTERBANKS:
+        return _FILTERBANKS[key]
+
     def hz_to_mel(f):
         return 2595.0 * np.log10(1.0 + np.asarray(f, dtype=np.float64) / 700.0)
 
@@ -843,6 +851,7 @@ def _mel_filterbank(params: dict = MFCC_PARAMS) -> np.ndarray:
         rising = (bins - lo) / (mid - lo)
         falling = (hi - bins) / (hi - mid)
         bank[b] = np.clip(np.minimum(rising, falling), 0.0, None)
+    _FILTERBANKS[key] = bank
     return bank
 
 
@@ -864,67 +873,137 @@ def mfcc(audio: np.ndarray, params: dict = MFCC_PARAMS) -> np.ndarray:
     ]
 
 
-def _read_wav(path: Path) -> np.ndarray:
+def _decode_wav(raw: bytes, name: str) -> np.ndarray:
     from scipy.io import wavfile
 
-    rate, data = wavfile.read(path)
-    if rate != 16000 or data.dtype != np.int16:
-        raise ValueError(f"{path}: expected 16 kHz int16 PCM")
+    rate, data = wavfile.read(io.BytesIO(raw))
+    if rate != 16000 or data.dtype != np.int16 or data.ndim != 1:
+        raise ValueError(f"{name}: expected 16 kHz mono int16 PCM")
     return data.astype(np.float64) / 32768.0
 
 
-def load_speech_commands(root: Path | None = None, silence_per_split: int = 0) -> Dataset:
-    """12-class Speech Commands v2 MFCC features (49 x 40), TFDS-style split.
+def _tar_members(path: Path):
+    """Stream (normalised name, member, tar) over a .tar.gz without extracting anything."""
+    import tarfile
 
-    ``root`` must hold the extracted training archive in ``train/`` and the official test-set
-    archive in ``test/`` (extract with ``tar --no-same-owner`` into an empty directory; only WAV
-    and the two list files are read). Train/validation follow ``validation_list.txt`` and
-    ``testing_list.txt``; unknown = the 25 other words; silence = 1 s slices of the
-    ``_background_noise_`` recordings (deterministic offsets). The test split is the separate
-    test-set archive (4,890 clips across the 12 class folders).
+    with tarfile.open(path, "r|gz") as tar:
+        for member in tar:
+            if member.isfile():
+                yield member.name.removeprefix("./"), member, tar
 
-    Not run yet: the 2.4 GB archive is not downloaded by default.
-    """
-    root = root or RAW_ROOT / SOURCES["speech-commands"].directory / "extracted"
-    train_root, test_root = root / "train", root / "test"
-    if not train_root.is_dir() or not test_root.is_dir():
-        raise FileNotFoundError(f"extract the Speech Commands v2 archives under {root}")
-    val_list = set((train_root / "validation_list.txt").read_text().split())
-    test_list = set((train_root / "testing_list.txt").read_text().split())
-    label_of = {name: i for i, name in enumerate(SPEECH_CLASSES)}
-    fit, val = ([], []), ([], [])
-    for wav in sorted(train_root.glob("*/*.wav")):
-        word = wav.parent.name
-        if word == "_background_noise_":
-            continue
-        relative = f"{word}/{wav.name}"
-        if relative in test_list:
-            continue
-        label = label_of[word] if word in SPEECH_WORDS else label_of["_unknown_"]
-        target = val if relative in val_list else fit
-        target[0].append(mfcc(_read_wav(wav)))
-        target[1].append(label)
+
+SPEECH_CACHE_VERSION = "speech-commands-mfcc-v1"
+
+
+def _speech_features(raw: dict[str, Path], cache_dir: Path) -> dict[str, np.ndarray]:
+    """MFCCs of the selected clips, cached (gitignored) under ``data/recurrent/``."""
+    key = hashlib.sha256(
+        json.dumps(
+            [SPEECH_CACHE_VERSION, MFCC_PARAMS, SPLIT_SEED, checksums("speech-commands")],
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()[:12]
+    cache = cache_dir / f"{SPEECH_CACHE_VERSION}-{key}.npz"
+    if cache.is_file():
+        with np.load(cache) as stored:
+            return {name: stored[name] for name in stored.files}
+
+    train_archive = raw["speech_commands_v0.02.tar.gz"]
+    test_archive = raw["speech_commands_test_set_v0.02.tar.gz"]
+    # Pass 1: names and the official split lists.
+    names, lists = [], {}
+    for name, member, tar in _tar_members(train_archive):
+        if name.endswith(".wav"):
+            names.append(name)
+        elif name in ("validation_list.txt", "testing_list.txt"):
+            lists[name] = set(tar.extractfile(member).read().decode("ascii").split())
+    val_list, test_list = lists["validation_list.txt"], lists["testing_list.txt"]
     rng = np.random.default_rng(SPLIT_SEED)
-    noises = [_read_wav(p) for p in sorted((train_root / "_background_noise_").glob("*.wav"))]
-    count = silence_per_split or max(1, len(fit[1]) // 11)
-    for target, n in ((fit, count), (val, max(1, count // 9))):
-        for _ in range(n):
-            noise = noises[rng.integers(len(noises))]
+    label_of = {name: i for i, name in enumerate(SPEECH_CLASSES)}
+    selected: dict[str, tuple[str, int]] = {}  # clip -> (split, label)
+    for split in ("fit", "val"):
+        in_split = [
+            n
+            for n in sorted(names)
+            if not n.startswith("_background_noise_/")
+            and n not in test_list
+            and (n in val_list) == (split == "val")
+        ]
+        words = [n for n in in_split if n.split("/")[0] in SPEECH_WORDS]
+        unknown = [n for n in in_split if n.split("/")[0] not in SPEECH_WORDS]
+        for n in words:
+            selected[n] = (split, label_of[n.split("/")[0]])
+        # Like the TensorFlow keyword-spotting recipe: unknown and silence each ~10% of words.
+        for i in rng.choice(len(unknown), size=len(words) // 10, replace=False):
+            selected[unknown[i]] = (split, label_of["_unknown_"])
+    # Pass 2: features of the selected clips plus the background-noise recordings.
+    features: dict[str, list] = {"fit": [], "val": [], "test": []}
+    labels: dict[str, list] = {"fit": [], "val": [], "test": []}
+    order: dict[str, list] = {"fit": [], "val": []}
+    noises: dict[str, np.ndarray] = {}
+    for name, member, tar in _tar_members(train_archive):
+        if name in selected:
+            split, label = selected[name]
+            order[split].append(
+                (name, mfcc(_decode_wav(tar.extractfile(member).read(), name)), label)
+            )
+        elif name.startswith("_background_noise_/") and name.endswith(".wav"):
+            noises[name] = _decode_wav(tar.extractfile(member).read(), name)
+    for split in ("fit", "val"):
+        for _, feature, label in sorted(order[split], key=lambda item: item[0]):
+            features[split].append(feature)
+            labels[split].append(label)
+    noise_list = [noises[name] for name in sorted(noises)]
+    for split in ("fit", "val"):
+        words = sum(1 for label in labels[split] if label >= 2)
+        for _ in range(words // 10):
+            noise = noise_list[rng.integers(len(noise_list))]
             offset = rng.integers(0, len(noise) - 16000)
-            target[0].append(mfcc(noise[offset : offset + 16000] * rng.uniform(0.0, 1.0)))
-            target[1].append(label_of["_silence_"])
-    test = ([], [])
-    for wav in sorted(test_root.glob("*/*.wav")):
-        test[0].append(mfcc(_read_wav(wav)))
-        test[1].append(label_of[wav.parent.name])
-    (x_fit, x_val, x_test), stats = standardise(
-        np.stack(fit[0]), np.stack(val[0]), np.stack(test[0])
-    )
+            features[split].append(mfcc(noise[offset : offset + 16000] * rng.uniform(0.0, 1.0)))
+            labels[split].append(label_of["_silence_"])
+    test_items = []
+    for name, member, tar in _tar_members(test_archive):
+        if name.endswith(".wav"):
+            folder = name.split("/")[0]
+            audio = _decode_wav(tar.extractfile(member).read(), name)
+            test_items.append((name, mfcc(audio), label_of[folder]))
+    for _, feature, label in sorted(test_items, key=lambda item: item[0]):
+        features["test"].append(feature)
+        labels["test"].append(label)
+    result = {}
+    for split in ("fit", "val", "test"):
+        result[f"x_{split}"] = np.stack(features[split])
+        result[f"y_{split}"] = np.asarray(labels[split], dtype=np.int64)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    np.savez(cache, **result)
+    return result
+
+
+def load_speech_commands(raw_root: Path = RAW_ROOT, cache_dir: Path | None = None) -> Dataset:
+    """12-class Speech Commands v2 MFCC features (49 x 40).
+
+    Read straight from the two official archives (nothing is extracted). Training and
+    validation clips follow ``validation_list.txt``/``testing_list.txt`` of the training
+    archive: all clips of the 10 command words, plus a fixed random draw of the other 25 words
+    as ``_unknown_`` and 1 s slices of the ``_background_noise_`` recordings (random gain) as
+    ``_silence_``, each about 10% of the command clips. The test split is the separate official
+    test-set archive (its 12 class folders, 4,890 clips). Features are z-scored per coefficient
+    with training statistics.
+    """
+    raw = fetch("speech-commands", raw_root)
+    stored = _speech_features(raw, cache_dir or REPO_ROOT / "data/recurrent")
+    (x_fit, x_val, x_test), stats = standardise(stored["x_fit"], stored["x_val"], stored["x_test"])
     info = source_info("speech-commands")
     info.update(
         {
             "dataset_name": "Google Speech Commands v2 (12-class)",
-            "preprocessing": "pinned numpy MFCC (see mfcc_params), per-coefficient z-score",
+            "preprocessing": (
+                "clips padded/trimmed to 1 s; pinned numpy MFCC (see mfcc_params): 49 frames x "
+                "40 coefficients; per-coefficient z-score with training statistics"
+            ),
+            "validation": (
+                "official validation_list.txt; unknown and silence each ~10% of command clips"
+            ),
             "mfcc_params": MFCC_PARAMS,
             "classes": list(SPEECH_CLASSES),
             "normalisation": stats,
@@ -934,10 +1013,12 @@ def load_speech_commands(root: Path | None = None, silence_per_split: int = 0) -
         name="speech-commands",
         task="classification",
         outputs=12,
-        train=Split(x_fit, np.asarray(fit[1])),
-        val=Split(x_val, np.asarray(val[1])),
-        test=Split(x_test, np.asarray(test[1])),
-        evaluation_split="Speech Commands v2 official 12-class test set (4,890 clips)",
+        train=Split(x_fit, stored["y_fit"]),
+        val=Split(x_val, stored["y_val"]),
+        test=Split(x_test, stored["y_test"]),
+        evaluation_split=(
+            f"Speech Commands v2 official 12-class test-set archive ({len(x_test):,} clips)"
+        ),
         info=info,
     )
 

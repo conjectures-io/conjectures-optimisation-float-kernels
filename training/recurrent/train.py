@@ -89,8 +89,8 @@ CONFIGS: dict[str, dict] = {
         "dataset": "mitbih",
         "loader": {"steps": 94},
         "layers": [("gru", 32)],
-        "epochs": 15,
-        "threads": 1,  # ~46 s/epoch on 1 thread; small GRU steps do not scale with threads
+        "epochs": 60,  # ~20-35 s/epoch on 4 threads (~15 min idle, longer on a busy machine)
+        "max_minutes": 50,
         "fixture": "gru",
     },
     "speech-commands-gru": {
@@ -191,6 +191,9 @@ def train(name: str, seed: int, threads: int, epochs: int | None, out_dir: Path)
     generator = torch.Generator().manual_seed(seed)
     best_score, best_state, best_epoch, stale = -math.inf, None, 0, 0
     history = []
+    stop_reason = "max_epochs"
+    # Safety net only: a time-limited run is not reproducible, and metrics.json says so.
+    max_seconds = 60.0 * config["max_minutes"] if config.get("max_minutes") else None
     for epoch in range(1, max_epochs + 1):
         model.train()
         order = torch.randperm(len(x_train), generator=generator)
@@ -231,7 +234,11 @@ def train(name: str, seed: int, threads: int, epochs: int | None, out_dir: Path)
         else:
             stale += 1
             if stale >= HYPER["patience"]:
+                stop_reason = "early_stopping"
                 break
+        if max_seconds is not None and time.time() - started > max_seconds:
+            stop_reason = f"time budget ({config['max_minutes']} min)"
+            break
     model.load_state_dict(best_state)
     test_outputs = predict(model, dataset.test.x)
     val_metrics = evaluate(dataset.task, predict(model, dataset.val.x), dataset.val.y)
@@ -258,6 +265,7 @@ def train(name: str, seed: int, threads: int, epochs: int | None, out_dir: Path)
         "hyperparameters": {**HYPER, "max_epochs": max_epochs},
         "best_epoch": best_epoch,
         "epochs_run": len(history),
+        "stop_reason": stop_reason,
         "train_size": len(dataset.train.x),
         "val_size": len(dataset.val.x),
         "test_size": len(dataset.test.x),

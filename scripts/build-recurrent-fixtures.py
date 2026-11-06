@@ -289,6 +289,54 @@ def write_attribution(output_root: Path) -> Path:
     return path
 
 
+def attach_spec_results(output_root: Path, paths: list[Path]) -> None:
+    """Merge ``training/recurrent/spec_eval.py`` JSON lines into the matching manifests.
+
+    Only ``metrics`` changes, so the pinned weight and sample checksums stay valid. A rebuild
+    of a fixture drops its spec results (its weights may have changed); re-run spec_eval then.
+    """
+    results = {}
+    for path in paths:
+        for line in path.read_text().splitlines():
+            if line.strip():
+                result = json.loads(line)
+                results[result["workload_id"]] = result
+    manifests = {}
+    for path in sorted((output_root / "models" / FAMILY).glob("**/manifest.json")):
+        manifests[json.loads(path.read_text())["workload_id"]] = path
+    for workload_id, result in sorted(results.items()):
+        if workload_id not in manifests:
+            raise ValueError(f"no manifest for spec result {workload_id}")
+        path = manifests[workload_id]
+        manifest = json.loads(path.read_text())
+        metrics = manifest["metrics"]
+        complete = result["rows"] == manifest["sample_count"]
+        spec = {
+            "spec_rows": result["rows"],
+            "spec_full_pool": complete,
+            "spec_eval_seconds": result["seconds"],
+            "spec_outputs_finite": result["finite"],
+            "spec_max_abs_diff_vs_torch": result["max_abs_diff_vs_torch"],
+        }
+        if "spec_accuracy" in result:
+            spec["spec_accuracy"] = result["spec_accuracy"]
+            spec["torch_accuracy_on_spec_rows"] = result["torch_accuracy"]
+            spec["argmax_agreement_spec_vs_torch"] = result["argmax_agreement"]
+        else:
+            spec["spec_rmse"] = result["spec_rmse"]
+            spec["torch_rmse_on_spec_rows"] = result["torch_rmse"]
+        metrics.update(spec)
+        metrics["acceptance"]["spec_eval"] = (
+            ("passed" if result["accepted"] else "FAILED")
+            + f" on {'the full pool' if complete else 'the first rows'} ({result['rows']} rows): "
+            "spec accuracy within 0.5 pp of PyTorch (regression: RMSE within 1%) and argmax "
+            "agreement >= 99.5%, Lean realEval"
+        )
+        metrics["acceptance"]["spec_passed"] = bool(result["accepted"])
+        path.write_text(json.dumps(manifest, indent=2) + "\n")
+        print(f"{workload_id}: attached spec results ({result['rows']} rows)")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -301,6 +349,13 @@ def main():
     parser.add_argument(
         "--overwrite", action="store_true", help="replace existing recurrent fixture manifests"
     )
+    parser.add_argument(
+        "--attach-spec",
+        nargs="+",
+        type=Path,
+        metavar="JSONL",
+        help="only merge spec_eval.py output lines into the existing manifests",
+    )
     args = parser.parse_args()
     output_root = (
         args.output_root if args.output_root.is_absolute() else ROOT / args.output_root
@@ -309,6 +364,9 @@ def main():
         output_root.relative_to(ROOT.resolve())
     except ValueError:
         parser.error("--output-root must be inside this repository")
+    if args.attach_spec:
+        attach_spec_results(output_root, args.attach_spec)
+        return
     runs = (args.runs if args.runs.is_absolute() else ROOT / args.runs).resolve()
     known = {config for config, _, _ in FIXTURES}
     if args.only and set(args.only) - known:
