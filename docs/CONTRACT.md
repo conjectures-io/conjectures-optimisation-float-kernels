@@ -1,7 +1,16 @@
 # Kernel contract
 
-The [pinned contract](../lean/contract/ContractExact.lean) defines the 19 kernels, model execution
-and `Obligation K := K = specKernels`. The [checked interface](../lean/contract/ContractExactChecked.lean)
+The [pinned contract](../lean/contract/ContractExact.lean) brings together three modules:
+- [`ExactToolkit.Spec`](../lean/contract/ExactToolkit/Spec.lean): the 19 kernels, model execution and
+  `Obligation K := K = specKernels`;
+- [`ExactToolkit.FastRound`](../lean/contract/ExactToolkit/FastRound.lean): bit-level binary32 rounding
+  (`roundW`, proved equal to FloatLib's `roundDyadic`) and the enclosure bridge `bracket_spec`;
+- [`ExactToolkit.Pinned`](../lean/contract/ExactToolkit/Pinned.lean): the pinned season-1 kernels
+  (`Pinned.kernels`, proved equal to the specs).
+
+An entry competes on the `attn` and `rnn` families. It builds its `kernels` as
+`{ Pinned.kernels with attn := …, rnn := … }` and proves the obligation from `Pinned.correct` and its
+own equalities. The [checked interface](../lean/contract/ContractExactChecked.lean)
 adds tensor shape/domain checks. Every submitted implementation must match the raw specification
 universally, including behavior outside the checked interface's accepted domain.
 
@@ -34,7 +43,9 @@ before that rounding. ReLU acts on the rounded output: negative non-NaNs, includ
 nearest-even rounding of `e^x` for every input, proved in FloatLib. `sigmoid` and `tanh` are the
 nearest-even binary32 roundings of `1 / (1 + e^(−x))` and `tanh x` for every finite input
 ([`ExactToolkit/Activation.lean`](../lean/contract/ExactToolkit/Activation.lean), proved in
-`ActivationProof.lean`). A NaN is quieted with its payload kept; `tanh(±∞) = ±1`,
+`ActivationProof.lean`). The contract imports `ActivationProof`, so an entry can use
+`toReal_sigmoidModel` and `toReal_tanhModel`: the spec's result is the rounding of the real
+function. A fast path then only has to land on that rounding. A NaN is quieted with its payload kept; `tanh(±∞) = ±1`,
 `tanh(±0) = ±0`; `sigmoid(+∞) = 1`, `sigmoid(−∞) = +0`, `sigmoid(±0) = 1/2`. The `attn` and `rnn`
 families' fields have defaults, the specs, so an entry that does not name them still compiles and
 proves its obligation; those kernels are then the (slow) specs.
