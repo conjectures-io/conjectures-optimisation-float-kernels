@@ -96,6 +96,25 @@ def fixtures_for_adapter(
     return fixtures
 
 
+def board_counts(values: list[str], selected: list[str], option: str) -> dict[str, int]:
+    """Parse repeatable board=count settings and reject ambiguous profiles."""
+    result = {}
+    for value in values:
+        try:
+            board, raw_count = value.split("=", 1)
+            count = int(raw_count)
+        except (ValueError, TypeError):
+            raise ValueError(f"{option} expects BOARD=COUNT, got {value!r}") from None
+        if board not in selected:
+            raise ValueError(f"{option} names inactive board {board!r}")
+        if board in result:
+            raise ValueError(f"{option} repeats board {board!r}")
+        if count < 1:
+            raise ValueError(f"{option} counts must be positive")
+        result[board] = count
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -153,6 +172,34 @@ def main():
     )
     parser.add_argument(
         "--min-rounds", type=int, help="minimum paired rounds required for admission"
+    )
+    parser.add_argument(
+        "--board-rounds",
+        action="append",
+        default=[],
+        metavar="BOARD=COUNT",
+        help="override paired rounds on an active board; repeat as needed",
+    )
+    parser.add_argument(
+        "--board-rounds-json",
+        type=json.loads,
+        default={},
+        metavar="OBJECT",
+        help="JSON object mapping active boards to paired-round counts",
+    )
+    parser.add_argument(
+        "--board-baseline-rounds",
+        action="append",
+        default=[],
+        metavar="BOARD=COUNT",
+        help="override baseline telemetry rounds on an active board",
+    )
+    parser.add_argument(
+        "--board-baseline-rounds-json",
+        type=json.loads,
+        default={},
+        metavar="OBJECT",
+        help="JSON object mapping active boards to baseline-round counts",
     )
     parser.add_argument(
         "--reference", type=Path, default=ROOT / "kernels/exact/incumbent/Kernel.lean"
@@ -222,8 +269,33 @@ def main():
     ):
         parser.error("board benchmark timeouts must be positive")
     min_rounds = args.min_rounds if args.min_rounds is not None else min(5, rounds)
-    if not 1 <= min_rounds <= rounds:
-        parser.error("--min-rounds must be between 1 and --rounds")
+    names = list(FAMILIES)
+    family_order = [name for name in names if name != "recurrent"] + (
+        ["recurrent"] if "recurrent" in names else []
+    )
+    selected = [args.board] if args.board else [*family_order, "overall"]
+    try:
+        if not isinstance(args.board_rounds_json, dict) or not isinstance(
+            args.board_baseline_rounds_json, dict
+        ):
+            raise ValueError("board round JSON options must be objects")
+        board_round_values = args.board_rounds + [
+            f"{board}={count}" for board, count in args.board_rounds_json.items()
+        ]
+        board_baseline_values = args.board_baseline_rounds + [
+            f"{board}={count}" for board, count in args.board_baseline_rounds_json.items()
+        ]
+        board_round_overrides = board_counts(board_round_values, selected, "--board-rounds")
+        board_baseline_overrides = board_counts(
+            board_baseline_values, selected, "--board-baseline-rounds"
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    effective_rounds = {board: board_round_overrides.get(board, rounds) for board in selected}
+    if not 1 <= min_rounds <= min(effective_rounds.values()):
+        parser.error("--min-rounds must not exceed paired rounds on any active board")
+    if any(count > effective_rounds[board] for board, count in board_baseline_overrides.items()):
+        parser.error("board baseline rounds must not exceed paired rounds")
     synthetic_models = [args.board] if args.board and args.board != "overall" else list(FAMILIES)
     if args.synthetic_cell:
         synthetic_cells = args.synthetic_cell
@@ -289,11 +361,6 @@ def main():
         "",
         "[rewards.board_weights]",
     ]
-    names = list(FAMILIES)
-    family_order = [name for name in names if name not in ("recurrent",)]
-    if "recurrent" in names:
-        family_order.append("recurrent")
-    selected = [args.board] if args.board else [*family_order, "overall"]
     lines += [
         f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.5 / len(names)}"
         for name in selected
@@ -320,6 +387,10 @@ def main():
                 else args.family_benchmark_seconds
             ),
         ]
+        if board in board_round_overrides:
+            lines.append(f"rounds = {board_round_overrides[board]}")
+        if board in board_baseline_overrides:
+            lines.append(f"baseline_rounds = {board_baseline_overrides[board]}")
     if args.real_image_zoo:
         fixtures = fixtures_for_adapter(assets_dir, "image-zoo-v1")
         if not fixtures:

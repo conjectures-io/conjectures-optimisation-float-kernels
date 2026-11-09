@@ -554,6 +554,7 @@ class Config:
                     )
             local = board.get("timing", {})
             if set(local) - {
+                "rounds",
                 "benchmark_seconds",
                 "run_seconds",
                 "baseline_rounds",
@@ -597,6 +598,11 @@ class Config:
             raise ValueError("draws and min_rounds must be positive integers")
         if timing["rounds"] < admission["min_rounds"]:
             raise ValueError("not enough configured rounds")
+        if any(
+            board["timing"].get("rounds", timing["rounds"]) < admission["min_rounds"]
+            for board in boards.values()
+        ):
+            raise ValueError("board has fewer rounds than the admission minimum")
         rewards = data["rewards"]
         if set(rewards) != {"board_weights", "rank_shares", "paused_policy"}:
             raise ValueError("incomplete reward settings")

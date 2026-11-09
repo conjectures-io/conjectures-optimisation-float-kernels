@@ -198,6 +198,26 @@ def test_board_reuse_and_timeout_profiles_are_configurable(tmp_path):
     assert config["timing"]["run_seconds"] == 2700
 
 
+def test_board_round_profiles_are_configurable_and_validated(tmp_path):
+    output = generate(
+        tmp_path,
+        "board-rounds.toml",
+        "--rounds",
+        "12",
+        "--min-rounds",
+        "4",
+        "--board-rounds-json",
+        '{"resnet":4,"recurrent":4,"overall":4}',
+        "--board-baseline-rounds-json",
+        '{"resnet":1,"recurrent":1,"overall":1}',
+    )
+    configured = Config.load(output)
+    assert configured.plan("resnet")["timing"]["rounds"] == 4
+    assert configured.plan("resnet")["timing"]["baseline_rounds"] == 1
+    assert configured.plan("mlp")["timing"]["rounds"] == 12
+    assert configured.plan("overall")["timing"]["rounds"] == 4
+
+
 def test_recurrent_board_alone_and_with_full_synthetic_cells(tmp_path):
     single = tomllib.loads(generate(tmp_path, "recurrent.toml", "--board", "recurrent").read_text())
     assert set(single["boards"]) == {"recurrent"}
