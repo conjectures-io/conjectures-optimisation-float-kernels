@@ -1,5 +1,6 @@
 import ExactSuiteProofs
 import ExactToolkit.ActivationProof
+import ExactToolkit.RecurrentProofs
 
 /-! Additional operator-side mathematical facts, checked separately from miner proofs. -/
 
@@ -103,3 +104,16 @@ end ExactRuntime.Audit
 #print axioms ExactRuntime.toReal_sigmoidModel
 #print axioms ExactSuite.rnn_wellShaped
 #print axioms ExactSuite.rnn_outputShape
+#print axioms ExactRuntime.TensorMath.rational_negW
+#print axioms ExactRuntime.TensorMath.recur_fold
+#print axioms ExactRuntime.TensorMath.recurWith_entry
+#print axioms ExactRuntime.TensorMath.lstm_entry
+#print axioms ExactRuntime.TensorMath.gru_entry
+#print axioms ExactRuntime.TensorMath.lstm_cell
+#print axioms ExactRuntime.TensorMath.lstm_hidden
+#print axioms ExactRuntime.TensorMath.gru_hidden
+#print axioms ExactRuntime.TensorMath.gate_total
+#print axioms ExactRuntime.TensorMath.gate_nonzero_math
+#print axioms ExactRuntime.TensorMath.cell_total
+#print axioms ExactRuntime.TensorMath.gru_update_total
+#print axioms ExactRuntime.TensorMath.gru_candidate_total
