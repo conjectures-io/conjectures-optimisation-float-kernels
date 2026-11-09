@@ -1,6 +1,6 @@
 # Public API
 
-Production origin: **https://conjectures.io**. Base path: `/v1/competitions/torchlean`.
+Production origin: **https://conjectures.io**. Base path: `/v1/competitions/tensor-kernels`.
 Reads are public. Uploads use the signed miner client described in the [manual](../MANUAL.md).
 The central API's `/openapi.json` is the detailed schema reference.
 
@@ -29,11 +29,11 @@ HTTP 201:
 
 ```json
 {
-  "competition": "torchlean",
+  "competition": "tensor-kernels",
   "submission": 123,
   "source_sha256": "<sha256 of Kernel.lean>",
   "proof_state": "queued",
-  "status_url": "/v1/competitions/torchlean/submissions/123",
+  "status_url": "/v1/competitions/tensor-kernels/submissions/123",
   "intake_mode": "subnet"
 }
 ```

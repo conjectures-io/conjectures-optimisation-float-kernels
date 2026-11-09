@@ -22,7 +22,7 @@ def test_cli_and_gate_share_the_fixed_ceiling(tmp_path, monkeypatch):
     submit = load("miner_source_ceiling", REPO / "miner/submit.py")
     assert submit.MAX_FILE_BYTES == sandbox._MAX_BYTES == MAX_SOURCE_BYTES == 4 * 1024 * 1024
     # Lowering public admission must not invalidate an existing, larger champion.
-    monkeypatch.setenv("TORCHLEAN_MAX_SOURCE_BYTES", "1024")
+    monkeypatch.setenv("TENSOR_KERNELS_MAX_SOURCE_BYTES", "1024")
     content = b"-" * MAX_SOURCE_BYTES
     src = tmp_path / "Kernel.lean"
     src.write_bytes(content)
@@ -34,7 +34,7 @@ def test_api_policy_does_not_change_execution_identities(monkeypatch):
     assert "validator/source_limits.py" in fingerprint.PROOF_FILES
     assert "validator/source_limits.py" in fingerprint.BENCHMARK_FILES
     proof, benchmark = fingerprint.proof(), fingerprint.benchmark()
-    monkeypatch.setenv("TORCHLEAN_MAX_SOURCE_BYTES", "2097152")
+    monkeypatch.setenv("TENSOR_KERNELS_MAX_SOURCE_BYTES", "2097152")
     assert (fingerprint.proof(), fingerprint.benchmark()) == (proof, benchmark)
 
 

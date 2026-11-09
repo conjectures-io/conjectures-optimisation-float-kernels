@@ -1,7 +1,7 @@
-# TorchLean Axiom monitoring
+# Tensor kernels Axiom monitoring
 
 Workers use the central validator's event envelope: `_time`, `severity`, `source`, `event_type`,
-`environ`, plus `competition: "torchlean"`, `host`, and `pid`. The existing bounded background
+`environ`, plus `competition: "tensor-kernels"`, `host`, and `pid`. The existing bounded background
 transport batches gzipped NDJSON and never raises on an ingestion failure. No credentials means
 no ingestion or heartbeat thread. ERROR/CRITICAL console logs also reach Axiom as `log_error`.
 

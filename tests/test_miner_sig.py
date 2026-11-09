@@ -30,11 +30,11 @@ ALICE = service_sig.load_keypair("//Alice")
 def test_the_message_is_the_platforms_five_lines():
     # conjectures-validator's submission_api/competition_sig.py builds exactly this text.
     message = miner_sig.submit_message(
-        competition="torchlean", digest="ab" * 32, hotkey="5Hot", timestamp=1700000000
+        competition="tensor-kernels", digest="ab" * 32, hotkey="5Hot", timestamp=1700000000
     )
     assert message == (
         "conjectures-competition-submit-v1\n"
-        "competition: torchlean\n"
+        "competition: tensor-kernels\n"
         f"digest: {'ab' * 32}\n"
         "hotkey: 5Hot\n"
         "timestamp: 1700000000"
@@ -44,8 +44,8 @@ def test_the_message_is_the_platforms_five_lines():
 def test_a_miner_signature_verifies_at_the_validator_and_only_for_its_slug():
     kp = miner_sig.load_keypair("//Alice")
     fields = dict(digest="cd" * 32, hotkey=kp.ss58_address, timestamp=1700000000)
-    signature = miner_sig.sign(kp, miner_sig.submit_message(competition="torchlean", **fields))
-    ok = service_sig.submit_message(competition="torchlean", **fields)
+    signature = miner_sig.sign(kp, miner_sig.submit_message(competition="tensor-kernels", **fields))
+    ok = service_sig.submit_message(competition="tensor-kernels", **fields)
     other = service_sig.submit_message(competition="floatlib", **fields)
     assert service_sig.verify(kp.ss58_address, ok, signature)
     assert not service_sig.verify(kp.ss58_address, other, signature)
@@ -66,11 +66,11 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsy
 
         def json(self):
             return {
-                "competition": "torchlean",
+                "competition": "tensor-kernels",
                 "submission": 1,
                 "proof_state": "queued",
                 "source_sha256": "0" * 64,
-                "status_url": "/v1/competitions/torchlean/submissions/1",
+                "status_url": "/v1/competitions/tensor-kernels/submissions/1",
                 "intake_mode": intake_mode,
             }
 
@@ -81,7 +81,7 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(submit.requests, "post", post)
     args = submit.argparse.Namespace(dir=str(d), hotkey="//Alice", url="http://v:9300/")
     submit.cmd_submit(args)
-    assert sent["url"] == "http://v:9300/v1/competitions/torchlean/submissions"
+    assert sent["url"] == "http://v:9300/v1/competitions/tensor-kernels/submissions"
     assert set(sent["files"]) == {"Kernel.lean"}
     output = capsys.readouterr().out
     assert "proof state: queued" in output
@@ -89,7 +89,7 @@ def test_the_client_sends_headers_and_one_file_part(tmp_path, monkeypatch, capsy
     assert ("dev intake:" in output) == (intake_mode == "dev")
     h = sent["headers"]
     message = service_sig.submit_message(
-        competition="torchlean",
+        competition="tensor-kernels",
         digest=service_sig.digest_of(b"import ContractExact\n"),
         hotkey=h["X-Conjectures-Hotkey"],
         timestamp=int(h["X-Conjectures-Timestamp"]),
@@ -110,7 +110,10 @@ def test_client_url_defaults_to_central_api_and_can_be_overridden(monkeypatch):
 
 def test_wrong_hotkey_signature_is_rejected():
     message = service_sig.submit_message(
-        competition="torchlean", digest="ab" * 32, hotkey=ALICE.ss58_address, timestamp=1700000000
+        competition="tensor-kernels",
+        digest="ab" * 32,
+        hotkey=ALICE.ss58_address,
+        timestamp=1700000000,
     )
     bob = service_sig.load_keypair("//Bob")
     signature = service_sig.sign(bob, message)
@@ -156,7 +159,7 @@ def test_status_keeps_proof_and_board_decisions_separate(monkeypatch, capsys):
             return payload
 
     def get(url, params, timeout):
-        assert url == "http://dev/v1/competitions/torchlean/submissions/12" and params is None
+        assert url == "http://dev/v1/competitions/tensor-kernels/submissions/12" and params is None
         return Reply()
 
     monkeypatch.setattr(submit.requests, "get", get)
@@ -192,7 +195,7 @@ def test_read_commands_print_public_api_reads(monkeypatch, capsys, argv, path, p
     monkeypatch.setattr(submit.requests, "get", get)
     monkeypatch.setattr(sys, "argv", ["submit.py", *argv, "--url", "http://dev"])
     submit.main()
-    assert seen == [("http://dev/v1/competitions/torchlean" + path, params)]
+    assert seen == [("http://dev/v1/competitions/tensor-kernels" + path, params)]
     assert '"ok": true' in capsys.readouterr().out
 
 

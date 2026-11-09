@@ -50,7 +50,7 @@ def events() -> Iterator[Recorder]:
     yield recorder
     axiom.reset()
     assert {e["event_type"] for e in recorder.events} <= EVENT_TYPES
-    assert all(e["competition"] == "torchlean" for e in recorder.events)
+    assert all(e["competition"] == "tensor-kernels" for e in recorder.events)
 
 
 def test_planning_deciding_and_promoting_are_reported_per_board(store, config, events):
@@ -137,7 +137,7 @@ def test_operator_decisions_name_what_changed_and_why(store, config, events):
     repo.disqualify(promotion["promotion_id"], "copied kernel", config)
     assert events.of("promotion_disqualified") == [
         {
-            "competition": "torchlean",
+            "competition": "tensor-kernels",
             "promotion_id": promotion["promotion_id"],
             "board": promotion["board"],
             "reason": "copied kernel",

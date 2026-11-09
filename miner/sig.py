@@ -9,7 +9,7 @@ from typing import Final, cast
 
 from bittensor_wallet import Keypair as Keypair  # re-exported: submit.py types its keypair with it
 
-COMPETITION: Final = "torchlean"
+COMPETITION: Final = "tensor-kernels"
 COMPETITION_SUBMIT_PREFIX: Final = "conjectures-competition-submit-v1"
 # sr25519 in bittensor_wallet's numbering, named so a default change can't switch curves.
 SR25519: Final = 1

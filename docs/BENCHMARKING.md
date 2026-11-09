@@ -113,7 +113,7 @@ the 11-round control was substantially more stable, and an even count balances w
 first. Repetition counts are configurable with
 `--rounds`, `--inner`, `--baseline-rounds` and `--min-rounds`; `--quick` emits a one-round smoke
 configuration. These are pilot defaults, not final production policy. Read
-`/v1/competitions/torchlean/boards`
+`/v1/competitions/tensor-kernels/boards`
 and submission reports for live policy and frozen evaluation settings. Full processing also includes
 proof checking, native builds and queue waiting; it is longer than the timed inference.
 Default measurement ceilings are 20 minutes for overall and 6 minutes for one family;

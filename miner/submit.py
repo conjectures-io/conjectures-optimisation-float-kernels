@@ -1,4 +1,4 @@
-"""Submit one complete TorchLean implementation to the central API; default https://conjectures.io."""
+"""Submit one complete Tensor kernels implementation to the central API; default https://conjectures.io."""
 
 from __future__ import annotations
 
