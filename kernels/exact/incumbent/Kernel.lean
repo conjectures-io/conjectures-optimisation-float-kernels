@@ -1,815 +1,1479 @@
 import ContractExact
 
 /-!
-# Exact runtime, starting champion
+# Exact runtime, season 2: starting champion for the new families
 
-Every kernel is built on one exact dot product. Each finite product `±m · 2^idx` goes into 32-bit
-limbs (`Acc.add`), and the exact total is rounded once with FloatLib's own rounding. The rounding
-(`finishFast`) never builds the total as a big integer: it turns the nonzero limbs into 32-bit
-digits of `pos - neg` and rounds from the top two digits and a sticky bit, which rounds the same
-(`roundDyadic_jam`). A NaN or an infinity anywhere falls back to FloatLib's `dot`.
+The season-1 families are the contract's pinned kernels (`Pinned.kernels`); this entry supplies
+the `attn` and `rnn` families:
+- `sigmoid`, `tanh` and `exp` (for `x ≤ 0`) have fast paths (`FastAct`). `e^(−|x|)` is enclosed in
+  64-bit fixed point (tables of `e^(−n)` and `e^(−j/64)`, a degree-6 Taylor sum, every product
+  rounded in the safe direction); quotients start from a `Float` guess that is then checked
+  exactly; a result is returned only when both ends of its enclosure round to the same finite
+  nonzero word (`FastRound.roundW`, `FastRound.bracket_spec`). Otherwise the spec decides.
+- `scores`, `mix` and softmax's sum use `dotSel`: sums of more than two terms go to `dotWin`, which
+  sums the products truncated on a window below the largest exponent in 64-bit words and accepts
+  when both ends of the `±n`-unit enclosure round alike (`dotWin_spec`); the rest use `dotFn`.
+- LSTM and GRU use the fast activations with the pinned `dotFn`: their operands are computed per
+  read, and the window path, which reads them twice, measured slower there.
 
-`dotFn n fa fb` reads its operands through functions (`dotFn_eq`). `dot` reads two arrays and
-`sum` is a dot with ones. Every other dot-based kernel is the contract's own definition run with
-`dotFn` instead of the spec's `dotOf` (`linearWith dotFn`, `conv2dWith dotFn`, …), so it reads
-its inputs, weights and bias in place and its proof is one rewrite. Max pooling keeps its running
-maximum as a word and compares finite words by their exact values (`maxW`, proved against
-FloatLib's `maximum`). The residual add and batch norm use their specs. Attention's `scores` and
-`mix` and softmax's exact sum use `dotFn` too; `exp`, and so SiLU, use their specs. The LSTM and
-GRU gates and state updates use `dotFn`; their `sigmoid` and `tanh` are the specs'.
+`correct` proves the entry equals the specs; `sigmoidF_eq`, `tanhF_eq`, `expF_eq`, `dotWin_spec`
+carry the new parts.
 -/
+
+namespace FastAct
+
+/-! ## 128-bit products of 64-bit words -/
+
+/-- The middle column of `a · b` from four 32-bit products (carries into the high half). -/
+@[inline] def midW (a b : UInt64) : UInt64 :=
+  (((a &&& (0xffffffff : UInt64)) * (b &&& (0xffffffff : UInt64))) >>> (32 : UInt64)) +
+    (((a &&& (0xffffffff : UInt64)) * (b >>> (32 : UInt64))) &&& (0xffffffff : UInt64)) +
+    (((a >>> (32 : UInt64)) * (b &&& (0xffffffff : UInt64))) &&& (0xffffffff : UInt64))
+
+/-- The high 64 bits of `a · b`. -/
+@[inline] def mulHiW (a b : UInt64) : UInt64 :=
+  (a >>> (32 : UInt64)) * (b >>> (32 : UInt64)) + (((a &&& (0xffffffff : UInt64)) * (b >>> (32 : UInt64))) >>> (32 : UInt64)) +
+    (((a >>> (32 : UInt64)) * (b &&& (0xffffffff : UInt64))) >>> (32 : UInt64)) + (midW a b >>> (32 : UInt64))
+
+/-- The low 64 bits of `a · b`. -/
+@[inline] def mulLoW (a b : UInt64) : UInt64 :=
+  (midW a b <<< (32 : UInt64)) + ((a &&& (0xffffffff : UInt64)) * (b &&& (0xffffffff : UInt64)) &&& (0xffffffff : UInt64))
+
+/-- `a · b` as `(high, low)` 64-bit halves (for proofs; the code reads the halves directly). -/
+def mul128 (a b : UInt64) : UInt64 × UInt64 := (mulHiW a b, mulLoW a b)
+
+theorem toNat_and_mask (x : UInt64) : (x &&& 0xffffffff).toNat = x.toNat % 2 ^ 32 := by
+  rw [UInt64.toNat_and]
+  exact Nat.and_two_pow_sub_one_eq_mod x.toNat 32
+
+theorem toNat_shr32 (x : UInt64) : (x >>> 32).toNat = x.toNat / 2 ^ 32 := by
+  rw [UInt64.toNat_shiftRight]
+  simp [Nat.shiftRight_eq_div_pow]
+
+theorem mul128_spec (a b : UInt64) :
+    (mul128 a b).1.toNat * 2 ^ 64 + (mul128 a b).2.toNat = a.toNat * b.toNat := by
+  have ha := a.toNat_lt
+  have hb := b.toNat_lt
+  have hk : a.toNat * b.toNat < 2 ^ 128 :=
+    calc a.toNat * b.toNat < 2 ^ 64 * 2 ^ 64 := Nat.mul_lt_mul'' ha hb
+      _ = 2 ^ 128 := by norm_num
+  simp only [mul128, mulHiW, mulLoW, midW, UInt64.toNat_add, UInt64.toNat_mul,
+    UInt64.toNat_shiftLeft, toNat_and_mask, toNat_shr32]
+  have h32 : (32 : UInt64).toNat % 64 = 32 := by decide
+  rw [h32, Nat.shiftLeft_eq]
+  have hA := (Nat.div_add_mod' a.toNat (2 ^ 32)).symm
+  have hB := (Nat.div_add_mod' b.toNat (2 ^ 32)).symm
+  have hA0 : a.toNat % 2 ^ 32 < 2 ^ 32 := Nat.mod_lt _ (by norm_num)
+  have hB0 : b.toNat % 2 ^ 32 < 2 ^ 32 := Nat.mod_lt _ (by norm_num)
+  have hA1 : a.toNat / 2 ^ 32 < 2 ^ 32 := by omega
+  have hB1 : b.toNat / 2 ^ 32 < 2 ^ 32 := by omega
+  generalize a.toNat / 2 ^ 32 = A1 at *
+  generalize a.toNat % 2 ^ 32 = A0 at *
+  generalize b.toNat / 2 ^ 32 = B1 at *
+  generalize b.toNat % 2 ^ 32 = B0 at *
+  have prod_lt : ∀ x y : Nat, x < 2 ^ 32 → y < 2 ^ 32 → x * y < 2 ^ 64 := fun x y hx hy =>
+    calc x * y < 2 ^ 32 * 2 ^ 32 := Nat.mul_lt_mul'' hx hy
+      _ = 2 ^ 64 := by norm_num
+  have m00 := prod_lt A0 B0 hA0 hB0
+  have m01 := prod_lt A0 B1 hA0 hB1
+  have m10 := prod_lt A1 B0 hA1 hB0
+  have m11 := prod_lt A1 B1 hA1 hB1
+  have hab : a.toNat * b.toNat = A1 * B1 * 2 ^ 64 + (A0 * B1 + A1 * B0) * 2 ^ 32 + A0 * B0 := by
+    rw [hA, hB]; ring
+  simp only [Nat.mod_eq_of_lt m00, Nat.mod_eq_of_lt m01, Nat.mod_eq_of_lt m10,
+    Nat.mod_eq_of_lt m11]
+  rw [hab]
+  generalize A0 * B0 = p00 at *
+  generalize A0 * B1 = p01 at *
+  generalize A1 * B0 = p10 at *
+  generalize A1 * B1 = p11 at *
+  omega
+
+/-! ## Fixed point on the grid `2^(−62)`
+
+A natural number `a` stands for `a / 2^62` (`V a`). Every quantity below is at most about `1`, so
+values stay below `2^63` and remain unboxed. -/
+
+/-- `1` on the grid. -/
+def one : Nat := 2 ^ 62
+
+/-- The real value of a grid number. -/
+noncomputable def V (a : Nat) : ℝ := (a : ℝ) / 2 ^ 62
+
+theorem V_nonneg (a : Nat) : 0 ≤ V a := by unfold V; positivity
+
+theorem V_one : V one = 1 := by norm_num [V, one]
+
+theorem V_mono {a b : Nat} (h : a ≤ b) : V a ≤ V b := by
+  unfold V; gcongr
+
+theorem V_add (a b : Nat) : V (a + b) = V a + V b := by unfold V; push_cast; ring
+
+theorem V_sub_ge (a b : Nat) : V a - V b ≤ V (a - b) := by
+  unfold V
+  rcases le_total b a with h | h
+  · rw [Nat.cast_sub h]; ring_nf; rfl
+  · rw [Nat.sub_eq_zero_of_le h]
+    have : (a : ℝ) ≤ b := by exact_mod_cast h
+    simp only [Nat.cast_zero, zero_div]
+    rw [div_sub_div_same]
+    exact div_nonpos_of_nonpos_of_nonneg (by linarith) (by positivity)
+
+theorem V_sub_le_of_le {a b : Nat} (h : b ≤ a) : V (a - b) = V a - V b := by
+  unfold V; rw [Nat.cast_sub h]; ring
+
+/-- `⌊a · b / 2^62⌋` as a word (wrapping past `2^64`). -/
+@[inline] def mulDnW (a b : UInt64) : UInt64 := (mulHiW a b <<< 2) + (mulLoW a b >>> 62)
+
+/-- `⌈a · b / 2^62⌉` as a word. -/
+@[inline] def mulUpW (a b : UInt64) : UInt64 :=
+  if mulLoW a b &&& 0x3fffffffffffffff = 0 then mulDnW a b else mulDnW a b + 1
+
+/-- `⌊a · b / 2^62⌋`; a lower bound for any `a, b`. -/
+@[inline] def mulDn (a b : Nat) : Nat := (mulDnW a.toUInt64 b.toUInt64).toNat
+
+/-- `⌈a · b / 2^62⌉` for `a, b ≤ one`. -/
+@[inline] def mulUp (a b : Nat) : Nat := (mulUpW a.toUInt64 b.toUInt64).toNat
+
+theorem toNat_toUInt64_le (a : Nat) : a.toUInt64.toNat ≤ a := by
+  rw [UInt64.toNat_ofNat']; exact Nat.mod_le _ _
+
+theorem toNat_toUInt64_of_lt {a : Nat} (h : a < 2 ^ 64) : a.toUInt64.toNat = a := by
+  rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt h
+
+theorem toNat_mulDnW (a b : UInt64) : (mulDnW a b).toNat =
+    ((mulHiW a b).toNat * 4 % 2 ^ 64 + (mulLoW a b).toNat / 2 ^ 62) % 2 ^ 64 := by
+  unfold mulDnW
+  rw [UInt64.toNat_add, UInt64.toNat_shiftLeft, UInt64.toNat_shiftRight]
+  have h2 : (2 : UInt64).toNat % 64 = 2 := by decide
+  have h62 : (62 : UInt64).toNat % 64 = 62 := by decide
+  rw [h2, h62, Nat.shiftLeft_eq, Nat.shiftRight_eq_div_pow]
+
+theorem low62_zero_iff (x : UInt64) : (x &&& 0x3fffffffffffffff = 0) ↔ x.toNat % 2 ^ 62 = 0 := by
+  rw [← UInt64.toNat_inj, UInt64.toNat_and]
+  have : (0x3fffffffffffffff : UInt64).toNat = 2 ^ 62 - 1 := by decide
+  rw [this, Nat.and_two_pow_sub_one_eq_mod]; simp
+
+/-- The halves of a product of two numbers below `2^64`. -/
+theorem halves {a b : Nat} (ha : a < 2 ^ 64) (hb : b < 2 ^ 64) :
+    (mulHiW a.toUInt64 b.toUInt64).toNat * 2 ^ 64 + (mulLoW a.toUInt64 b.toUInt64).toNat = a * b := by
+  have hs := mul128_spec a.toUInt64 b.toUInt64
+  rwa [toNat_toUInt64_of_lt ha, toNat_toUInt64_of_lt hb] at hs
+
+theorem mulDn_mul_le (a b : Nat) : mulDn a b * 2 ^ 62 ≤ a * b := by
+  have hs := mul128_spec a.toUInt64 b.toUInt64
+  have hle : a.toUInt64.toNat * b.toUInt64.toNat ≤ a * b :=
+    Nat.mul_le_mul (toNat_toUInt64_le a) (toNat_toUInt64_le b)
+  simp only [mul128] at hs
+  unfold mulDn
+  rw [toNat_mulDnW]
+  generalize (mulHiW a.toUInt64 b.toUInt64).toNat = h at *
+  generalize (mulLoW a.toUInt64 b.toUInt64).toNat = l at *
+  omega
+
+/-- For operands at most `one`, `mulUp` is the exact ceiling: within `2^62` above `a · b`. -/
+theorem mulUp_bounds {a b : Nat} (ha : a ≤ one) (hb : b ≤ one) :
+    a * b ≤ mulUp a b * 2 ^ 62 ∧ mulUp a b * 2 ^ 62 < a * b + 2 ^ 62 := by
+  have hs := halves (a := a) (b := b) (by unfold one at ha; omega) (by unfold one at hb; omega)
+  have hab : a * b ≤ 2 ^ 62 * 2 ^ 62 := Nat.mul_le_mul ha hb
+  have hl := (mulLoW a.toUInt64 b.toUInt64).toNat_lt
+  unfold mulUp mulUpW
+  split
+  · rename_i h
+    rw [low62_zero_iff] at h
+    rw [toNat_mulDnW]
+    generalize a * b = p at *
+    generalize (mulHiW a.toUInt64 b.toUInt64).toNat = hi at *
+    generalize (mulLoW a.toUInt64 b.toUInt64).toNat = l at *
+    omega
+  · rename_i h
+    rw [low62_zero_iff] at h
+    rw [UInt64.toNat_add, toNat_mulDnW, show (1 : UInt64).toNat = 1 from rfl]
+    generalize a * b = p at *
+    generalize (mulHiW a.toUInt64 b.toUInt64).toNat = hi at *
+    generalize (mulLoW a.toUInt64 b.toUInt64).toNat = l at *
+    omega
+
+theorem mulUp_mul_ge {a b : Nat} (ha : a ≤ one) (hb : b ≤ one) :
+    a * b ≤ mulUp a b * 2 ^ 62 := (mulUp_bounds ha hb).1
+
+theorem mulUp_le {a b : Nat} (ha : a ≤ one) (hb : b ≤ one) : mulUp a b ≤ one := by
+  have h := (mulUp_bounds ha hb).2
+  have hab : a * b ≤ 2 ^ 62 * 2 ^ 62 := Nat.mul_le_mul ha hb
+  unfold one at *
+  generalize a * b = p at *
+  omega
+
+theorem V_mulDn (a b : Nat) : V (mulDn a b) ≤ V a * V b := by
+  have h := mulDn_mul_le a b
+  unfold V
+  rw [div_mul_div_comm, le_div_iff₀ (by positivity), div_mul_eq_mul_div, div_le_iff₀ (by positivity)]
+  have : ((mulDn a b * 2 ^ 62 : Nat) : ℝ) ≤ ((a * b : Nat) : ℝ) := by exact_mod_cast h
+  push_cast at this
+  nlinarith [this]
+
+theorem V_mulUp {a b : Nat} (ha : a ≤ one) (hb : b ≤ one) : V a * V b ≤ V (mulUp a b) := by
+  have h := mulUp_mul_ge ha hb
+  unfold V
+  rw [div_mul_div_comm, div_le_iff₀ (by positivity), div_mul_eq_mul_div, le_div_iff₀ (by positivity)]
+  have : ((a * b : Nat) : ℝ) ≤ ((mulUp a b * 2 ^ 62 : Nat) : ℝ) := by exact_mod_cast h
+  push_cast at this
+  nlinarith [this]
+
+/-- Lower bounds multiply. -/
+theorem V_mulDn_le {a b : Nat} {x y : ℝ} (ha : V a ≤ x) (hb : V b ≤ y) :
+    V (mulDn a b) ≤ x * y :=
+  (V_mulDn a b).trans (mul_le_mul ha hb (V_nonneg b) ((V_nonneg a).trans ha))
+
+/-- Upper bounds multiply (operands at most `1`). -/
+theorem le_V_mulUp {a b : Nat} {x y : ℝ} (ha : x ≤ V a) (hb : y ≤ V b) (hy : 0 ≤ y)
+    (ha1 : a ≤ one) (hb1 : b ≤ one) : x * y ≤ V (mulUp a b) :=
+  (mul_le_mul ha hb hy (V_nonneg a)).trans (V_mulUp ha1 hb1)
+
+theorem V_div_le (k : Nat) : V (one / k) ≤ 1 / k := by
+  rcases Nat.eq_zero_or_pos k with rfl | hk
+  · simp [V]
+  have h : one / k * k ≤ one := Nat.div_mul_le_self one k
+  have hc : ((one / k : Nat) : ℝ) * k ≤ (one : ℝ) := by exact_mod_cast h
+  unfold V
+  rw [div_le_div_iff₀ (by positivity) (by exact_mod_cast hk)]
+  have : (one : ℝ) = 2 ^ 62 := by norm_num [one]
+  linarith
+
+theorem le_V_divUp (k : Nat) (hk : 0 < k) : 1 / (k : ℝ) ≤ V ((one + k - 1) / k) := by
+  have h : one ≤ (one + k - 1) / k * k := by
+    have h2 := Nat.div_add_mod (one + k - 1) k
+    have h3 := Nat.mod_lt (one + k - 1) hk
+    have : (one + k - 1) / k * k = k * ((one + k - 1) / k) := Nat.mul_comm _ _
+    omega
+  have hc : (one : ℝ) ≤ (((one + k - 1) / k : Nat) : ℝ) * k := by exact_mod_cast h
+  unfold V
+  rw [div_le_div_iff₀ (by exact_mod_cast hk) (by positivity)]
+  have : (one : ℝ) = 2 ^ 62 := by norm_num [one]
+  linarith
+
+/-! ## `e^(−r)` for `0 ≤ r ≤ 1/64`: Taylor sum of degree 6 with directed rounding -/
+
+def f2l : Nat := one / 2
+def f3l : Nat := one / 6
+def f4l : Nat := one / 24
+def f5l : Nat := one / 120
+def f6l : Nat := one / 720
+def f2h : Nat := (one + 2 - 1) / 2
+def f3h : Nat := (one + 6 - 1) / 6
+def f4h : Nat := (one + 24 - 1) / 24
+def f5h : Nat := (one + 120 - 1) / 120
+def f6h : Nat := (one + 720 - 1) / 720
+/-- `8 / (7! · 7)` rounded up: the Taylor remainder factor (`Real.exp_bound`, `n = 7`). -/
+def remF : Nat := (one + 35280 - 1) / 35280 * 8
+
+/-- Enclosure of `e^(−r)` from `V rl ≤ r ≤ V rh`. -/
+@[inline] def expSmall (rl rh : Nat) : Nat × Nat :=
+  let p2l := mulDn rl rl
+  let p3l := mulDn p2l rl
+  let p4l := mulDn p3l rl
+  let p5l := mulDn p4l rl
+  let p6l := mulDn p5l rl
+  let p2h := mulUp rh rh
+  let p3h := mulUp p2h rh
+  let p4h := mulUp p3h rh
+  let p5h := mulUp p4h rh
+  let p6h := mulUp p5h rh
+  let p7h := mulUp p6h rh
+  let lo := (one + mulDn p2l f2l + mulDn p4l f4l + mulDn p6l f6l) -
+    (rh + mulUp p3h f3h + mulUp p5h f5h + mulUp p7h remF)
+  let hi := (one + mulUp p2h f2h + mulUp p4h f4h + mulUp p6h f6h + mulUp p7h remF) -
+    (rl + mulDn p3l f3l + mulDn p5l f5l)
+  (lo, min one hi)
+
+theorem exp_neg_taylor {r : ℝ} (h0 : 0 ≤ r) (h1 : r ≤ 1) :
+    |Real.exp (-r) - (1 - r + r ^ 2 / 2 - r ^ 3 / 6 + r ^ 4 / 24 - r ^ 5 / 120 + r ^ 6 / 720)| ≤
+      r ^ 7 * (8 / 35280) := by
+  have h := Real.exp_bound (x := -r) (by rw [abs_neg, abs_of_nonneg h0]; exact h1) (n := 7)
+    (by norm_num)
+  simp only [Finset.sum_range_succ, Finset.sum_range_zero, Nat.factorial] at h
+  rw [abs_neg, abs_of_nonneg h0] at h
+  convert h using 2
+  · norm_num; ring
+  · norm_num
+
+theorem f_le_one {x : Nat} (k : Nat) (hk : 0 < k) (h : x = (one + k - 1) / k) : x ≤ one := by
+  subst h; unfold one; apply Nat.div_le_of_le_mul; omega
+
+theorem expSmall_spec {rl rh : Nat} {r : ℝ} (hl : V rl ≤ r) (hh : r ≤ V rh) (hrh : rh ≤ one) :
+    V (expSmall rl rh).1 ≤ Real.exp (-r) ∧ Real.exp (-r) ≤ V (expSmall rl rh).2 ∧
+      (expSmall rl rh).2 ≤ one := by
+  have h0 : 0 ≤ r := (V_nonneg rl).trans hl
+  have h1 : r ≤ 1 := hh.trans (V_one ▸ V_mono hrh)
+  have hT := exp_neg_taylor h0 h1
+  have hp : ∀ n, 0 ≤ r ^ n := fun n => pow_nonneg h0 n
+  -- lower powers
+  have l2 : V (mulDn rl rl) ≤ r ^ 2 := by rw [sq]; exact V_mulDn_le hl hl
+  have l3 : V (mulDn (mulDn rl rl) rl) ≤ r ^ 3 := by rw [pow_succ]; exact V_mulDn_le l2 hl
+  have l4 : V (mulDn (mulDn (mulDn rl rl) rl) rl) ≤ r ^ 4 := by
+    rw [pow_succ]; exact V_mulDn_le l3 hl
+  have l5 : V (mulDn (mulDn (mulDn (mulDn rl rl) rl) rl) rl) ≤ r ^ 5 := by
+    rw [pow_succ]; exact V_mulDn_le l4 hl
+  have l6 : V (mulDn (mulDn (mulDn (mulDn (mulDn rl rl) rl) rl) rl) rl) ≤ r ^ 6 := by
+    rw [pow_succ]; exact V_mulDn_le l5 hl
+  -- upper powers, each at most `one`
+  have u2 : r ^ 2 ≤ V (mulUp rh rh) := by rw [sq]; exact le_V_mulUp hh hh h0 hrh hrh
+  have b2 : mulUp rh rh ≤ one := mulUp_le hrh hrh
+  have u3 : r ^ 3 ≤ V (mulUp (mulUp rh rh) rh) := by
+    rw [pow_succ]; exact le_V_mulUp u2 hh h0 b2 hrh
+  have b3 := mulUp_le b2 hrh
+  have u4 : r ^ 4 ≤ V (mulUp (mulUp (mulUp rh rh) rh) rh) := by
+    rw [pow_succ]; exact le_V_mulUp u3 hh h0 b3 hrh
+  have b4 := mulUp_le b3 hrh
+  have u5 : r ^ 5 ≤ V (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) := by
+    rw [pow_succ]; exact le_V_mulUp u4 hh h0 b4 hrh
+  have b5 := mulUp_le b4 hrh
+  have u6 : r ^ 6 ≤ V (mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) rh) := by
+    rw [pow_succ]; exact le_V_mulUp u5 hh h0 b5 hrh
+  have b6 := mulUp_le b5 hrh
+  have u7 : r ^ 7 ≤ V (mulUp (mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) rh) rh) := by
+    rw [pow_succ]; exact le_V_mulUp u6 hh h0 b6 hrh
+  have b7 := mulUp_le b6 hrh
+  -- factorial factors
+  have fl : ∀ (k : Nat) (x : Nat), x = one / k → V x ≤ 1 / k := fun k x h => h ▸ V_div_le k
+  have fh : ∀ (k : Nat) (x : Nat), 0 < k → x = (one + k - 1) / k → 1 / (k : ℝ) ≤ V x :=
+    fun k x hk h => h ▸ le_V_divUp k hk
+  have hf2l := fl 2 f2l rfl
+  have hf3l := fl 6 f3l rfl
+  have hf4l := fl 24 f4l rfl
+  have hf5l := fl 120 f5l rfl
+  have hf6l := fl 720 f6l rfl
+  have hf2h := fh 2 f2h (by norm_num) rfl
+  have hf3h := fh 6 f3h (by norm_num) rfl
+  have hf4h := fh 24 f4h (by norm_num) rfl
+  have hf5h := fh 120 f5h (by norm_num) rfl
+  have hf6h := fh 720 f6h (by norm_num) rfl
+  have hremF : 8 / (35280 : ℝ) ≤ V remF := by
+    have h := fh 35280 ((one + 35280 - 1) / 35280) (by norm_num) rfl
+    unfold remF V at *
+    push_cast at *
+    rw [mul_div_right_comm]
+    nlinarith
+  have bf2 := f_le_one 2 (by norm_num) (rfl : f2h = _)
+  have bf3 := f_le_one 6 (by norm_num) (rfl : f3h = _)
+  have bf4 := f_le_one 24 (by norm_num) (rfl : f4h = _)
+  have bf5 := f_le_one 120 (by norm_num) (rfl : f5h = _)
+  have bf6 := f_le_one 720 (by norm_num) (rfl : f6h = _)
+  have brem : remF ≤ one := by unfold remF one; norm_num
+  have c2 := V_mulDn_le l2 hf2l
+  have c3 := V_mulDn_le l3 hf3l
+  have c4 := V_mulDn_le l4 hf4l
+  have c5 := V_mulDn_le l5 hf5l
+  have c6 := V_mulDn_le l6 hf6l
+  have d2 := le_V_mulUp u2 hf2h (by norm_num) b2 bf2
+  have d3 := le_V_mulUp u3 hf3h (by norm_num) b3 bf3
+  have d4 := le_V_mulUp u4 hf4h (by norm_num) b4 bf4
+  have d5 := le_V_mulUp u5 hf5h (by norm_num) b5 bf5
+  have d6 := le_V_mulUp u6 hf6h (by norm_num) b6 bf6
+  have d7 := le_V_mulUp u7 hremF (by norm_num) b7 brem
+  have hexp1 : Real.exp (-r) ≤ 1 := Real.exp_le_one_iff.mpr (by linarith)
+  have hab := abs_le.mp hT
+  refine ⟨?_, ?_, min_le_left _ _⟩
+  · simp only [expSmall]
+    refine le_trans (b := max 0 (V (one + mulDn (mulDn rl rl) f2l +
+      mulDn (mulDn (mulDn (mulDn rl rl) rl) rl) f4l +
+      mulDn (mulDn (mulDn (mulDn (mulDn (mulDn rl rl) rl) rl) rl) rl) f6l) -
+      V (rh + mulUp (mulUp (mulUp rh rh) rh) f3h +
+        mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) f5h +
+        mulUp (mulUp (mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) rh) rh) remF))) ?_ ?_
+    · unfold V
+      rw [le_max_iff]
+      rcases le_total (rh + mulUp (mulUp (mulUp rh rh) rh) f3h +
+        mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) f5h +
+        mulUp (mulUp (mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) rh) rh) remF)
+        (one + mulDn (mulDn rl rl) f2l +
+          mulDn (mulDn (mulDn (mulDn rl rl) rl) rl) f4l +
+          mulDn (mulDn (mulDn (mulDn (mulDn (mulDn rl rl) rl) rl) rl) rl) f6l) with h | h
+      · right; rw [Nat.cast_sub h]; ring_nf; rfl
+      · left; rw [Nat.sub_eq_zero_of_le h]; simp
+    · apply max_le (Real.exp_pos _).le
+      simp only [V_add, V_one] at *
+      nlinarith
+  · simp only [expSmall]
+    rcases le_total one (one + mulUp (mulUp rh rh) f2h + mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) f4h +
+        mulUp (mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) rh) f6h +
+        mulUp (mulUp (mulUp (mulUp (mulUp (mulUp (mulUp rh rh) rh) rh) rh) rh) rh) remF -
+        (rl + mulDn (mulDn (mulDn rl rl) rl) f3l +
+          mulDn (mulDn (mulDn (mulDn (mulDn rl rl) rl) rl) rl) f5l)) with h | h
+    · rw [min_eq_left h, V_one]; exact hexp1
+    · rw [min_eq_right h]
+      refine le_trans ?_ (V_sub_ge _ _)
+      simp only [V_add, V_one]
+      linarith [hab.2]
+
+/-! ## Tables: powers of an enclosure -/
+
+/-- An enclosure `(lo, hi)` of `e^(−b)` with `hi ≤ one`. -/
+def Encl (iv : Nat × Nat) (b : ℝ) : Prop :=
+  V iv.1 ≤ Real.exp (-b) ∧ Real.exp (-b) ≤ V iv.2 ∧ iv.2 ≤ one
+
+/-- `j`-th power of an enclosure of `e^(−b)`: an enclosure of `e^(−j b)`. -/
+def powOf (base : Nat × Nat) : Nat → Nat × Nat
+  | 0 => (one, one)
+  | j + 1 => let p := powOf base j; (mulDn p.1 base.1, min one (mulUp p.2 base.2))
+
+/-- The product of enclosures of `e^(−a)` and `e^(−b)` encloses `e^(−(a + b))`. -/
+theorem Encl.mul {x y : Nat × Nat} {a b : ℝ} (hx : Encl x a) (hy : Encl y b) :
+    Encl (mulDn x.1 y.1, min one (mulUp x.2 y.2)) (a + b) := by
+  have he : Real.exp (-(a + b)) = Real.exp (-a) * Real.exp (-b) := by
+    rw [← Real.exp_add]; ring_nf
+  refine ⟨?_, ?_, min_le_left _ _⟩
+  · rw [he]; exact V_mulDn_le hx.1 hy.1
+  · rw [he]
+    rcases le_total one (mulUp x.2 y.2) with h | h
+    · rw [min_eq_left h, V_one, ← he]
+      exact Real.exp_le_one_iff.mpr (by
+        have := Real.exp_le_one_iff.mp (le_trans hx.2.1 (V_one ▸ V_mono hx.2.2))
+        have := Real.exp_le_one_iff.mp (le_trans hy.2.1 (V_one ▸ V_mono hy.2.2))
+        linarith)
+    · rw [min_eq_right h]
+      exact le_V_mulUp hx.2.1 hy.2.1 (Real.exp_pos _).le hx.2.2 hy.2.2
+
+theorem powOf_spec {base : Nat × Nat} {b : ℝ} (hb : Encl base b) :
+    ∀ j : Nat, Encl (powOf base j) (j * b)
+  | 0 => by
+    refine ⟨?_, ?_, le_rfl⟩ <;> simp [powOf, V_one]
+  | j + 1 => by
+    have := (powOf_spec hb j).mul hb
+    simp only [powOf]
+    convert this using 2; push_cast; ring
+
+/-- `2^56`, that is `1/64` on the grid. -/
+def sixtyFourth : Nat := 2 ^ 56
+
+theorem V_sixtyFourth : V sixtyFourth = 1 / 64 := by norm_num [V, sixtyFourth]
+
+/-- An enclosure of `e^(−1/64)`. -/
+def base64 : Nat × Nat := expSmall sixtyFourth sixtyFourth
+
+theorem base64_spec : Encl base64 (1 / 64) := by
+  exact expSmall_spec (rl := sixtyFourth) (rh := sixtyFourth) (r := 1 / 64)
+    V_sixtyFourth.le V_sixtyFourth.ge (by norm_num [sixtyFourth, one])
+
+/-- `e^(−j/64)` for `j < 64`. -/
+def fracTab : Array (Nat × Nat) := Array.ofFn (n := 64) fun j => powOf base64 j.val
+
+/-- An enclosure of `e^(−1)`. -/
+def baseOne : Nat × Nat := powOf base64 64
+
+/-- `e^(−n)` for `n ≤ 16`. -/
+def intTab : Array (Nat × Nat) := Array.ofFn (n := 17) fun n => powOf baseOne n.val
+
+theorem getElem!_ofFn' {α : Type} [Inhabited α] {n : Nat} (f : Fin n → α) {i : Nat}
+    (h : i < n) : (Array.ofFn f)[i]! = f ⟨i, h⟩ := by
+  rw [getElem!_pos (Array.ofFn f) i (by simpa using h)]
+  simp
+
+theorem fracTab_spec {j : Nat} (h : j < 64) : Encl fracTab[j]! (j * (1 / 64)) := by
+  rw [fracTab, getElem!_ofFn' _ h]
+  exact powOf_spec base64_spec j
+
+theorem intTab_spec {n : Nat} (h : n < 17) : Encl intTab[n]! n := by
+  rw [intTab, getElem!_ofFn' _ h]
+  have h1 : Encl baseOne 1 := by
+    have := powOf_spec base64_spec 64
+    simp only [baseOne]; convert this using 1; norm_num
+  have := powOf_spec h1 n
+  simpa using this
+
+/-! ## `e^(−c)` for `0 ≤ c < 17`: `c = n + j/64 + r` -/
+
+/-- `c · 2^56` rounded down and up, for `c = m · 2^e`. -/
+@[inline] def scaled (m : Nat) (e : Int) : Nat × Nat :=
+  if 0 ≤ e + 56 then let v := m <<< (e + 56).toNat; (v, v)
+  else let v := m >>> (-(e + 56)).toNat; (v, v + 1)
+
+theorem scaled_spec (m : Nat) (e : Int) :
+    ((scaled m e).1 : ℝ) ≤ m * (2 : ℝ) ^ e * 2 ^ 56 ∧
+      (m : ℝ) * (2 : ℝ) ^ e * 2 ^ 56 ≤ (scaled m e).2 ∧ (scaled m e).1 ≤ (scaled m e).2 := by
+  unfold scaled
+  have hz : (m : ℝ) * (2 : ℝ) ^ e * 2 ^ 56 = m * (2 : ℝ) ^ (e + 56) := by
+    rw [zpow_add₀ two_ne_zero]; norm_num; ring
+  split
+  · rename_i h
+    have hk : ((2 : ℝ) ^ (e + 56)) = 2 ^ (e + 56).toNat := by
+      rw [← zpow_natCast, Int.toNat_of_nonneg h]
+    simp only [Nat.shiftLeft_eq, hz, hk]; push_cast; simp
+  · rename_i h
+    set k := (-(e + 56)).toNat
+    have hk : ((2 : ℝ) ^ (e + 56)) = 1 / 2 ^ k := by
+      rw [show e + 56 = -(k : Int) by omega, zpow_neg, zpow_natCast, one_div]
+    simp only [Nat.shiftRight_eq_div_pow, hz, hk]
+    have hp : (0 : ℝ) < 2 ^ k := by positivity
+    have h1 := Nat.div_mul_le_self m (2 ^ k)
+    have h2 := Nat.lt_succ_iff.mpr (le_refl (m / 2 ^ k))
+    have h3 : m < (m / 2 ^ k + 1) * 2 ^ k := by
+      have := Nat.lt_mul_div_succ m (Nat.two_pow_pos k); linarith
+    refine ⟨?_, ?_, Nat.le_succ _⟩
+    · rw [mul_one_div, le_div_iff₀ hp]; exact_mod_cast h1
+    · rw [mul_one_div, div_le_iff₀ hp]; push_cast; exact_mod_cast h3.le
+
+def lim17 : Nat := 17 * 2 ^ 56
+
+/-- An enclosure of `e^(−c)` for `c = m · 2^e`, when `c < 17`. -/
+@[inline] def expNeg (m : Nat) (e : Int) : Option (Nat × Nat) :=
+  let c := scaled m e
+  if lim17 ≤ c.2 then none else
+  let q := c.1 >>> 50
+  let rl := (c.1 - (q <<< 50)) <<< 6
+  let rh := (c.2 - (q <<< 50)) <<< 6
+  if one < rh then none else
+  let P := expSmall rl rh
+  let F := fracTab[q % 64]!
+  let I := intTab[q >>> 6]!
+  let IF := (mulDn I.1 F.1, min one (mulUp I.2 F.2))
+  some (mulDn IF.1 P.1, min one (mulUp IF.2 P.2))
+
+theorem expNeg_spec {m : Nat} {e : Int} {iv : Nat × Nat} (h : expNeg m e = some iv) :
+    Encl iv (m * (2 : ℝ) ^ e) := by
+  unfold expNeg at h
+  simp only [Nat.shiftRight_eq_div_pow, Nat.shiftLeft_eq] at h
+  obtain ⟨hlo, hhi, hle⟩ := scaled_spec m e
+  generalize (scaled m e).1 = cl at *
+  generalize (scaled m e).2 = ch at *
+  split at h
+  · exact absurd h (by simp)
+  rename_i hlim
+  split at h
+  · exact absurd h (by simp)
+  rename_i hrh
+  simp only [Option.some.injEq] at h
+  subst h
+  set q := cl / 2 ^ 50
+  have hq : q * 2 ^ 50 ≤ cl := Nat.div_mul_le_self cl _
+  have hqd : q = q / 2 ^ 6 * 64 + q % 64 := by have := Nat.div_add_mod q 64; omega
+  have hn : q / 2 ^ 6 < 17 := by unfold lim17 at hlim; omega
+  have hj : q % 64 < 64 := Nat.mod_lt _ (by norm_num)
+  set C := (m : ℝ) * (2 : ℝ) ^ e
+  set r := C - (q / 2 ^ 6 : Nat) - (q % 64 : Nat) * (1 / 64 : ℝ)
+  have hr : C = (q / 2 ^ 6 : Nat) + (q % 64 : Nat) * (1 / 64 : ℝ) + r := by ring
+  have hqr : ((q : Nat) : ℝ) * 2 ^ 50 = ((q / 2 ^ 6 : Nat) : ℝ) * 2 ^ 56 + ((q % 64 : Nat) : ℝ) * 2 ^ 50 := by
+    have : ((q : Nat) : ℝ) = ((q / 2 ^ 6 * 64 + q % 64 : Nat) : ℝ) := by rw [← hqd]
+    rw [this]; push_cast; ring
+  have hrl : V ((cl - q * 2 ^ 50) * 2 ^ 6) ≤ r := by
+    unfold V; rw [Nat.cast_mul, Nat.cast_sub hq]; push_cast
+    rw [div_le_iff₀ (by positivity)]
+    simp only [r]; nlinarith [hqr]
+  have hrh' : r ≤ V ((ch - q * 2 ^ 50) * 2 ^ 6) := by
+    unfold V; rw [Nat.cast_mul, Nat.cast_sub (hq.trans hle)]; push_cast
+    rw [le_div_iff₀ (by positivity)]
+    simp only [r]; nlinarith [hqr]
+  have hP := expSmall_spec hrl hrh' (by omega)
+  have hI := intTab_spec hn
+  have hF := fracTab_spec hj
+  rw [hr]
+  exact (hI.mul hF).mul hP
+
+/-! ## Quotients: a guess, checked exactly -/
+
+def two62f : Float := 4611686018427387904.0
+
+/-- `q · d ≤ num · 2^62` by 128-bit comparison (for `q, d < 2^64`). -/
+@[inline] def mulLe (q d num : Nat) : Bool :=
+  let h := (mulHiW q.toUInt64 d.toUInt64).toNat
+  let nh := num >>> 2
+  h < nh || (h == nh && mulLoW q.toUInt64 d.toUInt64 ≤ (num % 4).toUInt64 <<< 62)
+
+/-- `num · 2^62 ≤ q · d`. -/
+@[inline] def mulGe (q d num : Nat) : Bool :=
+  let h := (mulHiW q.toUInt64 d.toUInt64).toNat
+  let nh := num >>> 2
+  nh < h || (h == nh && (num % 4).toUInt64 <<< 62 ≤ mulLoW q.toUInt64 d.toUInt64)
+
+theorem num_split (num : Nat) :
+    ((num % 4).toUInt64 <<< 62).toNat = num % 4 * 2 ^ 62 := by
+  have h4 : num % 4 < 4 := Nat.mod_lt _ (by norm_num)
+  rw [UInt64.toNat_shiftLeft, toNat_toUInt64_of_lt (by omega)]
+  have : (62 : UInt64).toNat % 64 = 62 := by decide
+  rw [this, Nat.shiftLeft_eq, Nat.mod_eq_of_lt (by omega)]
+
+theorem mulLe_spec {q d num : Nat} (hq : q < 2 ^ 64) (hd : d < 2 ^ 64) (h : mulLe q d num = true) :
+    q * d ≤ num * 2 ^ 62 := by
+  have hs := halves hq hd
+  unfold mulLe at h
+  simp only [Nat.shiftRight_eq_div_pow, Bool.or_eq_true, decide_eq_true_eq, Bool.and_eq_true,
+    beq_iff_eq, UInt64.le_iff_toNat_le, num_split] at h
+  have hl := (mulLoW q.toUInt64 d.toUInt64).toNat_lt
+  generalize (mulHiW q.toUInt64 d.toUInt64).toNat = a at *
+  generalize (mulLoW q.toUInt64 d.toUInt64).toNat = b at *
+  omega
+
+theorem mulGe_spec {q d num : Nat} (hq : q < 2 ^ 64) (hd : d < 2 ^ 64) (h : mulGe q d num = true) :
+    num * 2 ^ 62 ≤ q * d := by
+  have hs := halves hq hd
+  unfold mulGe at h
+  simp only [Nat.shiftRight_eq_div_pow, Bool.or_eq_true, decide_eq_true_eq, Bool.and_eq_true,
+    beq_iff_eq, UInt64.le_iff_toNat_le, num_split] at h
+  have hl := (mulLoW q.toUInt64 d.toUInt64).toNat_lt
+  generalize (mulHiW q.toUInt64 d.toUInt64).toNat = a at *
+  generalize (mulLoW q.toUInt64 d.toUInt64).toNat = b at *
+  omega
+
+/-- A guess for `num · 2^62 / den` (untrusted; only the checks below matter). -/
+@[inline] def guess (num den : Nat) : Nat :=
+  ((num.toUInt64.toFloat * two62f) / den.toUInt64.toFloat).toUInt64.toNat
+
+/-- `2^64`, computed once. -/
+def lim64 : Nat := 2 ^ 64
+
+/-- `q` with `V q · V den ≤ V num`. -/
+@[inline] def divLo (num den : Nat) : Option Nat :=
+  let g := guess num den
+  let q := g - ((g >>> 50) + 2)
+  if q < lim64 && den < lim64 && mulLe q den num then some q else none
+
+/-- `q` with `V num ≤ V q · V den`. -/
+@[inline] def divHi (num den : Nat) : Option Nat :=
+  let g := guess num den
+  let q := g + ((g >>> 50) + 2)
+  if q < lim64 && den < lim64 && mulGe q den num then some q else none
+
+theorem V_mul_iff (a b c : Nat) : V a * V b ≤ V c ↔ a * b ≤ c * 2 ^ 62 := by
+  unfold V
+  rw [div_mul_div_comm, div_le_div_iff₀ (by positivity) (by positivity)]
+  constructor
+  · intro h
+    have : ((a * b : Nat) : ℝ) * 2 ^ 62 ≤ ((c * 2 ^ 62 : Nat) : ℝ) * 2 ^ 62 := by
+      push_cast; nlinarith
+    exact_mod_cast le_of_mul_le_mul_right this (by positivity)
+  · intro h
+    have : ((a * b : Nat) : ℝ) ≤ ((c * 2 ^ 62 : Nat) : ℝ) := by exact_mod_cast h
+    push_cast at this; nlinarith
+
+theorem divLo_spec {num den q : Nat} (h : divLo num den = some q) : V q * V den ≤ V num := by
+  unfold divLo at h
+  dsimp only at h
+  generalize guess num den = g at h
+  split at h
+  · rename_i hc
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+    simp only [Option.some.injEq] at h; subst h
+    exact (V_mul_iff _ _ _).mpr (mulLe_spec hc.1.1 hc.1.2 hc.2)
+  · simp at h
+
+theorem divHi_spec {num den q : Nat} (h : divHi num den = some q) : V num ≤ V q * V den := by
+  unfold divHi at h
+  dsimp only at h
+  generalize guess num den = g at h
+  split at h
+  · rename_i hc
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+    simp only [Option.some.injEq] at h; subst h
+    have h2 := mulGe_spec hc.1.1 hc.1.2 hc.2
+    unfold V
+    rw [div_mul_div_comm, div_le_div_iff₀ (by positivity) (by positivity)]
+    have : ((num * 2 ^ 62 : Nat) : ℝ) ≤ (((g + (g >>> 50 + 2)) * den : Nat) : ℝ) := by exact_mod_cast h2
+    push_cast at this ⊢; nlinarith
+  · simp at h
+
+/-! ## Rounding both ends, and the bridge to the specs -/
+
+open ExactRuntime FloatLib.Floats.Formats.BinaryInterchange FloatLib.Floats FloatLib.Numerics
+open ExactRuntime.FastRound
+
+/-- The word both ends of `[lo, hi] · 2^(−62)` round to, when they agree on a finite nonzero
+word, through FloatLib's rounding (the reference for `settle`). -/
+def settleInt (lo hi : Int) : Option UInt32 :=
+  let a := finishWord lo (-62) false
+  if lo ≠ 0 && hi ≠ 0 && a == finishWord hi (-62) false && expOf a != 255 &&
+      (decodeD a).significand != 0 then some a else none
+
+@[inline] def settle (neg : Bool) (a b : Nat) : Option UInt32 :=
+  let w := roundW neg a (-62)
+  if a ≠ 0 && b ≠ 0 && w == roundW neg b (-62) && expOf w != 255 &&
+      (decodeD w).significand != 0 then some w else none
+
+theorem settle_eq (neg : Bool) (a b : Nat) :
+    settle neg a b =
+      settleInt (if neg then -(b : Int) else a) (if neg then -(a : Int) else b) := by
+  unfold settle settleInt
+  by_cases ha : a = 0
+  · subst ha; cases neg <;> simp
+  by_cases hb : b = 0
+  · subst hb; cases neg <;> simp
+  rw [roundW_signed neg a _ ha, roundW_signed neg b _ hb]
+  cases neg
+  · simp
+  · simp only [ite_true]
+    by_cases he : finishWord (-(a : Int)) (-62) false = finishWord (-(b : Int)) (-62) false
+    · simp [ha, hb, he]
+    · have he' : ¬ finishWord (-(b : Int)) (-62) false = finishWord (-(a : Int)) (-62) false :=
+        fun h => he h.symm
+      simp [ha, hb, he, he']
+
+/-- A finite word rounding `S · 2^e` has that rounding as its value. -/
+theorem settleInt_spec {lo hi : Int} {a : UInt32} (h : settleInt lo hi = some a) {v : ℝ}
+    (hl : (lo : ℝ) * 2 ^ (-62 : Int) ≤ v) (hh : v ≤ (hi : ℝ) * 2 ^ (-62 : Int)) {z : Model Fmt}
+    (hz : Model.toReal z = Model.roundAt Fmt v) : toWord z = a := by
+  unfold settleInt at h
+  dsimp only at h
+  split at h
+  · rename_i hc
+    simp only [Option.some.injEq] at h
+    subst h
+    simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, decide_eq_true_eq, beq_iff_eq] at hc
+    obtain ⟨⟨⟨⟨hlo, hhi⟩, heq⟩, hfin⟩, hsig⟩ := hc
+    exact bracket_spec hlo hhi rfl heq.symm hfin hsig hl hh hz
+  · simp at h
+
+theorem int_scale (n : Nat) : ((n : Int) : ℝ) * 2 ^ (-62 : Int) = V n := by
+  unfold V; push_cast; rw [zpow_neg, zpow_ofNat]; ring
+
+/-- The value of a finite word: `±m · 2^e` from `decodeD`. -/
+theorem toReal_ofW_decode {w : UInt32} (hfin : expOf w ≠ 255) :
+    Model.toReal (ofW w) =
+      (if (decodeD w).negative then -1 else 1) * ((decodeD w).significand * (2 : ℝ) ^ (decodeD w).exponent) := by
+  rw [Model.toReal_eq, ofW, toDyadic_ofUInt32 _ hfin]
+  simp only [FloatLib.Numerics.Dyadic.toReal, FloatLib.Numerics.Dyadic.cast_signedSignificand]
+  ring
+
+/-! ### Sigmoid -/
+
+theorem realSigmoid_neg_eq (C : ℝ) :
+    realSigmoid (-C) = Real.exp (-C) / (1 + Real.exp (-C)) := by
+  unfold realSigmoid
+  rw [neg_neg]
+  have hp := Real.exp_pos (-C)
+  have h : Real.exp C = 1 / Real.exp (-C) := by rw [Real.exp_neg, one_div, inv_inv]
+  rw [h]; field_simp; ring
+
+/-- Fast path for the correctly rounded sigmoid; `none` when it doesn't settle. -/
+def sigmoidFast (w : UInt32) : Option UInt32 :=
+  if expOf w = 255 then none else
+  let d := decodeD w
+  match expNeg d.significand d.exponent with
+  | none => none
+  | some t =>
+    if d.negative then
+      -- σ(−c) = t / (1 + t), increasing in t
+      match divLo t.1 (one + t.1), divHi t.2 (one + t.2) with
+      | some ql, some qh => settle false ql qh
+      | _, _ => none
+    else
+      -- σ(c) = 1 / (1 + t), decreasing in t
+      match divLo one (one + t.2), divHi one (one + t.1) with
+      | some ql, some qh => settle false ql qh
+      | _, _ => none
+
+theorem sigmoidFast_spec {w a : UInt32} (h : sigmoidFast w = some a) : sigmoidCR w = a := by
+  unfold sigmoidFast at h
+  split at h
+  · simp at h
+  rename_i hfin
+  dsimp only at h
+  have hx := toReal_ofW_decode hfin
+  generalize decodeD w = d at h hx
+  have hspec := (toReal_sigmoidModel (fmt := Fmt) (by decide)
+    (input := Model.ofUInt32 w) (by simp [isFinite_ofUInt32, hfin])).2
+  change Model.toReal (sigmoidModel (ofW w)) = Model.roundAt Fmt (realSigmoid (Model.toReal (ofW w))) at hspec
+  rw [hx] at hspec
+  change toWord (sigmoidModel (ofW w)) = a
+  split at h
+  · simp at h
+  rename_i t ht
+  have hE := expNeg_spec ht
+  set C := (d.significand : ℝ) * (2 : ℝ) ^ d.exponent
+  set T := Real.exp (-C)
+  have hT : 0 < T := Real.exp_pos _
+  obtain ⟨h1, h2, h3⟩ := hE
+  have v1 := V_nonneg t.1
+  have v2 := V_nonneg t.2
+  split at h
+  · rename_i hneg
+    split at h
+    · rename_i ql qh hql hqh
+      have bl := divLo_spec hql
+      have bh := divHi_spec hqh
+      rw [V_add, V_one] at bl bh
+      rw [settle_eq] at h
+      simp only [Bool.false_eq_true, ite_false] at h
+      refine settleInt_spec h (v := realSigmoid (-C)) ?_ ?_ (by rw [hspec, hneg]; simp)
+      · rw [int_scale]
+        have : realSigmoid (-C) = T / (1 + T) := realSigmoid_neg_eq C
+        rw [this, le_div_iff₀ (by linarith)]
+        nlinarith
+      · rw [int_scale]
+        have : realSigmoid (-C) = T / (1 + T) := realSigmoid_neg_eq C
+        rw [this, div_le_iff₀ (by linarith)]
+        nlinarith
+    · simp at h
+  · rename_i hneg
+    split at h
+    · rename_i ql qh hql hqh
+      have bl := divLo_spec hql
+      have bh := divHi_spec hqh
+      rw [V_add, V_one] at bl bh
+      have hs : realSigmoid C = 1 / (1 + T) := rfl
+      rw [settle_eq] at h
+      simp only [Bool.false_eq_true, ite_false] at h
+      refine settleInt_spec h (v := realSigmoid C) ?_ ?_ (by rw [hspec]; simp [hneg])
+      · rw [int_scale, hs, le_div_iff₀ (by linarith)]
+        nlinarith
+      · rw [int_scale, hs, div_le_iff₀ (by linarith)]
+        nlinarith
+    · simp at h
+
+/-- `sigmoid`, fast where it settles and the spec elsewhere. -/
+def sigmoidF (w : UInt32) : UInt32 := (sigmoidFast w).getD (sigmoidCR w)
+
+theorem sigmoidF_eq : sigmoidF = sigmoidCR := by
+  funext w
+  unfold sigmoidF
+  cases h : sigmoidFast w with
+  | none => rfl
+  | some a => exact (sigmoidFast_spec h).symm
+
+/-! ### Tanh -/
+
+/-- Fast path for the correctly rounded `tanh`: `tanh |x| = (1 − t)/(1 + t)`, `t = e^(−2|x|)`. -/
+def tanhFast (w : UInt32) : Option UInt32 :=
+  if expOf w = 255 then none else
+  let d := decodeD w
+  match expNeg d.significand (d.exponent + 1) with
+  | none => none
+  | some t =>
+    if one < t.1 then none else
+    match divLo (one - t.2) (one + t.2), divHi (one - t.1) (one + t.1) with
+    | some ql, some qh =>
+      settle d.negative ql qh
+    | _, _ => none
+
+theorem neg_int_scale (n : Nat) : ((-(n : Int) : Int) : ℝ) * 2 ^ (-62 : Int) = -V n := by
+  rw [Int.cast_neg, neg_mul, int_scale]
+
+theorem tanhFast_spec {w a : UInt32} (h : tanhFast w = some a) : tanhCR w = a := by
+  unfold tanhFast at h
+  split at h
+  · simp at h
+  rename_i hfin
+  dsimp only at h
+  have hx := toReal_ofW_decode hfin
+  generalize decodeD w = d at h hx
+  have hspec := (toReal_tanhModel (fmt := Fmt) (by decide)
+    (input := Model.ofUInt32 w) (by simp [isFinite_ofUInt32, hfin])).2
+  change Model.toReal (tanhModel (ofW w)) = Model.roundAt Fmt (Real.tanh (Model.toReal (ofW w))) at hspec
+  rw [hx] at hspec
+  change toWord (tanhModel (ofW w)) = a
+  split at h
+  · simp at h
+  rename_i t ht
+  have hE := expNeg_spec ht
+  set C := (d.significand : ℝ) * (2 : ℝ) ^ d.exponent
+  have h2C : (d.significand : ℝ) * (2 : ℝ) ^ (d.exponent + 1) = 2 * C := by
+    rw [zpow_add₀ two_ne_zero]; simp only [C]; ring
+  rw [h2C] at hE
+  set T := Real.exp (-(2 * C))
+  have hT : 0 < T := Real.exp_pos _
+  have htanh : Real.tanh C = (1 - T) / (1 + T) := by
+    rw [tanh_eq_exp_neg_two]; simp only [T]; ring_nf
+  obtain ⟨h1, h2, h3⟩ := hE
+  have v1 := V_nonneg t.1
+  have v2 := V_nonneg t.2
+  split at h
+  · simp at h
+  rename_i ht1
+  replace ht1 := not_lt.mp ht1
+  split at h
+  · rename_i ql qh hql hqh
+    have bl := divLo_spec hql
+    have bh := divHi_spec hqh
+    rw [V_add, V_one, V_sub_le_of_le h3, V_one] at bl
+    rw [V_add, V_one, V_sub_le_of_le ht1, V_one] at bh
+    have lo : V ql ≤ Real.tanh C := by
+      rw [htanh, le_div_iff₀ (by linarith)]; nlinarith
+    have hi : Real.tanh C ≤ V qh := by
+      rw [htanh, div_le_iff₀ (by linarith)]; nlinarith
+    rw [settle_eq] at h
+    cases hneg : d.negative <;> simp only [hneg, ite_true, Bool.false_eq_true, ite_false] at h
+    · refine settleInt_spec h (v := Real.tanh C) ?_ ?_ (by rw [hspec]; simp [hneg])
+      · rw [int_scale]; exact lo
+      · rw [int_scale]; exact hi
+    · refine settleInt_spec h (v := Real.tanh (-C)) ?_ ?_ (by rw [hspec, hneg]; simp)
+      · rw [neg_int_scale, Real.tanh_neg]; linarith
+      · rw [neg_int_scale, Real.tanh_neg]; linarith
+  · simp at h
+
+/-- `tanh`, fast where it settles and the spec elsewhere. -/
+def tanhF (w : UInt32) : UInt32 := (tanhFast w).getD (tanhCR w)
+
+theorem tanhF_eq : tanhF = tanhCR := by
+  funext w
+  unfold tanhF
+  cases h : tanhFast w with
+  | none => rfl
+  | some a => exact (tanhFast_spec h).symm
+
+/-! ### Exp, for softmax's arguments (`x ≤ 0`) -/
+
+/-- Fast path for the correctly rounded `exp` at `x ≤ 0`: `e^x = e^(−|x|)`, enclosed by `expNeg`. -/
+def expFast (w : UInt32) : Option UInt32 :=
+  if expOf w = 255 then none else
+  let d := decodeD w
+  if !d.negative && d.significand != 0 then none else
+  match expNeg d.significand d.exponent with
+  | none => none
+  | some t => settle false t.1 t.2
+
+theorem expFast_spec {w a : UInt32} (h : expFast w = some a) : expW w = a := by
+  unfold expFast at h
+  split at h
+  · simp at h
+  rename_i hfin
+  dsimp only at h
+  have hx := toReal_ofW_decode hfin
+  generalize hd : decodeD w = d at h hx
+  split at h
+  · simp at h
+  rename_i hsign
+  simp only [Bool.and_eq_true, Bool.not_eq_true', bne_iff_ne, ne_eq, not_and, not_not] at hsign
+  split at h
+  · simp at h
+  rename_i t ht
+  obtain ⟨h1, h2, -⟩ := expNeg_spec ht
+  set C := (d.significand : ℝ) * (2 : ℝ) ^ d.exponent
+  -- the input is `−C`
+  have hxC : Model.toReal (ofW w) = -C := by
+    rw [hx]
+    by_cases hneg : d.negative = true
+    · simp [hneg]
+    · have hz : d.significand = 0 := hsign (by simpa using hneg)
+      simp [C, hz]
+  have hfinw : Model.isFinite (ofW w) = true := by simp [ofW, isFinite_ofUInt32, hfin]
+  have hrange : Real.exp (Model.toReal (ofW w)) <
+      (Model.Transcendentals.Certified.overflowThreshold Fmt : ℝ) := by
+    have hC : 0 ≤ C := by simp only [C]; positivity
+    have : Real.exp (-C) ≤ 1 := Real.exp_le_one_iff.mpr (by linarith)
+    rw [hxC]
+    exact lt_of_le_of_lt this
+      (Model.Transcendentals.CorrectlyRounded.one_lt_overflowThreshold (by decide))
+  have hspec := Model.Transcendentals.CorrectlyRounded.toReal_exp_eq_roundAt (fmt := Fmt)
+    (by decide) hfinw hrange (budget := {})
+  rw [hxC] at hspec
+  rw [settle_eq] at h
+  simp only [Bool.false_eq_true, ite_false] at h
+  exact settleInt_spec h (v := Real.exp (-C)) (by rw [int_scale]; exact h1)
+    (by rw [int_scale]; exact h2) hspec
+
+/-- `exp`, fast at `x ≤ 0` where it settles and the spec elsewhere. -/
+def expF (w : UInt32) : UInt32 := (expFast w).getD (expW w)
+
+theorem expF_eq : expF = expW := by
+  funext w
+  unfold expF
+  cases h : expFast w with
+  | none => rfl
+  | some a => exact (expFast_spec h).symm
+
+end FastAct
+
 
 namespace Submission
 
 open ExactRuntime FloatLib.Floats.Formats.BinaryInterchange FloatLib.Floats
 
-/-! ## The exact accumulator -/
-
-/-- Positive and negative limbs, "a NaN or infinity was seen", and "every term so far was a zero
-of negative sign" (which decides the sign of a zero result). -/
-structure Acc where
-  pos : Array Nat
-  neg : Array Nat
-  special : Bool
-  negZero : Bool
-
-/-- No terms yet: zero limbs, no special value, and "every term was −0" vacuously true. -/
-def Acc.empty : Acc := ⟨Array.replicate 18 0, Array.replicate 18 0, false, true⟩
-
-/-- The exact integer total held in the limbs. -/
-def Acc.total (acc : Acc) : Int := (limbVal acc.pos.toList : Int) - limbVal acc.neg.toList
-
-/-- Add the exact term `±m · 2^idx`; a zero term only updates the zero-sign flag. -/
-@[inline] def Acc.add (acc : Acc) (m idx : Nat) (neg : Bool) : Acc :=
-  match acc with
-  | ⟨pos, ng, sp, nz⟩ =>
-    if m = 0 then ⟨pos, ng, sp, nz && neg⟩
-    else if neg then ⟨pos, addLimbs64 ng m.toUInt64 idx, sp, false⟩
-    else ⟨addLimbs64 pos m.toUInt64 idx, ng, sp, false⟩
-
-/-- Record that a NaN or an infinity was seen. -/
-@[inline] def Acc.markSpecial (acc : Acc) : Acc :=
-  match acc with
-  | ⟨pos, ng, _, nz⟩ => ⟨pos, ng, true, nz⟩
-
-/-- Everything the proof needs to know about one `Acc.add`. -/
-theorem Acc.add_spec (acc : Acc) (m idx : Nat) (neg : Bool)
-    (hp : acc.pos.size = 18) (hn : acc.neg.size = 18) (hm : m < 2 ^ 64) (hi : idx / 32 + 1 < 18) :
-    (acc.add m idx neg).pos.size = 18 ∧ (acc.add m idx neg).neg.size = 18 ∧
-    (acc.add m idx neg).special = acc.special ∧
-    (acc.add m idx neg).negZero = (acc.negZero && (decide (m = 0) && neg)) ∧
-    (acc.add m idx neg).total = acc.total + (if neg then -(m : Int) else m) * 2 ^ idx := by
-  obtain ⟨pos, ng, sp, nz⟩ := acc
-  simp only at hp hn
-  by_cases hm0 : m = 0
-  · simp [Acc.add, Acc.total, hm0, hp, hn]
-  · cases neg
-    · refine ⟨by simp [Acc.add, hm0, addLimbs64_size, hp], by simp [Acc.add, hm0, hn],
-        by simp [Acc.add, hm0], by simp [Acc.add, hm0], ?_⟩
-      simp only [Acc.add, hm0, ite_false, Bool.false_eq_true, addLimbs64_eq _ _ _ hm, Acc.total]
-      rw [addLimbs_val _ _ _ (by omega)]
-      push_cast; ring
-    · refine ⟨by simp [Acc.add, hm0, hp], by simp [Acc.add, hm0, addLimbs64_size, hn],
-        by simp [Acc.add, hm0], by simp [Acc.add, hm0], ?_⟩
-      simp only [Acc.add, hm0, ite_false, ite_true, addLimbs64_eq _ _ _ hm, Acc.total]
-      rw [addLimbs_val _ _ _ (by omega)]
-      push_cast; ring
-
-theorem Acc.total_empty : Acc.empty.total = 0 := by decide
-
-/-! ## Rounding without big integers -/
-
-section
-open FloatLib.Numerics
-
-/-- Jamming the low `j` bits into a sticky bit rounds the same, when at least 25 bits (the 24-bit
-significand and a guard bit) stay above them. -/
-theorem roundDyadic_jam (s : Bool) (m : Nat) (e : Int) (j : Nat) (h : j + 25 ≤ m.log2) :
-    Model.roundDyadic Fmt ⟨s, shiftRightJam m j, e + j⟩ = Model.roundDyadic Fmt ⟨s, m, e⟩ := by
-  have hm0 : m ≠ 0 := by rintro rfl; simp at h
-  have hpow : 2 ^ m.log2 ≤ m := Nat.log2_self_le hm0
-  have hm : 2 ^ (j + 1) ≤ m := le_trans (Nat.pow_le_pow_right (by norm_num) (by omega)) hpow
-  have hlog : (shiftRightJam m j).log2 = m.log2 - j := log2_shiftRightJam m j
-  have hne : shiftRightJam m j ≠ 0 :=
-    shiftRightJam_ne_zero m j (le_trans (Nat.pow_le_pow_right (by norm_num) (by omega)) hm)
-  rw [← Model.roundDyadicGeneral_eq_roundDyadic, ← Model.roundDyadicGeneral_eq_roundDyadic]
-  unfold Model.roundDyadicGeneral
-  simp only [hne, hm0, beq_iff_eq, ite_false, hlog]
-  have htot : ((m.log2 - j : Nat) : Int) + (e + j) = (m.log2 : Int) + e := by omega
-  rw [htot]
-  have hfw : Fmt.fracWidth = 23 := rfl
-  have hsub : Fmt.minSubnormalExponent = -149 := rfl
-  have hmin : Fmt.minNormalExponent = -126 := rfl
-  rw [hfw, hsub, hmin]
-  split_ifs with h1 h2 h3 h4 <;> try omega
-  · rfl
-  · congr 1
-    obtain ⟨a, ha⟩ : ∃ a : Nat, e - -149 = Int.negSucc a := ⟨(-(e + 149) - 1).toNat, by omega⟩
-    have hb : e + j - -149 = Int.negSucc (a - j) := by omega
-    rw [ha, hb]
-    dsimp only
-    rw [show a - j + 1 = (a + 1) - j by omega]
-    exact roundShiftRightEven_shiftRightJam m j (a + 1) (by omega)
-  · congr 1
-    rw [show m.log2 - j - 23 = (m.log2 - 23) - j by omega]
-    exact roundShiftRightEven_shiftRightJam m j _ (by omega)
-
-/-! ## Values of limb windows -/
-
-/-- `k` limbs of `a` from index `i`: `a[i] + 2^32·a[i+1] + …`. -/
-def winVal (a : Array Nat) (i : Nat) : Nat → Nat
-  | 0 => 0
-  | k + 1 => a[i]! + 2 ^ 32 * winVal a (i + 1) k
-
-theorem winVal_split (a : Array Nat) (i k m : Nat) :
-    winVal a i (k + m) = winVal a i k + 2 ^ (32 * k) * winVal a (i + k) m := by
-  induction k generalizing i with
-  | zero => simp [winVal]
-  | succ k ih =>
-    rw [show k + 1 + m = (k + m) + 1 by omega, winVal, winVal, ih, show i + 1 + k = i + (k + 1) by omega]
-    rw [show 32 * (k + 1) = 32 + 32 * k by ring, pow_add]
-    ring
-
-theorem winVal_congr (a b : Array Nat) (i j k : Nat) (h : ∀ t, t < k → a[i + t]! = b[j + t]!) :
-    winVal a i k = winVal b j k := by
-  induction k generalizing i j with
-  | zero => rfl
-  | succ k ih =>
-    rw [winVal, winVal, ih (i + 1) (j + 1) (fun t ht => by
-      rw [show i + 1 + t = i + (t + 1) by omega, show j + 1 + t = j + (t + 1) by omega]
-      exact h (t + 1) (by omega)), show a[i]! = b[j]! from by simpa using h 0 (by omega)]
-
-theorem winVal_eq_zero_iff (a : Array Nat) (i k : Nat) :
-    winVal a i k = 0 ↔ ∀ t, t < k → a[i + t]! = 0 := by
-  induction k generalizing i with
-  | zero => simp [winVal]
-  | succ k ih =>
-    rw [winVal, Nat.add_eq_zero_iff, Nat.mul_eq_zero, ih (i + 1)]
-    have hp : (2 : ℕ) ^ 32 ≠ 0 := by norm_num
-    constructor
-    · rintro ⟨h0, h1 | h1⟩ t ht
-      · exact absurd h1 hp
-      · rcases t with _ | t
-        · simpa using h0
-        · rw [show i + (t + 1) = i + 1 + t by omega]; exact h1 t (by omega)
-    · intro h
-      refine ⟨by simpa using h 0 (by omega), Or.inr fun t ht => ?_⟩
-      rw [show i + 1 + t = i + (t + 1) by omega]; exact h (t + 1) (by omega)
-
-theorem winVal_lt (a : Array Nat) (i k : Nat) (h : ∀ t, t < k → a[i + t]! < 2 ^ 32) :
-    winVal a i k < 2 ^ (32 * k) := by
-  induction k generalizing i with
-  | zero => simp [winVal]
-  | succ k ih =>
-    have h0 := h 0 (by omega)
-    have h1 := ih (i + 1) (fun t ht => by
-      rw [show i + 1 + t = i + (t + 1) by omega]; exact h (t + 1) (by omega))
-    simp only [Nat.add_zero] at h0
-    rw [winVal, show 32 * (k + 1) = 32 + 32 * k by ring, pow_add]
-    nlinarith
-
-theorem getElem!_size_le (a : Array Nat) (t : Nat) (h : a.size ≤ t) : a[t]! = 0 := by
-  simp [getElem!_neg a t (by omega)]
-
-theorem winVal_eq_limbVal (a : Array Nat) (i k : Nat) (h : a.size ≤ i + k) :
-    winVal a i k = limbVal (a.toList.drop i) := by
-  induction k generalizing i with
-  | zero => simp [winVal, List.drop_of_length_le (by simpa using h : a.toList.length ≤ i), limbVal]
-  | succ k ih =>
-    rw [winVal, ih (i + 1) (by omega)]
-    by_cases hi : i < a.size
-    · have hl : i < a.toList.length := by simpa using hi
-      simp only [List.drop_eq_getElem_cons hl, limbVal, getElem!_pos a i hi, Array.getElem_toList]
-    · rw [getElem!_size_le a i (by omega), List.drop_of_length_le (by simp; omega),
-        List.drop_of_length_le (by simp; omega)]
-      simp [limbVal]
-
-/-- A limb array's value is its window between two runs of zero limbs. -/
-theorem limbVal_eq_win (a : Array Nat) (lo n : Nat) (hlow : ∀ t, t < lo → a[t]! = 0)
-    (hhigh : ∀ t, lo + n ≤ t → a[t]! = 0) :
-    limbVal a.toList = 2 ^ (32 * lo) * winVal a lo n := by
-  rw [← List.drop_zero (l := a.toList), ← winVal_eq_limbVal a 0 (lo + (n + a.size)) (by omega),
-    winVal_split, winVal_split]
-  rw [(winVal_eq_zero_iff a 0 lo).2 (fun t ht => by simpa using hlow t ht),
-    (winVal_eq_zero_iff a (0 + lo + n) a.size).2 (fun t _ => hhigh _ (by omega))]
-  simp
-
-/-! ## Digits of `A - B` -/
-
-/-- One pass over limbs `i, i+1, …`: normalise `a` and `b` to 32-bit digits (carries `ca`, `cb`)
-and subtract them (borrow `br`), pushing the digits of the difference. -/
-def diffGo (a b : Array Nat) (i ca cb br : Nat) (out : Array Nat) :
-    Nat → Array Nat × Nat × Nat × Nat
-  | 0 => (out, ca, cb, br)
-  | k + 1 =>
-    let ta := a[i]! + ca
-    let tb := b[i]! + cb
-    let t := ta % 4294967296 + 4294967296 - tb % 4294967296 - br
-    diffGo a b (i + 1) (ta / 4294967296) (tb / 4294967296) (1 - t / 4294967296)
-      (out.push (t % 4294967296)) k
-
-theorem diffGo_spec (a b : Array Nat) (i ca cb br : Nat) (out : Array Nat) (k : Nat)
-    (hbr : br ≤ 1) (hout : ∀ t, t < out.size → out[t]! < 2 ^ 32) :
-    let r := diffGo a b i ca cb br out k
-    r.1.size = out.size + k ∧ (∀ t, t < r.1.size → r.1[t]! < 2 ^ 32) ∧
-      (winVal r.1 0 r.1.size : Int) + 2 ^ (32 * (out.size + k)) * (r.2.1 - r.2.2.1 - r.2.2.2 : Int) =
-        winVal out 0 out.size + 2 ^ (32 * out.size) *
-          ((winVal a i k : Int) - winVal b i k + ca - cb - br) := by
-  induction k generalizing i ca cb br out with
-  | zero => exact ⟨by simp [diffGo], by simpa [diffGo] using hout, by simp [diffGo, winVal]⟩
-  | succ k ih =>
-    simp only [diffGo]
-    set ta := a[i]! + ca
-    set tb := b[i]! + cb
-    set t := ta % 4294967296 + 4294967296 - tb % 4294967296 - br
-    have htb : tb % 4294967296 < 4294967296 := Nat.mod_lt _ (by norm_num)
-    have hta : ta % 4294967296 < 4294967296 := Nat.mod_lt _ (by norm_num)
-    have ht2 : t < 2 * 4294967296 := by omega
-    have hq : t / 4294967296 ≤ 1 := by omega
-    have hd : t % 4294967296 < 2 ^ 32 := by have := Nat.mod_lt t (by norm_num : 4294967296 > 0); norm_num; omega
-    have hout' : ∀ s, s < (out.push (t % 4294967296)).size → (out.push (t % 4294967296))[s]! < 2 ^ 32 := by
-      intro s hs
-      simp only [Array.size_push] at hs
-      rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hs) with hs | rfl
-      · rw [getElem!_pos _ s (by simp; omega), Array.getElem_push_lt hs, ← getElem!_pos out s hs]
-        exact hout s hs
-      · rw [getElem!_pos _ _ (by simp), Array.getElem_push_eq]; exact hd
-    obtain ⟨h1, h2, h3⟩ := ih (i + 1) (ta / 4294967296) (tb / 4294967296) (1 - t / 4294967296)
-      (out.push (t % 4294967296)) (by omega) hout'
-    refine ⟨by simp [h1]; omega, h2, ?_⟩
-    have hpush : winVal (out.push (t % 4294967296)) 0 (out.size + 1) =
-        winVal out 0 out.size + 2 ^ (32 * out.size) * (t % 4294967296) := by
-      rw [winVal_split, winVal_congr _ out 0 0 out.size (fun s hs => by
-          rw [getElem!_pos _ _ (by simp; omega), Array.getElem_push_lt (by omega),
-            ← getElem!_pos out _ (by omega)])]
-      simp only [winVal, Nat.zero_add, Nat.mul_zero, Nat.add_zero]
-      rw [getElem!_pos _ _ (by simp), Array.getElem_push_eq]
-    simp only [Array.size_push] at h3 ⊢
-    rw [show out.size + (k + 1) = out.size + 1 + k by omega]
-    rw [h3, hpush, winVal, winVal]
-    have hstep : ((t % 4294967296 : Nat) : Int) + 4294967296 * ((ta / 4294967296 : Nat) - (tb / 4294967296 : Nat) - (1 - t / 4294967296 : Nat)) =
-        (a[i]! : Int) - b[i]! + ca - cb - br := by
-      have e1 := Nat.mod_add_div ta 4294967296
-      have e2 := Nat.mod_add_div tb 4294967296
-      have e3 := Nat.mod_add_div t 4294967296
-      have e4 : (1 - t / 4294967296 : Nat) = 1 - (t / 4294967296 : Int) := by omega
-      have e5 : (t : Int) = ta % 4294967296 + 4294967296 - tb % 4294967296 - br := by omega
-      push_cast [e4]
-      omega
-    rw [show 32 * (out.size + 1) = 32 * out.size + 32 by ring, pow_add]
-    simp only [Nat.cast_add, Nat.cast_mul, Nat.cast_pow, Nat.cast_ofNat]
-    linear_combination (2 : Int) ^ (32 * out.size) * hstep
-
-/-! ## Rounding the digits from a 62-bit window -/
-
-/-- The highest nonzero digit below `k`, or none. -/
-def topGo (r : Array Nat) : Nat → Option Nat
-  | 0 => none
-  | k + 1 => if r[k]! != 0 then some k else topGo r k
-
-/-- "Some digit below `k` is nonzero." -/
-def anyGo (r : Array Nat) : Nat → Bool
-  | 0 => false
-  | k + 1 => r[k]! != 0 || anyGo r k
-
-theorem topGo_none (r : Array Nat) (k : Nat) (h : topGo r k = none) : ∀ t, t < k → r[t]! = 0 := by
-  induction k with
-  | zero => intro t ht; omega
-  | succ k ih =>
-    simp only [topGo] at h
-    split at h
-    · cases h
-    · rename_i hk
-      intro t ht
-      rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp ht) with ht | rfl
-      · exact ih h t ht
-      · simpa using hk
-
-theorem topGo_some (r : Array Nat) (k h : Nat) (hh : topGo r k = some h) :
-    h < k ∧ r[h]! ≠ 0 ∧ ∀ t, h < t → t < k → r[t]! = 0 := by
-  induction k with
-  | zero => simp [topGo] at hh
-  | succ k ih =>
-    simp only [topGo] at hh
-    split at hh
-    · rename_i hk
-      cases hh
-      exact ⟨by omega, by simpa using hk, fun t h1 h2 => by omega⟩
-    · rename_i hk
-      obtain ⟨a, b, c⟩ := ih hh
-      refine ⟨by omega, b, fun t h1 h2 => ?_⟩
-      rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp h2) with h2 | rfl
-      · exact c t h1 h2
-      · simpa using hk
-
-theorem anyGo_false (r : Array Nat) (k : Nat) : anyGo r k = false ↔ ∀ t, t < k → r[t]! = 0 := by
-  induction k with
-  | zero => simp [anyGo]
-  | succ k ih =>
-    simp only [anyGo, Bool.or_eq_false_iff, bne_eq_false_iff_eq, ih]
-    constructor
-    · rintro ⟨h0, h1⟩ t ht
-      rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp ht) with ht | rfl
-      · exact h1 t ht
-      · exact h0
-    · intro h; exact ⟨h k (by omega), fun t ht => h t (by omega)⟩
-
-theorem anyGo_eq (r : Array Nat) (k : Nat) : anyGo r k = (winVal r 0 k != 0) := by
-  have hz := winVal_eq_zero_iff r 0 k
-  simp only [Nat.zero_add] at hz
-  cases h : anyGo r k
-  · rw [hz.2 ((anyGo_false r k).1 h)]; rfl
-  · have : winVal r 0 k ≠ 0 := fun h0 => by
-      have := (anyGo_false r k).2 (hz.1 h0); simp_all
-    simp [this]
-
-/-- A 62-bit window of the top two digits and a sticky bit for the rest is `shiftRightJam`. -/
-theorem jam_window (low x y h : Nat) (hlow : low < 2 ^ (32 * h)) :
-    shiftRightJam (low + 2 ^ (32 * h) * (x + 2 ^ 32 * y)) (32 * h + 2) =
-      if x % 4 != 0 || low != 0 then (y * 1073741824 + x / 4) ||| 1 else y * 1073741824 + x / 4 := by
-  have hX0 : 0 < 2 ^ (32 * h) := by positivity
-  have hdiv : 2 ^ (32 * h + 2) = 4 * 2 ^ (32 * h) := by rw [pow_add]; ring
-  have hs : x % 4 < 4 := Nat.mod_lt x (by norm_num)
-  have hA : low + 2 ^ (32 * h) * (x % 4) < 4 * 2 ^ (32 * h) := by nlinarith
-  have hsplit : low + 2 ^ (32 * h) * (x + 2 ^ 32 * y) =
-      (low + 2 ^ (32 * h) * (x % 4)) + 4 * 2 ^ (32 * h) * (y * 1073741824 + x / 4) := by
-    have h4 := Nat.mod_add_div x 4
-    rw [show (2 : Nat) ^ 32 = 4 * 1073741824 by norm_num]
-    conv_lhs => rw [← h4]
-    ring
-  have hz : low + 2 ^ (32 * h) * (x % 4) = 0 ↔ ¬(x % 4 ≠ 0 ∨ low ≠ 0) := by
-    constructor
-    · intro h0
-      have h1 := Nat.eq_zero_of_add_eq_zero h0
-      rcases Nat.mul_eq_zero.mp h1.2 with h2 | h2 <;> omega
-    · intro h0; simp only [not_or, not_not] at h0; simp [h0.1, h0.2]
-  unfold shiftRightJam
-  dsimp only
-  rw [hdiv, hsplit, Nat.add_mul_div_left _ _ (by omega), Nat.div_eq_of_lt hA, Nat.zero_add,
-    Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt hA]
-  by_cases hc : x % 4 ≠ 0 ∨ low ≠ 0
-  · have : ¬ (low + 2 ^ (32 * h) * (x % 4) = 0) := fun h0 => hz.mp h0 hc
-    have hb : (x % 4 != 0 || low != 0) = true := by simpa [bne_iff_ne] using hc
-    simp only [beq_iff_eq, this, ite_false, hb, ite_true]
-  · have : low + 2 ^ (32 * h) * (x % 4) = 0 := hz.mpr hc
-    have hb : (x % 4 != 0 || low != 0) = false := by simpa [bne_iff_ne] using hc
-    simp only [beq_iff_eq, this, ite_true, hb]
-    rfl
-
-/-- Round `±R · 2^e`, `R` the value of the digits `r`: exactly while `R` has at most two digits,
-otherwise from the top two digits and a sticky bit. -/
-def finishDigits (neg : Bool) (r : Array Nat) (e : Int) (negZero : Bool) : UInt32 :=
-  match topGo r r.size with
-  | none => finishWord 0 e negZero
-  | some 0 => finishWord (if neg then -(r[0]! : Int) else r[0]!) e negZero
-  | some (h + 1) =>
-    let x := r[h]!
-    let v := r[h + 1]! * 1073741824 + x / 4
-    let m := if x % 4 != 0 || anyGo r h then v ||| 1 else v
-    toWord (Model.roundDyadic Fmt ⟨neg, m, e + ((32 * h + 2 : Nat) : Int)⟩)
-
-theorem finishWord_signed (neg : Bool) (R : Nat) (e : Int) (negZero : Bool) (hR : R ≠ 0) :
-    finishWord (if neg then -(R : Int) else R) e negZero = toWord (Model.roundDyadic Fmt ⟨neg, R, e⟩) := by
-  have hpos : (0 : Int) < R := by exact_mod_cast Nat.pos_of_ne_zero hR
-  cases neg <;> simp [finishWord, ofIntDyadic, hR, not_lt.mpr hpos.le, Nat.pos_of_ne_zero hR]
-
-theorem finishDigits_eq (neg : Bool) (r : Array Nat) (e : Int) (negZero : Bool)
-    (hr : ∀ t, t < r.size → r[t]! < 2 ^ 32) :
-    finishDigits neg r e negZero =
-      finishWord (if neg then -(winVal r 0 r.size : Int) else winVal r 0 r.size) e negZero := by
-  unfold finishDigits
-  split
-  · rename_i hnone
-    rw [(winVal_eq_zero_iff r 0 r.size).2 (fun t ht => by simpa using topGo_none r _ hnone t ht)]
-    simp
-  · rename_i hsome
-    obtain ⟨h1, h2, h3⟩ := topGo_some r _ 0 hsome
-    rw [show r.size = 1 + (r.size - 1) by omega, winVal_split,
-      (winVal_eq_zero_iff r (0 + 1) (r.size - 1)).2 (fun t ht => h3 _ (by omega) (by omega))]
-    simp [winVal]
-  · rename_i h hsome
-    obtain ⟨h1, h2, h3⟩ := topGo_some r _ (h + 1) hsome
-    have hR : winVal r 0 r.size = winVal r 0 h + 2 ^ (32 * h) * (r[h]! + 2 ^ 32 * r[h + 1]!) := by
-      rw [show r.size = h + (2 + (r.size - h - 2)) by omega, winVal_split, winVal_split,
-        (winVal_eq_zero_iff r (0 + h + 2) _).2 (fun t ht => h3 _ (by omega) (by omega))]
-      simp [winVal]
-    have hlow : winVal r 0 h < 2 ^ (32 * h) := winVal_lt r 0 h (fun t ht => hr _ (by omega))
-    have hR0 : winVal r 0 r.size ≠ 0 := by
-      rw [hR]; have : 0 < 2 ^ (32 * h) * (r[h]! + 2 ^ 32 * r[h + 1]!) := by
-        have := Nat.pos_of_ne_zero h2; positivity
-      omega
-    have hlog : 32 * h + 2 + 25 ≤ (winVal r 0 r.size).log2 := by
-      rw [Nat.le_log2 hR0, hR]
-      have : 1 ≤ r[h + 1]! := Nat.pos_of_ne_zero h2
-      calc 2 ^ (32 * h + 2 + 25) ≤ 2 ^ (32 * h) * 2 ^ 32 := by rw [← pow_add]; exact Nat.pow_le_pow_right (by norm_num) (by omega)
-        _ ≤ 2 ^ (32 * h) * (r[h]! + 2 ^ 32 * r[h + 1]!) := by gcongr; nlinarith
-        _ ≤ _ := by omega
-    rw [finishWord_signed neg _ e negZero hR0, ← roundDyadic_jam neg _ e _ hlog, hR,
-      jam_window _ _ _ h hlow, anyGo_eq]
-
-/-! ## The fast final rounding -/
-
-/-- One past the highest limb below `k` where either array is nonzero. -/
-def highLimb (pos neg : Array Nat) : Nat → Nat
-  | 0 => 0
-  | k + 1 => if pos[k]! != 0 || neg[k]! != 0 then k + 1 else highLimb pos neg k
-
-theorem highLimb_zero (pos neg : Array Nat) (k : Nat) :
-    ∀ t, highLimb pos neg k ≤ t → t < k → pos[t]! = 0 ∧ neg[t]! = 0 := by
-  induction k with
-  | zero => intro t _ ht; omega
-  | succ k ih =>
-    intro t h1 h2
-    simp only [highLimb] at h1
-    split at h1
-    · omega
-    · rename_i hk
-      rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp h2) with h2 | rfl
-      · exact ih t h1 h2
-      · simpa [Bool.or_eq_true, bne_iff_ne, not_or] using hk
-
-/-- `finishLimbs` without big integers: the limbs between the lowest and highest nonzero ones
-become 32-bit digits of `pos - neg` (one pass; a second with the operands swapped if the
-difference is negative), which are rounded from their top 62 bits and a sticky bit. A carry or
-borrow left over, which the accumulator never produces, falls back to `finishLimbs`. -/
-def finishFast (pos neg : Array Nat) (e : Int) (negZero : Bool) : UInt32 :=
-  let lo := lowLimb pos neg pos.size 0
-  let n := highLimb pos neg (max pos.size neg.size) + 1 - lo
-  let e' := e + ((32 * lo : Nat) : Int)
-  let d := diffGo pos neg lo 0 0 0 (Array.emptyWithCapacity n) n
-  if d.2.1 = 0 ∧ d.2.2.1 = 0 ∧ d.2.2.2 = 0 then finishDigits false d.1 e' negZero
-  else
-    let d' := diffGo neg pos lo 0 0 0 (Array.emptyWithCapacity n) n
-    if d'.2.1 = 0 ∧ d'.2.2.1 = 0 ∧ d'.2.2.2 = 0 then finishDigits true d'.1 e' negZero
-    else finishLimbs pos neg e negZero
-
-theorem finishFast_eq (pos neg : Array Nat) (e : Int) (negZero : Bool) :
-    finishFast pos neg e negZero =
-      finishWord ((limbVal pos.toList : Int) - limbVal neg.toList) e negZero := by
-  unfold finishFast
-  dsimp only
-  set lo := lowLimb pos neg pos.size 0
-  set n := highLimb pos neg (max pos.size neg.size) + 1 - lo
-  have hlow := lowLimb_zero pos neg pos.size 0
-  have hhigh := highLimb_zero pos neg (max pos.size neg.size)
-  have hzero (a : Array Nat) (ha : a = pos ∨ a = neg) :
-      limbVal a.toList = 2 ^ (32 * lo) * winVal a lo n := by
-    apply limbVal_eq_win a lo n
-    · intro t ht; rcases ha with rfl | rfl
-      · exact (hlow t (by omega) ht).1
-      · exact (hlow t (by omega) ht).2
-    · intro t ht
-      by_cases hts : t < max pos.size neg.size
-      · rcases ha with rfl | rfl
-        · exact (hhigh t (by omega) hts).1
-        · exact (hhigh t (by omega) hts).2
-      · rcases ha with rfl | rfl <;> exact getElem!_size_le _ t (by omega)
-  have hP := hzero pos (Or.inl rfl)
-  have hN := hzero neg (Or.inr rfl)
-  rw [show (Array.emptyWithCapacity n : Array Nat) = #[] from rfl]
-  have hd := diffGo_spec pos neg lo 0 0 0 #[] n (by omega) (by simp)
-  have hd' := diffGo_spec neg pos lo 0 0 0 #[] n (by omega) (by simp)
-  have hw0 : winVal (#[] : Array Nat) 0 0 = 0 := rfl
-  simp only [List.size_toArray, List.length_nil, Nat.mul_zero, pow_zero, one_mul,
-    hw0, Nat.cast_zero, zero_add] at hd hd'
-  obtain ⟨-, hb, hv⟩ := hd
-  obtain ⟨-, hb', hv'⟩ := hd'
-  split_ifs with h1 h2
-  · rw [finishDigits_eq false _ _ _ hb, finishWord_scale, hP, hN]
-    simp only [Bool.false_eq_true, ite_false]
-    congr 1
-    rw [h1.1, h1.2.1, h1.2.2] at hv
-    push_cast at hv ⊢
-    linear_combination (2 : Int) ^ (32 * lo) * hv
-  · rw [finishDigits_eq true _ _ _ hb', finishWord_scale, hP, hN]
-    simp only [ite_true]
-    congr 1
-    rw [h2.1, h2.2.1, h2.2.2] at hv'
-    push_cast at hv' ⊢
-    linear_combination (-(2 : Int) ^ (32 * lo)) * hv'
-  · exact finishLimbs_eq pos neg e negZero
-
-end
-
-/-! ## The exact dot product -/
-
-/-- One term: a NaN or infinity marks the accumulator, otherwise the exact product goes into the limbs. -/
-@[inline] def dotStep (acc : Acc) (wa wb : UInt32) : Acc :=
-  if expOf wa = 255 ∨ expOf wb = 255 then acc.markSpecial
-  else acc.add (mantOf wa * mantOf wb) (idxOf wa + idxOf wb) (Bool.xor (signOf wa) (signOf wb))
-
-/-- The loop has FloatLib's `dotStateLoop` shape; the accumulator's fields are plain arguments so
-the compiled loop allocates nothing per term. -/
-@[specialize] def dotLoop (fa fb : Nat → UInt32) (pos neg : Array Nat) (sp nz : Bool)
-    (index : Nat) : Nat → Acc
-  | 0 => ⟨pos, neg, sp, nz⟩
-  | count + 1 =>
-    match dotStep ⟨pos, neg, sp, nz⟩ (fa index) (fb index) with
-    | ⟨p, n, s, z⟩ => dotLoop fa fb p n s z (index + 1) count
-
-/-- The exact dot product of `[fa 0, …, fa (n-1)]` and `[fb 0, …, fb (n-1)]`. -/
-@[inline] def dotFn (n : Nat) (fa fb : Nat → UInt32) : UInt32 :=
-  let acc := dotLoop fa fb (Array.replicate 18 0) (Array.replicate 18 0) false true 0 n
-  if acc.special then
-    dotSpec (Array.ofFn (n := n) fun i => fa i) (Array.ofFn (n := n) fun i => fb i)
-  else finishFast acc.pos acc.neg (-298) (n ≠ 0 && acc.negZero)
-
-theorem sv_mul (wa wb : UInt32) :
-    (if Bool.xor (signOf wa) (signOf wb) then -((mantOf wa * mantOf wb : Nat) : Int)
-      else ((mantOf wa * mantOf wb : Nat) : Int)) = sv wa * sv wb := by
-  unfold sv; cases signOf wa <;> cases signOf wb <;> simp
-
-/-- A NaN or infinity, once seen, stays recorded. -/
-theorem dotLoop_special (fa fb : Nat → UInt32) (pos neg : Array Nat) (nz : Bool)
-    (index count : Nat) : (dotLoop fa fb pos neg true nz index count).special = true := by
-  induction count generalizing pos neg nz index with
-  | zero => rfl
-  | succ count ih =>
-    rw [dotLoop]
-    have hs : (dotStep ⟨pos, neg, true, nz⟩ (fa index) (fb index)).special = true := by
-      unfold dotStep Acc.markSpecial Acc.add; split_ifs <;> rfl
-    generalize dotStep ⟨pos, neg, true, nz⟩ (fa index) (fb index) = r at hs ⊢
-    obtain ⟨p, q, s, z⟩ := r
-    simp only at hs; subst hs
-    exact ih ..
-
-/-- What a loop without specials tells us, stated over arrays `A`, `B` that hold the operands (as
-the toolkit's FloatLib lemmas are). -/
-theorem dotLoopFacts (fa fb : Nat → UInt32) (A B : Array UInt32) (n : Nat)
-    (hA : ∀ k, k < n → A[k]! = fa k) (hB : ∀ k, k < n → B[k]! = fb k)
-    (acc : Acc) (index remaining : Nat) (h : index + remaining ≤ n)
-    (hp : acc.pos.size = 18) (hn : acc.neg.size = 18)
-    (hfin : (dotLoop fa fb acc.pos acc.neg acc.special acc.negZero index remaining).special
-      = false) :
-    acc.special = false ∧
-    (∀ k, index ≤ k → k < index + remaining → expOf A[k]! ≠ 255 ∧ expOf B[k]! ≠ 255) ∧
-    (dotLoop fa fb acc.pos acc.neg acc.special acc.negZero index remaining).total =
-      acc.total + dsum A B index remaining ∧
-    (dotLoop fa fb acc.pos acc.neg acc.special acc.negZero index remaining).negZero =
-      (acc.negZero && dallNZ A B index remaining) := by
-  induction remaining generalizing acc index with
-  | zero => obtain ⟨p, n, s, z⟩ := acc; simp_all [dotLoop, dsum, dallNZ]
-  | succ count ih =>
-    obtain ⟨p, q, s, z⟩ := acc
-    simp only at hp hn
-    have ha := hA index (by omega)
-    have hb := hB index (by omega)
-    by_cases he : expOf (fa index) = 255 ∨ expOf (fb index) = 255
-    · exfalso
-      rw [dotLoop] at hfin
-      have hs : (dotStep ⟨p, q, s, z⟩ (fa index) (fb index)).special = true := by
-        simp [dotStep, he, Acc.markSpecial]
-      generalize dotStep ⟨p, q, s, z⟩ (fa index) (fb index) = r at hs hfin
-      obtain ⟨p', q', s', z'⟩ := r
-      simp only at hs; subst hs
-      rw [dotLoop_special] at hfin
-      exact Bool.noConfusion hfin
-    · have he' := not_or.mp he
-      obtain ⟨h1, h2, h3, h4, h5⟩ :=
-        Acc.add_spec ⟨p, q, s, z⟩ (mantOf (fa index) * mantOf (fb index))
-          (idxOf (fa index) + idxOf (fb index)) (Bool.xor (signOf (fa index)) (signOf (fb index)))
-          hp hn (mul_mant_lt _ _)
-          (by have := idxOf_le _ he'.1; have := idxOf_le _ he'.2; omega)
-      have hstep : dotStep ⟨p, q, s, z⟩ (fa index) (fb index) =
-          Acc.add ⟨p, q, s, z⟩ (mantOf (fa index) * mantOf (fb index))
-            (idxOf (fa index) + idxOf (fb index))
-            (Bool.xor (signOf (fa index)) (signOf (fb index))) := by
-        simp [dotStep, he]
-      rw [dotLoop, hstep] at hfin ⊢
-      obtain ⟨hs, hall, hD, hz⟩ := ih _ (index + 1) (by omega) h1 h2 hfin
-      refine ⟨by rw [← h3, hs], ?_, ?_, ?_⟩
-      · intro k k1 k2
-        rcases Nat.lt_or_ge k (index + 1) with hk | hk
-        · have : k = index := by omega
-          subst this; rw [ha, hb]; exact he'
-        · exact hall k hk (by omega)
-      · rw [hD, h5, dsum, ha, hb, sv_mul]; ring
-      · rw [hz, h4, dallNZ, ha, hb]; simp [Bool.and_assoc]
-
-theorem getElem!_ofFn (n : Nat) (f : Nat → UInt32) (k : Nat) (hk : k < n) :
-    (Array.ofFn (n := n) fun i => f i.val)[k]! = f k := by
-  rw [getElem!_pos _ k (by simpa using hk), Array.getElem_ofFn]
-
-theorem dotFn_eq (n : Nat) (fa fb : Nat → UInt32) :
-    dotFn n fa fb =
-      dotSpec (Array.ofFn (n := n) fun i => fa i) (Array.ofFn (n := n) fun i => fb i) := by
-  unfold dotFn
-  set A := Array.ofFn (n := n) fun i => fa i with hA
-  set B := Array.ofFn (n := n) fun i => fb i with hB
-  set acc := dotLoop fa fb (Array.replicate 18 0) (Array.replicate 18 0) false true 0 n with hacc
-  by_cases hsp : acc.special = true
-  · simp [hsp]
-  · have hsp' : acc.special = false := by simpa using hsp
-    obtain ⟨-, hall, hD, hz⟩ := dotLoopFacts fa fb A B n (getElem!_ofFn n fa)
-      (getElem!_ofFn n fb) Acc.empty 0 n (by omega) (by simp [Acc.empty]) (by simp [Acc.empty])
-      hsp'
-    have hD : acc.total = dsum A B 0 n := by
-      have := hD; simp only [Acc.total_empty, Int.zero_add] at this; exact this
-    have hz : acc.negZero = dallNZ A B 0 n := by
-      have := hz; simp only [Acc.empty, Bool.true_and] at this; exact this
-    simp only [hsp', Bool.false_eq_true, ite_false]
-    rw [finishFast_eq, show ((limbVal acc.pos.toList : Int) - limbVal acc.neg.toList) = acc.total
-      from rfl]
-    -- FloatLib's side: every word is finite, and its exact total is ours.
-    have hAsize : A.size = n := by simp [hA]
-    have hBsize : B.size = n := by simp [hB]
-    set L := A.map (Model.ofUInt32 (fmt := Fmt)) with hL
-    set R := B.map (Model.ofUInt32 (fmt := Fmt)) with hR
-    have hLR : L.size = R.size := by simp [hL, hR, hAsize, hBsize]
-    have hLsize : L.size = n := by simp [hL, hAsize]
-    have hLfin : ∀ k (hk : k < L.size), Model.isFinite L[k] = true := by
-      intro k hk
-      have hk' : k < A.size := by simpa [hL] using hk
-      have := (hall k (by omega) (by omega)).1
-      rw [getElem!_pos A k hk'] at this
-      simp [hL, isFinite_ofUInt32, this]
-    have hRfin : ∀ k (hk : k < R.size), Model.isFinite R[k] = true := by
-      intro k hk
-      have hk' : k < B.size := by simpa [hR] using hk
-      have := (hall k (by omega) (by omega)).2
-      rw [getElem!_pos B k hk'] at this
-      simp [hR, isFinite_ofUInt32, this]
-    have hslice : Model.Reduction.Semantics.finiteDotSlice L R 0 L.size (by simp)
-        (by simp [hLR]) = (acc.total : ℚ) * 2 ^ (-298 : ℤ) := by
-      have := finiteDotSlice_eq A B 0 L.size (by simp [hL]) (by simp [hL, hAsize, hBsize])
-        (by intro k k1 k2; exact hall k k1 (by omega))
-      exact this.trans (by rw [hLsize, hD])
-    have hexact := Model.Reduction.Internal.dotState_exact_toRat
-      (destination := Fmt) L R hLR
-    unfold dotSpec
-    rw [← Model.Reduction.map_value_dot]
-    by_cases hS0 : acc.total = 0
-    · have hz0 : (Model.Reduction.Internal.dotState L R hLR :
-          Model.Reduction.Internal.State Fmt).exact.significand = 0 := by
-        rw [← FloatLib.Numerics.Dyadic.toRat_eq_zero_iff, hexact, hslice, hS0]; simp
-      rw [Model.Reduction.dot_status_eq_zero_of_finite Fmt L R .nearest hLR hLfin hRfin
-        hz0, hS0, finishWord_zero]
-      unfold Model.Reduction.Internal.dotState
-      obtain ⟨h1, h2⟩ := dotStateLoop_flags A B {} 0 L.size (by simp [hL])
-        (by simp [hL, hAsize, hBsize]) (by intro k k1 k2; exact hall k k1 (by omega))
-      have h1' : (Model.Reduction.Internal.dotStateLoop L R
-          ({} : Model.Reduction.Internal.State Fmt) 0 L.size (by simp)
-          (by simp [hLR])).sawFiniteTerm = decide (L.size ≠ 0) := by
-        rw [show decide (L.size ≠ 0) = (false || decide (L.size ≠ 0)) by simp]; exact h1
-      have h2' : (Model.Reduction.Internal.dotStateLoop L R
-          ({} : Model.Reduction.Internal.State Fmt) 0 L.size (by simp)
-          (by simp [hLR])).allTermsNegativeZero = dallNZ A B 0 L.size := by
-        rw [show dallNZ A B 0 L.size = (true && dallNZ A B 0 L.size) by simp]; exact h2
-      simp only [Except.map, h1', h2']
-      rw [hz]
-      simp [hLsize]
-    · have hnz : Model.Reduction.Semantics.finiteDot L.toList R.toList ≠ .ok 0 := by
-        rw [Model.Reduction.Semantics.finiteDot_toList_eq_slice L R hLR]
-        intro h
-        injection h with h
-        rw [hslice] at h
-        simp at h; exact hS0 h
-      rw [Model.Reduction.dot_status_eq_round_of_finite_nonzero Fmt L R .nearest hLR hLfin
-        hRfin hnz]
-      simp only [Except.map]
-      exact finishWord_of_ne _ _ _ _ hS0 (by rw [hexact, hslice])
-
-/-! ## Arrays as functions -/
-
-theorem ofFn_getElem! (a : Array UInt32) (n : Nat) (h : n = a.size) :
-    (Array.ofFn (n := n) fun i => a[i.val]!) = a := by
-  subst h
-  apply Array.ext (by simp)
-  intro i h1 h2
-  rw [Array.getElem_ofFn, getElem!_pos a i h2]
-
-theorem ofFn_const (n : Nat) (c : UInt32) :
-    (Array.ofFn (n := n) fun _ => c) = Array.replicate n c := by
-  apply Array.ext (by simp)
-  intro i h1 h2
-  simp
-
-/-! ## The kernels -/
-
-/-- `dot`: `dotFn` over the two arrays; FloatLib's dot product for unequal sizes. -/
-def dotX (a b : Array UInt32) : UInt32 :=
-  if a.size = b.size then dotFn a.size (fun i => a[i]!) (fun i => b[i]!) else dotSpec a b
-
-/-- `sum`: a dot product with ones. -/
-def sumX (x : Array UInt32) : UInt32 := dotFn x.size (fun i => x[i]!) (fun _ => oneW)
-
-theorem dotX_eq_spec (a b : Array UInt32) : dotX a b = dotSpec a b := by
-  unfold dotX
-  split
-  · rename_i h
-    rw [dotFn_eq, ofFn_getElem! a _ rfl, ofFn_getElem! b _ h]
-  · rfl
-
-theorem sumX_eq_spec (x : Array UInt32) : sumX x = sumSpec x := by
-  rw [sumX, dotFn_eq, ofFn_getElem! x _ rfl, ofFn_const, sumSpec]
-
-/-- `dotFn` is the spec's dot product, so every `…With` definition run with `dotFn` is its spec. -/
-theorem dotFn_eq_dotOf : dotFn = dotOf :=
-  funext fun n => funext fun fa => funext fun fb => dotFn_eq n fa fb
-
-/-! ## Max pooling on words -/
-
-theorem toWord_ofW (w : Word) : toWord (ofW w) = w := by
-  apply UInt32.toNat_inj.mp
-  simp only [toWord, ofW, Model.toNatBits, ofUInt32_bits, UInt32.toNat_ofNat']
-  exact Nat.mod_eq_of_lt w.toBitVec.isLt
-
-theorem ofW_toWord (z : Model Fmt) : ofW (toWord z) = z := by
-  have h : z.toNatBits < 2 ^ 32 := Model.toNatBits_lt_two_pow z
-  simp only [ofW, toWord, Model.ofUInt32, UInt32.toNat_ofNat', Nat.mod_eq_of_lt h]
-  exact Model.ofNatBits_toNatBits z
-
-/-- A finite word's exact value times `2^149`: `±mant · 2^idx`. -/
-@[inline] def keyOf (w : Word) : Int :=
-  if signOf w then -((mantOf w <<< idxOf w : Nat) : Int) else ((mantOf w <<< idxOf w : Nat) : Int)
-
-theorem keyOf_eq (w : Word) : keyOf w = sv w * 2 ^ idxOf w := by
-  unfold keyOf sv; split <;> simp [Nat.shiftLeft_eq]
-
-theorem toReal_decodeD (w : Word) :
-    (decodeD w).toReal = (keyOf w : ℝ) * 2 ^ (-149 : Int) := by
-  rw [← FloatLib.Numerics.Dyadic.cast_toRat, decodeD_toRat, keyOf_eq]
-  push_cast
-  rw [zpow_sub₀ two_ne_zero, zpow_natCast]
-  ring
-
-/-- FloatLib's `maximum` on words: finite words compared by `keyOf`; the spec's own steps when
-the values are equal (signed zeros) or a NaN or infinity is involved. -/
-@[inline] def maxW (a b : Word) : Word :=
-  if expOf a = 255 ∨ expOf b = 255 then toWord (Model.maximum (ofW a) (ofW b))
-  else match compare (keyOf a) (keyOf b) with
-    | .lt => b
-    | .gt => a
-    | .eq => toWord (if Model.isZero (ofW a) && Model.isZero (ofW b) then
-        Model.zero Fmt (Model.signBit (ofW a) && Model.signBit (ofW b)) else ofW a)
-
-theorem cmp_decodeD (a b : Word) :
-    Model.cmpDyadic (decodeD a) (decodeD b) = compare (keyOf a) (keyOf b) := by
-  have hs : (0 : ℝ) < 2 ^ (-149 : Int) := zpow_pos two_pos _
-  cases h : compare (keyOf a) (keyOf b)
-  · rw [Model.cmpDyadic_lt_iff, toReal_decodeD, toReal_decodeD]
-    exact mul_lt_mul_of_pos_right (by exact_mod_cast compare_lt_iff_lt.mp h) hs
-  · rw [Model.cmpDyadic_eq_iff, toReal_decodeD, toReal_decodeD, compare_eq_iff_eq.mp h]
-  · rw [Model.cmpDyadic_gt_iff, toReal_decodeD, toReal_decodeD]
-    exact mul_lt_mul_of_pos_right (by exact_mod_cast compare_gt_iff_gt.mp h) hs
-
-theorem maxW_spec (a b : Word) : ofW (maxW a b) = Model.maximum (ofW a) (ofW b) := by
-  unfold maxW
-  split
-  · exact ofW_toWord _
-  · rename_i hs
-    have ha := toDyadic_ofUInt32 a (fun h => hs (Or.inl h))
-    have hb := toDyadic_ofUInt32 b (fun h => hs (Or.inr h))
-    have hna := Model.isNaN_eq_false_of_toDyadic?_some ha
-    have hnb := Model.isNaN_eq_false_of_toDyadic?_some hb
-    have hc : Model.compare (ofW a) (ofW b) = some _ :=
-      Model.compare_eq_some_cmpDyadic_of_toDyadic? _ _ ha hb
-    rw [cmp_decodeD] at hc
-    have hnone : Model.chooseNaN2 (ofW a) (ofW b) = none :=
-      (Model.chooseNaN2_eq_none_iff _ _).2 ⟨hna, hnb⟩
-    unfold Model.maximum Model.Internal.Value.maximum
-    rw [Model.withNaNSelection_of_none _ _ hnone]
-    dsimp only
-    rw [Model.compareNonNaN_eq_of_compare_eq_some _ _ _ _ hc]
-    cases compare (keyOf a) (keyOf b) <;> simp only [ofW_toWord]
-
-/-- `maxpoolSpec` with the running maximum kept as a word. -/
-def maxpoolW (s : PoolShape) (inp : Array Word) : Array Word :=
-  Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
-    let ch := q.val / (s.ho * s.wo)
-    let y := q.val / s.wo % s.ho
-    let x := q.val % s.wo
-    let win := s.window y x
-    (List.range (win.rows * win.cols)).foldl (fun acc t => maxW acc (poolCell s inp ch win t))
-      (poolCell s inp ch win 0)
-
-theorem foldl_maxW (p : Nat → Word) (l : List Nat) (acc : Word) :
-    l.foldl (fun m t => Model.maximum m (ofW (p t))) (ofW acc) =
-      ofW (l.foldl (fun a t => maxW a (p t)) acc) := by
-  induction l generalizing acc with
-  | nil => rfl
-  | cons t l ih => simp only [List.foldl_cons, ← maxW_spec, ih]
-
-theorem maxpoolW_eq : maxpoolW = maxpoolSpec := by
-  funext s inp
-  simp only [maxpoolW, maxpoolSpec, foldl_maxW, toWord_ofW]
-
 /-! ## The entry -/
 
-/-- The entry: every dot-based kernel is the contract's definition run with `dotFn`. -/
-def kernels : Kernels where
-  core := ⟨sumX, dotX⟩
-  dense := ⟨linearWith dotFn, gemmWith dotFn⟩
-  conv := ⟨conv2dWith dotFn, depthwiseWith dotFn, convTransposeWith dotFn⟩
-  elem := ⟨avgpoolWith dotFn, maxpoolW, addReluSpec, scaleShiftSpec⟩
-  norm := ⟨rmsnormWith dotFn, layernormWith dotFn⟩
-  attn := ⟨scoresWith dotFn, mixWith dotFn, softmaxWith dotFn, siluSpec⟩
-  rnn := ⟨lstmWith dotFn sigmoidW tanhW, gruWith dotFn sigmoidW tanhW⟩
+/-! ## A window dot product: a fast path for short sums
+
+The products are summed on a window `2^Ec` below the largest exponent, each truncated, in 64-bit
+words. The exact total then lies within `n` window units of the sum; when both ends round to the
+same word, so does the total (`dotWin_spec`). -/
+
+/-- Largest `idxOf a + idxOf b` over the terms, or `none` at a NaN or an infinity. -/
+@[specialize] def maxExp (fa fb : Nat → UInt32) (E index : Nat) : Nat → Option Nat
+  | 0 => some E
+  | count + 1 =>
+    let a := fa index
+    let b := fb index
+    if expOf a = 255 ∨ expOf b = 255 then none
+    else maxExp fa fb (max E (idxOf a + idxOf b)) (index + 1) count
+
+theorem maxExp_spec (fa fb : Nat → UInt32) :
+    ∀ (count E index E' : Nat), maxExp fa fb E index count = some E' →
+      E ≤ E' ∧ ∀ k, index ≤ k → k < index + count →
+        expOf (fa k) ≠ 255 ∧ expOf (fb k) ≠ 255 ∧ idxOf (fa k) + idxOf (fb k) ≤ E'
+  | 0, E, index, E', h => by
+    simp only [maxExp, Option.some.injEq] at h
+    exact ⟨h.le, fun k h1 h2 => by omega⟩
+  | count + 1, E, index, E', h => by
+    simp only [maxExp] at h
+    split at h
+    · simp at h
+    · rename_i hs
+      obtain ⟨hE, hall⟩ := maxExp_spec fa fb count _ _ _ h
+      push_neg at hs
+      refine ⟨le_trans (le_max_left _ _) hE, fun k h1 h2 => ?_⟩
+      rcases Nat.lt_or_ge k (index + 1) with hk | hk
+      · have : k = index := by omega
+        subst this
+        exact ⟨hs.1, hs.2, le_trans (le_max_right _ _) hE⟩
+      · exact hall k hk (by omega)
+
+/-- One product on the window `2^Ec`, truncated: `⌊t · 2^(e − Ec)⌋`. -/
+@[inline] def winTerm (t e Ec : Nat) : Nat := if Ec ≤ e then t <<< (e - Ec) else t >>> (Ec - e)
+
+theorem winTerm_bounds (t e Ec : Nat) :
+    winTerm t e Ec * 2 ^ Ec ≤ t * 2 ^ e ∧ t * 2 ^ e < (winTerm t e Ec + 1) * 2 ^ Ec := by
+  unfold winTerm
+  split
+  · rename_i h
+    rw [Nat.shiftLeft_eq]
+    have : 2 ^ e = 2 ^ (e - Ec) * 2 ^ Ec := by rw [← pow_add]; congr 1; omega
+    rw [this]
+    constructor
+    · rw [Nat.mul_assoc]
+    · have : 0 < 2 ^ Ec := Nat.two_pow_pos _
+      nlinarith
+  · rename_i h
+    rw [Nat.shiftRight_eq_div_pow]
+    have hp : 2 ^ Ec = 2 ^ (Ec - e) * 2 ^ e := by rw [← pow_add]; congr 1; omega
+    have hpos : 0 < 2 ^ e := Nat.two_pow_pos _
+    have hq := Nat.div_mul_le_self t (2 ^ (Ec - e))
+    have hr := Nat.lt_mul_div_succ t (Nat.two_pow_pos (Ec - e))
+    rw [hp]
+    constructor
+    · calc t / 2 ^ (Ec - e) * (2 ^ (Ec - e) * 2 ^ e)
+          = t / 2 ^ (Ec - e) * 2 ^ (Ec - e) * 2 ^ e := by ring
+        _ ≤ t * 2 ^ e := Nat.mul_le_mul_right _ hq
+    · calc t * 2 ^ e < 2 ^ (Ec - e) * (t / 2 ^ (Ec - e) + 1) * 2 ^ e :=
+            Nat.mul_lt_mul_of_pos_right hr hpos
+        _ = (t / 2 ^ (Ec - e) + 1) * (2 ^ (Ec - e) * 2 ^ e) := by ring
+
+/-- The window sums by sign, in natural numbers (the reference for `sumWin64`). -/
+def sumNat (fa fb : Nat → UInt32) (Ec index : Nat) : Nat → Nat × Nat
+  | 0 => (0, 0)
+  | count + 1 =>
+    let a := fa index
+    let b := fb index
+    let q := winTerm (mantOf a * mantOf b) (idxOf a + idxOf b) Ec
+    let r := sumNat fa fb Ec (index + 1) count
+    if signOf a != signOf b then (r.1, r.2 + q) else (r.1 + q, r.2)
+
+/-- The exact total lies within `count` window units of `P − N`. -/
+theorem sumNat_bounds (fa fb : Nat → UInt32) (A B : Array UInt32) (n Ec : Nat)
+    (hA : ∀ k, k < n → A[k]! = fa k) (hB : ∀ k, k < n → B[k]! = fb k) :
+    ∀ (count index : Nat), index + count ≤ n →
+      (((sumNat fa fb Ec index count).1 : Int) - (sumNat fa fb Ec index count).2 - count) * 2 ^ Ec
+        ≤ dsum A B index count ∧
+      dsum A B index count ≤
+        (((sumNat fa fb Ec index count).1 : Int) - (sumNat fa fb Ec index count).2 + count) * 2 ^ Ec
+  | 0, index, _ => by simp [sumNat, dsum]
+  | count + 1, index, h => by
+    obtain ⟨ih1, ih2⟩ := sumNat_bounds fa fb A B n Ec hA hB count (index + 1) (by omega)
+    simp only [sumNat, dsum]
+    rw [hA index (by omega), hB index (by omega)]
+    set a := fa index
+    set b := fb index
+    set r := sumNat fa fb Ec (index + 1) count
+    obtain ⟨w1, w2⟩ := winTerm_bounds (mantOf a * mantOf b) (idxOf a + idxOf b) Ec
+    set q := winTerm (mantOf a * mantOf b) (idxOf a + idxOf b) Ec
+    have hsv := Pinned.sv_mul a b
+    have c1 : ((q * 2 ^ Ec : Nat) : Int) ≤ ((mantOf a * mantOf b * 2 ^ (idxOf a + idxOf b) : Nat) : Int) := by
+      exact_mod_cast w1
+    have c2 : ((mantOf a * mantOf b * 2 ^ (idxOf a + idxOf b) : Nat) : Int) < (((q + 1) * 2 ^ Ec : Nat) : Int) := by
+      exact_mod_cast w2
+    push_cast at c1 c2 ih1 ih2 ⊢
+    split
+    · rename_i hs
+      have : sv a * sv b = -((mantOf a * mantOf b : Nat) : Int) := by
+        rw [← hsv]; simp [show Bool.xor (signOf a) (signOf b) = true by simpa [bne_iff_ne] using hs]
+      push_cast at this
+      rw [this]
+      push_cast
+      constructor <;> (ring_nf; ring_nf at ih1 ih2 c1 c2; linarith)
+    · rename_i hs
+      have : sv a * sv b = ((mantOf a * mantOf b : Nat) : Int) := by
+        rw [← hsv]; simp [show Bool.xor (signOf a) (signOf b) = false by simpa [bne_iff_ne] using hs]
+      push_cast at this
+      rw [this]
+      push_cast
+      constructor <;> (ring_nf; ring_nf at ih1 ih2 c1 c2; linarith)
+
+/-- `winTerm` in a 64-bit word. -/
+@[inline] def winTermW (a b : UInt32) (Ec : UInt64) : UInt64 :=
+  let t := (mantOf a).toUInt64 * (mantOf b).toUInt64
+  let e := (idxOf a + idxOf b).toUInt64
+  if Ec ≤ e then t <<< (e - Ec) else if Ec - e < 64 then t >>> (Ec - e) else 0
+
+/-- The window sums in 64-bit words. -/
+@[specialize] def sumWin64 (fa fb : Nat → UInt32) (Ec : UInt64) (P N : UInt64) (index : Nat) :
+    Nat → UInt64 × UInt64
+  | 0 => (P, N)
+  | count + 1 =>
+    let a := fa index
+    let b := fb index
+    let q := winTermW a b Ec
+    if signOf a != signOf b then sumWin64 fa fb Ec P (N + q) (index + 1) count
+    else sumWin64 fa fb Ec (P + q) N (index + 1) count
+
+/-- One window term in a word equals `winTerm`, below `2^(48 + c)`, when the exponent is at most
+`c ≤ 15` above the window. -/
+theorem winTermW_eq (a b : UInt32) (Ec c : Nat) (hc : c ≤ 15) (hEc : Ec ≤ 600)
+    (he : idxOf a + idxOf b ≤ Ec + c) :
+    (winTermW a b Ec.toUInt64).toNat = winTerm (mantOf a * mantOf b) (idxOf a + idxOf b) Ec ∧
+    winTerm (mantOf a * mantOf b) (idxOf a + idxOf b) Ec < 2 ^ (48 + c) := by
+  have ha := mantOf_lt_24 a
+  have hb := mantOf_lt_24 b
+  have hab : mantOf a * mantOf b < 2 ^ 48 := by
+    calc mantOf a * mantOf b < 2 ^ 24 * 2 ^ 24 := Nat.mul_lt_mul'' ha hb
+      _ = 2 ^ 48 := by norm_num
+  have ht : ((mantOf a).toUInt64 * (mantOf b).toUInt64).toNat = mantOf a * mantOf b := by
+    rw [UInt64.toNat_mul, FastAct.toNat_toUInt64_of_lt (by omega),
+      FastAct.toNat_toUInt64_of_lt (by omega)]
+    exact Nat.mod_eq_of_lt (by omega)
+  have hix : idxOf a + idxOf b ≤ 615 := by omega
+  have heN : (idxOf a + idxOf b).toUInt64.toNat = idxOf a + idxOf b :=
+    FastAct.toNat_toUInt64_of_lt (by omega)
+  have hEN : Ec.toUInt64.toNat = Ec := FastAct.toNat_toUInt64_of_lt (by omega)
+  unfold winTermW winTerm
+  dsimp only
+  by_cases h1 : Ec ≤ idxOf a + idxOf b
+  · have hle : Ec.toUInt64 ≤ (idxOf a + idxOf b).toUInt64 := by
+      rw [UInt64.le_iff_toNat_le, hEN, heN]; exact h1
+    simp only [hle, ite_true, h1]
+    have hd : ((idxOf a + idxOf b).toUInt64 - Ec.toUInt64).toNat = idxOf a + idxOf b - Ec := by
+      rw [UInt64.toNat_sub_of_le _ _ hle, heN, hEN]
+    have hsh : idxOf a + idxOf b - Ec ≤ c := by omega
+    have hlt : mantOf a * mantOf b * 2 ^ (idxOf a + idxOf b - Ec) < 2 ^ (48 + c) := by
+      calc mantOf a * mantOf b * 2 ^ (idxOf a + idxOf b - Ec)
+          < 2 ^ 48 * 2 ^ (idxOf a + idxOf b - Ec) :=
+            Nat.mul_lt_mul_of_pos_right hab (Nat.two_pow_pos _)
+        _ ≤ 2 ^ 48 * 2 ^ c := Nat.mul_le_mul_left _ (Nat.pow_le_pow_right (by norm_num) hsh)
+        _ = 2 ^ (48 + c) := by rw [← pow_add]
+    have h63 : 2 ^ (48 + c) ≤ 2 ^ 63 := Nat.pow_le_pow_right (by norm_num) (by omega)
+    rw [UInt64.toNat_shiftLeft, ht, hd, Nat.shiftLeft_eq, Nat.shiftLeft_eq,
+      Nat.mod_eq_of_lt (by omega : idxOf a + idxOf b - Ec < 64)]
+    exact ⟨Nat.mod_eq_of_lt (by omega), hlt⟩
+  · have hle : ¬ Ec.toUInt64 ≤ (idxOf a + idxOf b).toUInt64 := by
+      rw [UInt64.le_iff_toNat_le, hEN, heN]; exact h1
+    simp only [hle, ite_false, h1]
+    have hd : (Ec.toUInt64 - (idxOf a + idxOf b).toUInt64).toNat = Ec - (idxOf a + idxOf b) := by
+      rw [UInt64.toNat_sub_of_le _ _ (by rw [UInt64.le_iff_toNat_le, hEN, heN]; omega), heN, hEN]
+    have hsmall : (mantOf a * mantOf b) >>> (Ec - (idxOf a + idxOf b)) < 2 ^ (48 + c) := by
+      rw [Nat.shiftRight_eq_div_pow]
+      calc mantOf a * mantOf b / 2 ^ (Ec - (idxOf a + idxOf b)) ≤ mantOf a * mantOf b :=
+            Nat.div_le_self _ _
+        _ < 2 ^ 48 := hab
+        _ ≤ 2 ^ (48 + c) := Nat.pow_le_pow_right (by norm_num) (by omega)
+    refine ⟨?_, hsmall⟩
+    split
+    · rename_i h64
+      rw [UInt64.lt_iff_toNat_lt, hd] at h64
+      rw [UInt64.toNat_shiftRight, ht, hd, Nat.mod_eq_of_lt (by simpa using h64)]
+    · rename_i h64
+      rw [UInt64.lt_iff_toNat_lt, hd] at h64
+      simp only [UInt64.toNat_zero]
+      rw [Nat.shiftRight_eq_div_pow, eq_comm, Nat.div_eq_zero_iff]
+      right
+      calc mantOf a * mantOf b < 2 ^ 48 := hab
+        _ ≤ 2 ^ (Ec - (idxOf a + idxOf b)) :=
+          Nat.pow_le_pow_right (by norm_num) (by simp at h64; omega)
+
+theorem sumWin64_eq (fa fb : Nat → UInt32) (Ec c : Nat) (hc : c ≤ 15) (hEc : Ec ≤ 600) :
+    ∀ (count index : Nat) (P N : UInt64),
+      (∀ k, index ≤ k → k < index + count → idxOf (fa k) + idxOf (fb k) ≤ Ec + c) →
+      P.toNat + N.toNat + count * 2 ^ (48 + c) < 2 ^ 64 →
+      (sumWin64 fa fb Ec.toUInt64 P N index count).1.toNat =
+          P.toNat + (sumNat fa fb Ec index count).1 ∧
+        (sumWin64 fa fb Ec.toUInt64 P N index count).2.toNat =
+          N.toNat + (sumNat fa fb Ec index count).2
+  | 0, index, P, N, _, _ => by simp [sumWin64, sumNat]
+  | count + 1, index, P, N, he, hb => by
+    obtain ⟨hq, hqlt⟩ := winTermW_eq (fa index) (fb index) Ec c hc hEc (he index le_rfl (by omega))
+    simp only [sumWin64, sumNat]
+    have hpow : count * 2 ^ (48 + c) + 2 ^ (48 + c) = (count + 1) * 2 ^ (48 + c) := by ring
+    split
+    · have hN : (N + winTermW (fa index) (fb index) Ec.toUInt64).toNat =
+          N.toNat + winTerm (mantOf (fa index) * mantOf (fb index))
+            (idxOf (fa index) + idxOf (fb index)) Ec := by
+        rw [UInt64.toNat_add, hq]; exact Nat.mod_eq_of_lt (by omega)
+      obtain ⟨r1, r2⟩ := sumWin64_eq fa fb Ec c hc hEc count (index + 1) P _
+        (fun k h1 h2 => he k (by omega) (by omega)) (by rw [hN]; omega)
+      refine ⟨r1, ?_⟩
+      rw [r2, hN]; ring
+    · have hP : (P + winTermW (fa index) (fb index) Ec.toUInt64).toNat =
+          P.toNat + winTerm (mantOf (fa index) * mantOf (fb index))
+            (idxOf (fa index) + idxOf (fb index)) Ec := by
+        rw [UInt64.toNat_add, hq]; exact Nat.mod_eq_of_lt (by omega)
+      obtain ⟨r1, r2⟩ := sumWin64_eq fa fb Ec c hc hEc count (index + 1) _ N
+        (fun k h1 h2 => he k (by omega) (by omega)) (by rw [hP]; omega)
+      refine ⟨?_, r2⟩
+      rw [r1, hP]; ring
+
+/-! ### `Pinned.dotFn` on finite inputs -/
+
+theorem dotLoop_special_false (fa fb : Nat → UInt32) :
+    ∀ (count index : Nat) (pos neg : Array Nat) (nz : Bool),
+      (∀ k, index ≤ k → k < index + count → expOf (fa k) ≠ 255 ∧ expOf (fb k) ≠ 255) →
+      (Pinned.dotLoop fa fb pos neg false nz index count).special = false
+  | 0, _, _, _, _, _ => by simp [Pinned.dotLoop]
+  | count + 1, index, pos, neg, nz, hfin => by
+    have h := hfin index le_rfl (by omega)
+    simp only [Pinned.dotLoop]
+    have hstep : (Pinned.dotStep ⟨pos, neg, false, nz⟩ (fa index) (fb index)).special = false := by
+      unfold Pinned.dotStep
+      rw [if_neg (by push_neg; exact h)]
+      simp only [Pinned.Acc.add]
+      split_ifs <;> rfl
+    generalize Pinned.dotStep ⟨pos, neg, false, nz⟩ (fa index) (fb index) = acc at hstep
+    obtain ⟨p, n, sp, z⟩ := acc
+    simp only at hstep
+    subst hstep
+    exact dotLoop_special_false fa fb count (index + 1) p n z
+      (fun k h1 h2 => hfin k (by omega) (by omega))
+
+/-- On finite inputs, `Pinned.dotFn` rounds the exact total once. -/
+theorem dotFn_finite (n : Nat) (fa fb : Nat → UInt32)
+    (hfin : ∀ k, k < n → expOf (fa k) ≠ 255 ∧ expOf (fb k) ≠ 255) :
+    Pinned.dotFn n fa fb =
+      finishWord (dsum (Array.ofFn (n := n) fun i => fa i) (Array.ofFn (n := n) fun i => fb i) 0 n)
+        (-298) (n ≠ 0 && dallNZ (Array.ofFn (n := n) fun i => fa i)
+          (Array.ofFn (n := n) fun i => fb i) 0 n) := by
+  unfold Pinned.dotFn
+  have hsp := dotLoop_special_false fa fb n 0 (Array.replicate 18 0) (Array.replicate 18 0) true
+    (fun k _ hk => hfin k (by omega))
+  obtain ⟨-, -, hD, hz⟩ := Pinned.dotLoopFacts fa fb (Array.ofFn (n := n) fun i => fa i)
+    (Array.ofFn (n := n) fun i => fb i) n (Pinned.getElem!_ofFn n fa) (Pinned.getElem!_ofFn n fb) Pinned.Acc.empty 0 n
+    (by omega) (by simp [Pinned.Acc.empty]) (by simp [Pinned.Acc.empty]) hsp
+  simp only [Pinned.Acc.empty] at hD hz hsp
+  simp only [hsp, Bool.false_eq_true, ite_false]
+  rw [Pinned.finishFast_eq]
+  change finishWord (Pinned.Acc.total _) _ _ = _
+  have h0 : (⟨Array.replicate 18 0, Array.replicate 18 0, false, true⟩ : Pinned.Acc).total = 0 :=
+    Pinned.Acc.total_empty
+  rw [hD, hz, h0]
+  simp
+
+/-! ### The window fast path -/
+
+/-- The dot product on a window, when both ends of its enclosure round to the same finite nonzero
+word below `2^127`; `none` otherwise. -/
+@[inline] def dotWin (n : Nat) (fa fb : Nat → UInt32) : Option UInt32 :=
+  match maxExp fa fb 0 0 n with
+  | none => none
+  | some E =>
+    if 600 < E ∨ 12 < n.log2 then none else
+    let c := 13 - n.log2
+    let Ec := E - c
+    let pn := sumWin64 fa fb Ec.toUInt64 0 0 0 n
+    let P := pn.1.toNat
+    let N := pn.2.toNat
+    let neg := decide (P < N)
+    let D := if neg then N - P else P - N
+    if D ≤ n then none else
+    let ex : Int := (Ec : Int) - 298
+    let w := FastRound.roundW neg (D - n) ex
+    if w = FastRound.roundW neg (D + n) ex ∧ ((D + n).log2 : Int) + ex ≤ 126 ∧
+        expOf w ≠ 255 ∧ (decodeD w).significand ≠ 0 then some w else none
+
+theorem two_pow_127_le_posMax :
+    (2 : ℝ) ^ (127 : Int) ≤ Model.toReal (Model.posMaxFinite Fmt) := by
+  rw [Model.toReal_posMaxFinite]
+  have h1 : Fmt.fracWidth = 23 := rfl
+  have h2 : Fmt.maxNormalExponent = 127 := rfl
+  have h3 : Fmt.maxFiniteFracField = 2 ^ 23 - 1 := rfl
+  have hp : Model.pow2 23 = 2 ^ 23 := by simp [Model.pow2, Nat.shiftLeft_eq]
+  rw [h1, h2, h3, hp]
+  simp [FloatLib.Floats.Formats.Flocq.bpow, FloatLib.Numerics.binaryRadix,
+    FloatLib.Numerics.Radix.toReal]
+  norm_num
+
+/-- `X · 2^(Ec − 298) = (X · 2^Ec) · 2^(−298)`. -/
+theorem scale_ex (X : Int) (Ec : Nat) :
+    (X : ℝ) * 2 ^ ((Ec : Int) - 298) = ((X * 2 ^ Ec : Int) : ℝ) * 2 ^ (-298 : Int) := by
+  rw [zpow_sub₀ two_ne_zero, zpow_neg, zpow_natCast]; push_cast; ring
+
+theorem scale_le {X Y : Int} (h : X ≤ Y) : (X : ℝ) * 2 ^ (-298 : Int) ≤ (Y : ℝ) * 2 ^ (-298 : Int) :=
+  mul_le_mul_of_nonneg_right (by exact_mod_cast h) (by positivity)
+
+/-- What the window path returns is `Pinned.dotFn`'s word. -/
+theorem dotWin_spec {n : Nat} {fa fb : Nat → UInt32} {w : UInt32} (h : dotWin n fa fb = some w) :
+    Pinned.dotFn n fa fb = w := by
+  unfold dotWin at h
+  split at h
+  · simp at h
+  rename_i E hE
+  split at h
+  · simp at h
+  rename_i hg
+  push_neg at hg
+  dsimp only at h
+  obtain ⟨-, hall⟩ := maxExp_spec fa fb n 0 0 E hE
+  have hfin : ∀ k, k < n → expOf (fa k) ≠ 255 ∧ expOf (fb k) ≠ 255 :=
+    fun k hk => ⟨(hall k (by omega) (by omega)).1, (hall k (by omega) (by omega)).2.1⟩
+  rw [dotFn_finite n fa fb hfin]
+  set c := 13 - n.log2 with hc
+  set Ec := E - c with hEc
+  -- the 64-bit sums are the natural ones
+  have hn2 : n < 2 ^ (n.log2 + 1) := Nat.lt_log2_self
+  have hbound : (0 : UInt64).toNat + (0 : UInt64).toNat + n * 2 ^ (48 + c) < 2 ^ 64 := by
+    have : n * 2 ^ (48 + c) < 2 ^ (n.log2 + 1) * 2 ^ (48 + c) :=
+      Nat.mul_lt_mul_of_pos_right hn2 (Nat.two_pow_pos _)
+    have h62 : 2 ^ (n.log2 + 1) * 2 ^ (48 + c) = 2 ^ 62 := by rw [← pow_add]; congr 1; omega
+    simp; omega
+  obtain ⟨hP, hN⟩ := sumWin64_eq fa fb Ec c (by omega) (by omega) n 0 0 0
+    (fun k _ hk => by have := (hall k (by omega) hk).2.2; omega) hbound
+  simp only [UInt64.toNat_zero, Nat.zero_add] at hP hN
+  rw [hP, hN] at h
+  set A := Array.ofFn (n := n) fun i => fa i
+  set B := Array.ofFn (n := n) fun i => fb i
+  obtain ⟨b1, b2⟩ := sumNat_bounds fa fb A B n Ec (Pinned.getElem!_ofFn n fa) (Pinned.getElem!_ofFn n fb) n 0
+    (by omega)
+  set T := dsum A B 0 n
+  set Pn := (sumNat fa fb Ec 0 n).1
+  set Nn := (sumNat fa fb Ec 0 n).2
+  have hpos : (0 : Int) < 2 ^ Ec := by positivity
+  set ex : Int := (Ec : Int) - 298 with hex
+  set v : ℝ := (T : ℝ) * 2 ^ (-298 : Int)
+  have hrepr : (ofIntDyadic T (-298)).toReal = v := by
+    rw [← FloatLib.Numerics.Dyadic.cast_toRat, toRat_ofIntDyadic]; push_cast; rfl
+  -- a magnitude `M` with `log2 M + ex ≤ 126` is below `2^127` on the scale `2^ex`
+  have habs : ∀ M : Nat, M.log2 + ex ≤ 126 → (M : ℝ) * 2 ^ ex ≤ 2 ^ (127 : Int) := by
+    intro M hl
+    have hlt : M < 2 ^ (M.log2 + 1) := Nat.lt_log2_self
+    have : (M : ℝ) ≤ (2 : ℝ) ^ ((M.log2 + 1 : Nat) : Int) := by
+      rw [zpow_natCast]; exact_mod_cast hlt.le
+    calc (M : ℝ) * 2 ^ ex ≤ 2 ^ ((M.log2 + 1 : Nat) : Int) * 2 ^ ex :=
+          mul_le_mul_of_nonneg_right this (by positivity)
+      _ = 2 ^ (((M.log2 + 1 : Nat) : Int) + ex) := by rw [zpow_add₀ two_ne_zero]
+      _ ≤ 2 ^ (127 : Int) := zpow_le_zpow_right₀ (by norm_num) (by push_cast; omega)
+  -- the bridge, once the ends are known
+  have hfinish : ∀ (lo hi : Int) (M : Nat), lo ≠ 0 → hi ≠ 0 →
+      finishWord lo ex false = w → finishWord hi ex false = w →
+      lo * 2 ^ Ec ≤ T → T ≤ hi * 2 ^ Ec → -(M : Int) ≤ lo → hi ≤ M → M.log2 + ex ≤ 126 →
+      expOf w ≠ 255 → (decodeD w).significand ≠ 0 → T ≠ 0 →
+      finishWord T (-298) (n ≠ 0 && dallNZ A B 0 n) = w := by
+    intro lo hi M hlo hhi f1 f2 l1 l2 m1 m2 hM g1 g2 hT
+    have hv_lo : (lo : ℝ) * 2 ^ ex ≤ v := by rw [hex, scale_ex]; exact scale_le l1
+    have hv_hi : v ≤ (hi : ℝ) * 2 ^ ex := by rw [hex, scale_ex]; exact scale_le l2
+    have hp : (0 : ℝ) < 2 ^ ex := by positivity
+    have m1' : -((M : ℝ) * 2 ^ ex) ≤ (lo : ℝ) * 2 ^ ex := by
+      rw [← neg_mul]; exact mul_le_mul_of_nonneg_right (by exact_mod_cast m1) hp.le
+    have m2' : (hi : ℝ) * 2 ^ ex ≤ (M : ℝ) * 2 ^ ex :=
+      mul_le_mul_of_nonneg_right (by exact_mod_cast m2) hp.le
+    have hvb : |v| ≤ 2 ^ (127 : Int) :=
+      (abs_le.mpr ⟨m1'.trans hv_lo, hv_hi.trans m2'⟩).trans (habs M hM)
+    have hzfin : Model.isFinite (Model.roundDyadic Fmt (ofIntDyadic T (-298))) = true :=
+      Model.isFinite_roundDyadic_of_isIEEE_of_abs_toReal_le_posMaxFinite Fmt (by decide) _
+        (by rw [hrepr]; exact hvb.trans two_pow_127_le_posMax)
+    have hz : Model.toReal (Model.roundDyadic Fmt (ofIntDyadic T (-298))) = Model.roundAt Fmt v := by
+      rw [Model.toReal_roundDyadic_eq_roundAt Fmt (by decide) _ hzfin, hrepr]
+    have := FastRound.bracket_spec hlo hhi f1 f2 g1 g2 hv_lo hv_hi hz
+    simp only [finishWord, hT, ite_false]
+    exact this
+  by_cases hneg : Pn < Nn
+  · simp only [hneg, decide_true, ite_true] at h
+    split at h
+    · simp at h
+    rename_i hDn
+    split at h
+    · rename_i hc
+      simp only [Option.some.injEq] at h
+      subst h
+      obtain ⟨hw2, hlog, hfw, hsg⟩ := hc
+      have hD : ((Nn - Pn : Nat) : Int) = Nn - Pn := by omega
+      apply hfinish (-((Nn - Pn + n : Nat) : Int)) (-((Nn - Pn - n : Nat) : Int)) (Nn - Pn + n)
+        (by omega) (by omega)
+      · rw [hw2, FastRound.roundW_signed true _ _ (by omega)]; simp
+      · rw [FastRound.roundW_signed true _ _ (by omega)]; simp
+      · push_cast; rw [Nat.cast_sub (by omega)]; push_cast; nlinarith
+      · push_cast; rw [Nat.cast_sub (by omega)]; push_cast; nlinarith
+      · omega
+      · omega
+      · exact hlog
+      · exact hfw
+      · exact hsg
+      · intro h0
+        have : T ≤ ((Pn : Int) - Nn + n) * 2 ^ Ec := b2
+        have hp' : (Pn : Int) - Nn + n < 0 := by omega
+        nlinarith [mul_neg_of_neg_of_pos hp' hpos]
+    · simp at h
+  · simp only [hneg, decide_false, Bool.false_eq_true, ite_false] at h
+    split at h
+    · simp at h
+    rename_i hDn
+    split at h
+    · rename_i hc
+      simp only [Option.some.injEq] at h
+      subst h
+      obtain ⟨hw2, hlog, hfw, hsg⟩ := hc
+      apply hfinish ((Pn - Nn - n : Nat) : Int) ((Pn - Nn + n : Nat) : Int) (Pn - Nn + n)
+        (by omega) (by omega)
+      · rw [FastRound.roundW_signed false _ _ (by omega)]; simp
+      · rw [hw2, FastRound.roundW_signed false _ _ (by omega)]; simp
+      · rw [Nat.cast_sub (by omega), Nat.cast_sub (by omega)]; nlinarith
+      · push_cast; rw [Nat.cast_sub (by omega)]; nlinarith
+      · omega
+      · omega
+      · exact hlog
+      · exact hfw
+      · exact hsg
+      · intro h0
+        have : ((Pn : Int) - Nn - n) * 2 ^ Ec ≤ T := b1
+        have hp' : (0 : Int) < (Pn : Int) - Nn - n := by omega
+        nlinarith [mul_pos hp' hpos]
+    · simp at h
+
+/-- The dot product: the window path where it settles, `Pinned.dotFn` elsewhere. -/
+@[inline] def dotW (n : Nat) (fa fb : Nat → UInt32) : UInt32 :=
+  (dotWin n fa fb).getD (Pinned.dotFn n fa fb)
+
+theorem dotW_eq : dotW = Pinned.dotFn := by
+  funext n fa fb
+  unfold dotW
+  cases h : dotWin n fa fb with
+  | none => rfl
+  | some w => exact (dotWin_spec h).symm
+
+/-- The window path reads every operand twice. Two-term dots stay with `Pinned.dotFn`; so do the LSTM and
+GRU kernels, whose operands are computed per read (measured slower with the window path). -/
+@[inline] def dotSel (n : Nat) (fa fb : Nat → UInt32) : UInt32 :=
+  if n ≤ 2 then Pinned.dotFn n fa fb else dotW n fa fb
+
+theorem dotSel_eq : dotSel = Pinned.dotFn := by
+  funext n fa fb
+  unfold dotSel
+  split <;> simp [dotW_eq]
+
+/-- `softmaxWith` with the exponential as a parameter (the same definition). -/
+@[specialize] def softmaxExp (dot : DotFn) (ex : Word → Word) (rows n : Nat) (x : Array Word) :
+    Array Word :=
+  let mx := Array.ofFn (n := rows) fun r => rowMax n x r.val
+  let e := Array.ofFn (n := rows * n) fun q =>
+    ex (toWord (Model.sub (ofW x[q.val]!) (ofW mx[q.val / n]!)))
+  let s := Array.ofFn (n := rows) fun r => dot n (fun t => e[r.val * n + t]!) (fun _ => oneW)
+  Array.ofFn (n := rows * n) fun q => toWord (Model.div (ofW e[q.val]!) (ofW s[q.val / n]!))
+
+theorem softmaxExp_expW (dot : DotFn) : softmaxExp dot expW = softmaxWith dot := rfl
+
+/-- SiLU with the fast sigmoid. -/
+def siluF (x : Array Word) : Array Word :=
+  x.map fun w => toWord (Model.mul (ofW w) (ofW (FastAct.sigmoidF w)))
+
+theorem siluF_eq : siluF = siluSpec := by
+  funext x
+  simp only [siluF, siluSpec, FastAct.sigmoidF_eq]
+
+/-- The entry: the pinned season-1 kernels, with fast `attn` and `rnn` families. -/
+def kernels : Kernels :=
+  { Pinned.kernels with
+    attn := ⟨scoresWith dotSel, mixWith dotSel, softmaxExp dotSel FastAct.expF, siluF⟩
+    rnn := ⟨lstmWith Pinned.dotFn FastAct.sigmoidF FastAct.tanhF,
+      gruWith Pinned.dotFn FastAct.sigmoidF FastAct.tanhF⟩ }
 
 theorem correct : Obligation kernels := by
-  simp only [Obligation, kernels, specKernels, specCore, specDense, specConv, specElem, specNorm,
-    specAttn, specRnn, lstmSpec, gruSpec, linearSpec, gemmSpec, conv2dSpec, depthwiseSpec, convTransposeSpec, avgpoolSpec,
-    rmsnormSpec, layernormSpec, scoresSpec, mixSpec, softmaxSpec, maxpoolW_eq, dotFn_eq_dotOf,
-    funext sumX_eq_spec, funext fun a => funext (dotX_eq_spec a)]
+  have h := Pinned.correct
+  simp only [Obligation, Pinned.kernels] at h
+  simp only [Obligation, kernels, Pinned.kernels, siluF_eq, FastAct.sigmoidF_eq, FastAct.tanhF_eq,
+    FastAct.expF_eq, softmaxExp_expW, dotSel_eq, Pinned.dotFn_eq_dotOf]
+  rw [← h]
+  simp only [specAttn, specRnn, scoresSpec, mixSpec, softmaxSpec, siluSpec, lstmSpec, gruSpec,
+    Pinned.dotFn_eq_dotOf]
 
 end Submission
+
