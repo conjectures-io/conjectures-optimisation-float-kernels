@@ -46,7 +46,7 @@ The CLI and workers support a fixed ceiling of 4 MiB. Your file must import only
 namespace Submission
 open ExactRuntime
 
-def kernels : Kernels := -- your complete set of 17 kernels
+def kernels : Kernels := -- your complete set of 19 kernels
   …
 
 theorem correct : Obligation kernels := by
@@ -110,7 +110,7 @@ paired statistical decision. To inspect layer costs:
 lean/.lake/build/bin/exactDev profile cnn
 ```
 
-Other profile names are `mlp`, `mnet`, `nmlp`, `mixer` and `tfm`. See
+Other profile names are `mlp`, `mnet`, `nmlp`, `mixer`, `rnn` and `tfm`. See
 [benchmarking](docs/BENCHMARKING.md) and [local experiments](docs/LOCAL-EXPERIMENTS.md)
 for interpretation and repeatable comparisons. Avoid concurrent builds or other CPU-heavy work.
 
@@ -139,7 +139,7 @@ A successful upload means **queued**, not verified or promoted. Keep your submit
 `boards` lists each board's rules and champion; `leaderboard` defaults to `overall`. These read
 only public fields: a current champion's source stays private.
 
-Boards are `overall`, `mlp`, `resnet`, `mobilenet`, `normalized_mlp`, `mixer` and `transformer`.
+Boards are `overall`, `mlp`, `resnet`, `mobilenet`, `normalized_mlp`, `mixer` and `recurrent`.
 Processing states include `queued`, `proving`, `waiting`, `benchmarking`, `completed`, `rejected`
 and `disqualified`. Completion means decisions are available; it does not mean a takeover.
 Each family can finish at a different time. Reports contain per-device measurements and decisions.

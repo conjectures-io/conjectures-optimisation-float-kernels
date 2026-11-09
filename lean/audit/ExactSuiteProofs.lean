@@ -28,6 +28,9 @@ theorem lcg_size (n : Nat) (seed : UInt32) : (lcg n seed).size = n := by
 @[simp] theorem wts_size (kind : String) (seed : UInt32) (k fanIn n : Nat) :
     (wts kind seed k fanIn n).size = n := by simp [wts]
 
+@[simp] theorem wtsGain_size (gain : Nat) (kind : String) (seed : UInt32) (k fanIn n : Nat) :
+    (wtsGain gain kind seed k fanIn n).size = n := by simp [wtsGain]
+
 @[simp] theorem biases_size (seed : UInt32) (k n : Nat) : (biases seed k n).size = n := by
   simp [biases]
 
@@ -108,66 +111,88 @@ theorem tfm_outputShape (kind : String) (seed : UInt32) (T heads d classes saved
       (T * (heads * d), saved) = (classes, T * (heads * d)) := by
   simp [tfmLayers, Layer.shapeStep]
 
+/-- The last of `T > 0` rows of `n` words is `n` words. -/
+theorem lastStep_width (T n : Nat) (ht : 0 < T) : T * n - (T - 1) * n = n := by
+  obtain ⟨t, rfl⟩ : ∃ t, T = t + 1 := ⟨T - 1, by omega⟩
+  simp [Nat.add_mul]
+
+theorem rnn_wellShaped (kind : String) (seed : UInt32) (T F H classes saved : Nat)
+    (ht : 0 < T) (hf : 0 < F) (hh : 0 < H) (hcl : 0 < classes) :
+    ModelWellShaped (rnnLayers kind seed T F H classes) (T * F, saved) := by
+  simp [rnnLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ht, hf, hh, hcl,
+    lastStep_width T H ht]
+
+theorem rnn_outputShape (kind : String) (seed : UInt32) (T F H classes saved : Nat)
+    (_ht : 0 < T) :
+    (rnnLayers kind seed T F H classes).foldl (fun shape l => l.shapeStep shape)
+      (T * F, saved) = (classes, saved) := by
+  simp [rnnLayers, Layer.shapeStep]
+
+/-! `ConvShape.simple` and `PoolShape.square` unfold to these literals (stride, padding,
+dilation and groups as the suite uses them); their output sizes are the old square rules. -/
+
 @[simp] theorem conv3_ho (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.simple ci n n co 3 3 1 1).ho = n := by
-  simp only [ConvShape.simple, ConvShape.ho, ConvShape.ekh, Nat.mul_one, Nat.div_one]
+    (ConvShape.mk ci n n co 3 3 1 1 1 1 1 1 1 1 1).ho = n := by
+  simp only [ConvShape.ho, ConvShape.ekh, Nat.div_one]
   omega
 
 @[simp] theorem conv3_wo (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.simple ci n n co 3 3 1 1).wo = n := by
-  simp only [ConvShape.simple, ConvShape.wo, ConvShape.ekw, Nat.mul_one, Nat.div_one]
+    (ConvShape.mk ci n n co 3 3 1 1 1 1 1 1 1 1 1).wo = n := by
+  simp only [ConvShape.wo, ConvShape.ekw, Nat.div_one]
   omega
 
 @[simp] theorem conv1_ho (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.simple ci n n co 1 1 1 0).ho = n := by
-  simp only [ConvShape.simple, ConvShape.ho, ConvShape.ekh, Nat.mul_zero, Nat.add_zero, Nat.div_one]
+    (ConvShape.mk ci n n co 1 1 1 1 0 0 0 0 1 1 1).ho = n := by
+  simp only [ConvShape.ho, ConvShape.ekh, Nat.div_one]
   omega
 
 @[simp] theorem conv1_wo (ci n co : Nat) (hn : 0 < n) :
-    (ConvShape.simple ci n n co 1 1 1 0).wo = n := by
-  simp only [ConvShape.simple, ConvShape.wo, ConvShape.ekw, Nat.mul_zero, Nat.add_zero, Nat.div_one]
+    (ConvShape.mk ci n n co 1 1 1 1 0 0 0 0 1 1 1).wo = n := by
+  simp only [ConvShape.wo, ConvShape.ekw, Nat.div_one]
   omega
+
+@[simp] theorem square_ho (c n k : Nat) (hk : 0 < k) (hn : k ≤ n) :
+    (PoolShape.mk c n n k k k k 0 0 0 0 false false).ho = n / k := by
+  simp only [PoolShape.ho, poolOut, Nat.add_zero, Bool.false_eq_true, ite_false]
+  exact (Nat.div_eq_sub_div hk hn).symm
+
+@[simp] theorem square_wo (c n k : Nat) (hk : 0 < k) (hn : k ≤ n) :
+    (PoolShape.mk c n n k k k k 0 0 0 0 false false).wo = n / k := by
+  simp only [PoolShape.wo, poolOut, Nat.add_zero, Bool.false_eq_true, ite_false]
+  exact (Nat.div_eq_sub_div hk hn).symm
 
 theorem cnn_wellShaped (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat)
     (hi : 0 < ci) (hn : 2 ≤ n) (h1 : 0 < c1) (h2 : 0 < c2) (hc : 0 < classes) :
     ModelWellShaped (cnnLayers kind seed ci n c1 c2 classes) (ci * n * n, saved) := by
   have hn0 : 0 < n := by omega
   have hn20 : 0 < n / 2 := by omega
-  have hn1 : 1 ≤ n := by omega
-  have hn21 : 1 ≤ n / 2 := by omega
-  have hpool : (n - 2) / 2 + 1 = n / 2 := by omega
   have hf : 3 ≤ n + 2 := by omega
   have hf2 : 3 ≤ n / 2 + 2 := by omega
-  simp [cnnLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.Valid,
-    ConvShape.Geometry, ConvShape.simple, ConvShape.ho, ConvShape.wo, ConvShape.ekh,
-    ConvShape.ekw, ConvShape.cpg, ConvShape.taps, PoolShape.Valid, PoolShape.square,
-    PoolShape.ho, PoolShape.wo, poolOut, hpool, Nat.sub_add_cancel hn1, Nat.sub_add_cancel hn21,
-    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2,
-    Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm] <;> omega
+  simp [cnnLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.simple,
+    ConvShape.Valid, ConvShape.Geometry, ConvShape.ekh, ConvShape.ekw, ConvShape.taps,
+    ConvShape.cpg, PoolShape.square, PoolShape.Valid,
+    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2, Nat.mul_assoc, Nat.mod_one]
 
 theorem cnn_outputShape (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat)
     (hn : 2 ≤ n) :
     (cnnLayers kind seed ci n c1 c2 classes).foldl (fun shape l => l.shapeStep shape)
       (ci * n * n, saved) = (classes, c1 * (n * n)) := by
   have hn0 : 0 < n := by omega
-  simp [cnnLayers, Layer.shapeStep, hn0]
+  have hn20 : 0 < n / 2 := by omega
+  simp [cnnLayers, Layer.shapeStep, ConvShape.simple, PoolShape.square, hn, hn0, hn20]
 
 theorem mnet_wellShaped (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat)
     (hi : 0 < ci) (hn : 2 ≤ n) (h1 : 0 < c1) (h2 : 0 < c2) (hc : 0 < classes) :
     ModelWellShaped (mnetLayers kind seed ci n c1 c2 classes) (ci * n * n, saved) := by
   have hn0 : 0 < n := by omega
   have hn20 : 0 < n / 2 := by omega
-  have hn1 : 1 ≤ n := by omega
-  have hn21 : 1 ≤ n / 2 := by omega
-  have hpool : (n - 2) / 2 + 1 = n / 2 := by omega
   have hf : 3 ≤ n + 2 := by omega
   have hf2 : 3 ≤ n / 2 + 2 := by omega
-  simp [mnetLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.Valid,
-    ConvShape.Geometry, ConvShape.simple, ConvShape.ho, ConvShape.wo, ConvShape.ekh,
-    ConvShape.ekw, ConvShape.cpg, ConvShape.taps, ConvShape.depthwise, PoolShape.Valid, PoolShape.square,
-    PoolShape.ho, PoolShape.wo, poolOut, hpool, Nat.sub_add_cancel hn1, Nat.sub_add_cancel hn21,
-    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2,
-    Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm] <;> omega
+  simp [mnetLayers, ModelWellShaped, Layer.acceptsShape, Layer.shapeStep, ConvShape.simple,
+    ConvShape.depthwise, ConvShape.Valid, ConvShape.Geometry, ConvShape.ekh, ConvShape.ekw,
+    ConvShape.taps, ConvShape.cpg, PoolShape.square, PoolShape.Valid,
+    hi, h1, h2, hc, hn, hn0, hn20, hf, hf2, Nat.mul_assoc, Nat.mod_one,
+    Nat.one_le_iff_ne_zero, Nat.pos_iff_ne_zero.mp hn0, Nat.pos_iff_ne_zero.mp hn20]
 
 theorem mnet_outputShape (kind : String) (seed : UInt32) (ci n c1 c2 classes saved : Nat) :
     (mnetLayers kind seed ci n c1 c2 classes).foldl (fun shape l => l.shapeStep shape)
@@ -243,6 +268,17 @@ theorem cellModel_valid (c : Cell) (seed : UInt32) (hb : 0 < c.batch) :
       tfm_wellShaped _ _ _ _ _ _ _ (hp _ _ _ (by decide)) (hp _ _ _ (by decide)) (by decide)
         (by decide), ?_⟩
     simp [modelOutputSize, tfm_outputShape]
+  · change 0 < c.batch ∧ 0 < pick 6 8 9 * pick 7 8 9 ∧
+      ModelWellShaped (rnnLayers c.kind seed (pick 6 8 9) (pick 7 8 9) (8 * pick 3 2 3) 10)
+        (pick 6 8 9 * pick 7 8 9, 0) ∧
+      c.batch * modelOutputSize
+        (rnnLayers c.kind seed (pick 6 8 9) (pick 7 8 9) (8 * pick 3 2 3) 10)
+        (pick 6 8 9 * pick 7 8 9) = c.batch * 10
+    have hT := hp 6 8 9 (by decide)
+    refine ⟨hb, Nat.mul_pos hT (hp _ _ _ (by decide)),
+      rnn_wellShaped _ _ _ _ _ _ _ hT (hp _ _ _ (by decide))
+        (Nat.mul_pos (by decide) (hp _ _ _ (by decide))) (by decide), ?_⟩
+    simp [modelOutputSize, rnn_outputShape _ _ _ _ _ _ _ hT]
   · change 0 < c.batch ∧ 0 < pick 6 8 9 * pick 7 16 33 ∧
       ModelWellShaped (mixerLayers c.kind seed (pick 6 8 9) (pick 7 16 33) 10)
         (pick 6 8 9 * pick 7 16 33, 0) ∧

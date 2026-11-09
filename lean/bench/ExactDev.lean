@@ -61,22 +61,40 @@ def modelBench : IO Unit := do
     let b1 ← best 2 fun _ => runCell Submission.kernels c 42
     IO.println s!"| {c.name} | {b0.1 / 1000000} ms | {b1.1 / 1000000} ms | {ratio b1.1 b0.1} | {if b0.2 == b1.2 then "yes" else "NO"} |"
 
+/-- A convolution's stride, padding (top, left, bottom, right), dilation and groups. -/
+def ExactRuntime.ConvShape.geometryLabel (s : ConvShape) : String :=
+  s!"stride {s.strideH}×{s.strideW} pad {s.padT},{s.padL},{s.padB},{s.padR} " ++
+    s!"dil {s.dilH}×{s.dilW} groups {s.groups}"
+
+/-- A pooling window's size, stride, padding (top, left, bottom, right) and output rule. -/
+def ExactRuntime.PoolShape.label (s : PoolShape) : String :=
+  s!"{s.kh}×{s.kw} {s.c}×{s.h}×{s.w} stride {s.strideH}×{s.strideW} " ++
+    s!"pad {s.padT},{s.padL},{s.padB},{s.padR} {if s.ceilMode then "ceil" else "floor"}"
+
 /-- A layer's name for the profile. -/
 def ExactRuntime.Layer.label : Layer → String
   | .linear rows i o _ _ _ => s!"linear {rows}×{i}→{o}"
   | .gemm m k n _ => s!"gemm {m}×{k}·{k}×{n}"
-  | .conv s _ _ _ => s!"conv2d {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
-  | .depthwise s _ _ _ => s!"depthwise {s.kh}×{s.kw} {s.cin} on {s.h}×{s.w}"
-  | .convTranspose s _ _ _ => s!"convTranspose {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
+  | .conv s _ _ _ =>
+    s!"conv2d {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w} {s.geometryLabel}"
+  | .depthwise s _ _ _ =>
+    s!"depthwise {s.kh}×{s.kw} {s.cin} on {s.h}×{s.w} {s.depthwise.geometryLabel}"
+  | .convTranspose s _ _ _ =>
+    s!"convTranspose {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w} " ++
+      s!"{s.toConvShape.geometryLabel} outPad {s.outPadH}×{s.outPadW}"
   | .bn _ c hw _ _ => s!"scaleShift {c}×{hw}"
-  | .maxpool s => s!"maxpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
-  | .avgpool s => s!"avgpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
+  | .maxpool s => s!"maxpool {s.label}"
+  | .avgpool s =>
+    s!"avgpool {s.label} {if s.countIncludePad then "countIncludePad" else "excludePad"}"
   | .rmsnorm rows n _ _ => s!"rmsnorm {rows}×{n}"
   | .layernorm rows n _ _ _ => s!"layernorm {rows}×{n}"
   | .save => "save"
   | .addSaved _ => "addRelu"
   | .attention T heads d _ _ _ _ _ _ _ _ _ => s!"attention {T} tokens, {heads}×{d}"
   | .silu => "silu"
+  | .lstm T i H _ _ _ _ => s!"lstm {T} steps, {i}→{H}"
+  | .gru T i H _ _ _ _ => s!"gru {T} steps, {i}→{H}"
+  | .lastStep T n => s!"lastStep {T}×{n}"
 
 /-- One sample of a model, layer by layer. -/
 def profile (model : String) : IO Unit := do

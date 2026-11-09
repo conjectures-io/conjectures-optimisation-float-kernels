@@ -48,7 +48,16 @@ def main():
     parser.add_argument("--reference", type=Path)
     parser.add_argument(
         "--board",
-        choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer"),
+        choices=(
+            "overall",
+            "mlp",
+            "resnet",
+            "mobilenet",
+            "normalized_mlp",
+            "mixer",
+            "recurrent",
+            "transformer",
+        ),
     )
     args = parser.parse_args()
     out = args.output.resolve()

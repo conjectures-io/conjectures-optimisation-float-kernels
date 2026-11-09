@@ -12,7 +12,9 @@ Shapes travel as a flat `dims` array (booleans as 0/1):
   dilH, dilW, groups]`
 * `convTranspose`: the convolution's fifteen, then `[outPadH, outPadW]`
 * `maxpool`, `avgpool`: `[c, h, w, kh, kw, strideH, strideW, padT, padL, padB, padR, ceilMode,
-  countIncludePad]` -/
+  countIncludePad]`
+* `lstm`, `gru`: `[T, inW, H]`; `w` is `wih ++ whh` and `b` is `bih ++ bhh`
+* `lastStep`: `[T, n]` -/
 
 open Lean ExactRuntime
 
@@ -84,6 +86,11 @@ def describeLayer (l : Layer) (x saved : Array Word) : Request :=
       op := "attention", dims := #[T, heads, d, (if causal then 1 else 0)],
       w := words (wq ++ wk ++ wv ++ wo), b := words (bq ++ bk ++ bv ++ bo)}
   | .silu => {base with op := "silu"}
+  | .lstm T i H wih whh bih bhh =>
+    {base with op := "lstm", dims := #[T, i, H], w := words (wih ++ whh), b := words (bih ++ bhh)}
+  | .gru T i H wih whh bih bhh =>
+    {base with op := "gru", dims := #[T, i, H], w := words (wih ++ whh), b := words (bih ++ bhh)}
+  | .lastStep T n => {base with op := "lastStep", dims := #[T, n]}
 
 /-- An `attention` layer from a request: `w` and `b` hold the four projections, Q, K, V, O, one
 after another (each `c × c` and `c`, with `c = heads · d`); the last part takes the rest, so the
@@ -94,6 +101,19 @@ def attentionOf (d : Array Nat) (w b : Array Word) : Layer :=
   .attention d[0]! d[1]! d[2]! (d[3]! == 1) (part w 0 (c * c)) (part b 0 c) (part w 1 (c * c))
     (part b 1 c) (part w 2 (c * c)) (part b 2 c) (w.extract (3 * (c * c)) w.size)
     (b.extract (3 * c) b.size)
+
+/-- A recurrent layer from a request (`gates` 4 for the LSTM, 3 for the GRU): `w` is `wih ++ whh`
+split after `gates·H·inW` words, `b` is `bih ++ bhh` split after `gates·H`, so the layer is valid
+exactly when the lengths are. -/
+def recurrentOf (lstm : Bool) (d : Array Nat) (w b : Array Word) : Layer :=
+  let gates := if lstm then 4 else 3
+  let wi := gates * d[2]! * d[1]!
+  let bi := gates * d[2]!
+  let wih := w.extract 0 wi
+  let whh := w.extract wi w.size
+  let bih := b.extract 0 bi
+  let bhh := b.extract bi b.size
+  if lstm then .lstm d[0]! d[1]! d[2]! wih whh bih bhh else .gru d[0]! d[1]! d[2]! wih whh bih bhh
 
 /-- A probe-only model on a `2 × 5 × 5` input through every generalised geometry: a grouped,
 dilated, asymmetrically padded conv with unequal strides; a ceil-mode padded max pool; a grouped
@@ -140,14 +160,17 @@ def traceSuite (seed : UInt32) (boundaries : Bool := false) : Json := Id.run do
       ("mixer-rect", ExactSuite.mixerLayers kind seed 3 2 3, 6),
       ("general", generalLayers kind (seed + 1), 50),
       ("tfm-min", ExactSuite.tfmLayers kind seed 1 1 1 1, 1),
-      ("tfm-odd", ExactSuite.tfmLayers kind seed 3 1 3 2, 9)] else [
+      ("tfm-odd", ExactSuite.tfmLayers kind seed 3 1 3 2, 9),
+      ("rnn-min", ExactSuite.rnnLayers kind seed 1 1 1 1, 1),
+      ("rnn-odd", ExactSuite.rnnLayers kind seed 3 2 3 2, 6)] else [
       ("mlp", ExactSuite.mlpLayers kind seed 2 [3,4,2], 6),
       ("cnn", ExactSuite.cnnLayers kind seed 1 4 2 3 2, 16),
       ("mnet", ExactSuite.mnetLayers kind seed 1 4 2 3 2, 16),
       ("nmlp", ExactSuite.nmlpLayers kind seed 2 3 4 3 2, 6),
       ("mixer", ExactSuite.mixerLayers kind seed 2 3 2, 6),
       ("general", generalLayers kind seed, 50),
-      ("tfm", ExactSuite.tfmLayers kind seed 3 2 2 2, 12)]
+      ("tfm", ExactSuite.tfmLayers kind seed 3 2 2 2, 12),
+      ("rnn", ExactSuite.rnnLayers kind seed 3 2 2 2, 6)]
     for (name, layers, size) in builders do
       let input := ExactSuite.gen kind size (seed + 999)
       let mut state := (input, #[])
@@ -184,6 +207,9 @@ def evaluate (r : Request) : Array Word := Id.run do
       | "addRelu" => Layer.addSaved r.relu
       | "attention" => attentionOf d w b
       | "silu" => Layer.silu
+      | "lstm" => recurrentOf true d w b
+      | "gru" => recurrentOf false d w b
+      | "lastStep" => Layer.lastStep d[0]! d[1]!
       | _ => panic! s!"unknown checked operation {op}"
     let state := if op == "gemm" then (w, #[]) else if op == "addRelu" then (x, w) else (x, #[])
     match layer.checked specKernels state with
@@ -222,6 +248,11 @@ def evaluate (r : Request) : Array Word := Id.run do
   | "mix" => return mixSpec d[0]! d[1]! d[2]! x w
   | "softmax" => return softmaxSpec d[0]! d[1]! x
   | "silu" => return siluSpec x
+  | "sigmoid" => return x.map sigmoidW
+  | "tanh" => return x.map tanhW
+  | "lstm" => return ((recurrentOf true d w b).apply specKernels (x, #[])).1
+  | "gru" => return ((recurrentOf false d w b).apply specKernels (x, #[])).1
+  | "lastStep" => return ((Layer.lastStep d[0]! d[1]!).apply specKernels (x, #[])).1
   | "attention" => return ((attentionOf d w b).apply specKernels (x, #[])).1
   | "model" =>
     -- Two samples; saved residual must be local to each sample.

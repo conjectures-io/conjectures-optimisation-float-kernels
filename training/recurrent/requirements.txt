@@ -1,0 +1,9 @@
+# CPU-only environment for the recurrent benchmark models (Python 3.12):
+#   uv venv --python 3.12 .venv
+#   uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cpu torch==2.15.0+cpu
+#   uv pip install --python .venv/bin/python -r requirements.txt
+torch==2.15.0+cpu
+numpy==2.5.4
+scipy==1.18.1
+# MIT-BIH only: reads WFDB .dat/.hea/.atr records
+wfdb==4.3.1

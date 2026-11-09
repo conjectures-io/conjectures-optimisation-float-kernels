@@ -1,7 +1,16 @@
 # Kernel contract
 
-The [pinned contract](../lean/contract/ContractExact.lean) defines the 17 kernels, model execution
-and `Obligation K := K = specKernels`. The [checked interface](../lean/contract/ContractExactChecked.lean)
+The [pinned contract](../lean/contract/ContractExact.lean) brings together three modules:
+- [`ExactToolkit.Spec`](../lean/contract/ExactToolkit/Spec.lean): the 19 kernels, model execution and
+  `Obligation K := K = specKernels`;
+- [`ExactToolkit.FastRound`](../lean/contract/ExactToolkit/FastRound.lean): bit-level binary32 rounding
+  (`roundW`, proved equal to FloatLib's `roundDyadic`) and the enclosure bridge `bracket_spec`;
+- [`ExactToolkit.Pinned`](../lean/contract/ExactToolkit/Pinned.lean): the pinned season-1 kernels
+  (`Pinned.kernels`, proved equal to the specs).
+
+An entry competes on the `attn` and `rnn` families. It builds its `kernels` as
+`{ Pinned.kernels with attn := …, rnn := … }` and proves the obligation from `Pinned.correct` and its
+own equalities. The [checked interface](../lean/contract/ContractExactChecked.lean)
 adds tensor shape/domain checks. Every submitted implementation must match the raw specification
 universally, including behavior outside the checked interface's accepted domain.
 
@@ -27,12 +36,19 @@ before that rounding. ReLU acts on the rounded output: negative non-NaNs, includ
 | `scores` | Attention scores per head: exact dot of a query row and a key row; with `causal`, `−∞` above the diagonal. The `1/√d` scale belongs in the query weights. |
 | `mix` | Per head, exact dot of a row of attention weights and a column of values. |
 | `softmax` | Per row: IEEE maximum, `exp(x − max)`, the exact sum, then FloatLib division of each term by it. A masked (`−∞`) entry gives +0. |
-| `silu` | `x · (1 / (1 + exp(−x)))` in FloatLib's steps; `−x` flips the sign bit. |
+| `silu` | `x · sigmoid(x)`, one rounding after the correctly rounded sigmoid (below). |
+| `lstm`, `gru` | Whole-sequence recurrent layers with exact gate dot products and correctly rounded `sigmoid`/`tanh` (below). |
 
 `exp` is FloatLib's correctly rounded binary32 exponential (`CorrectlyRounded.exp`): the
-nearest-even rounding of `e^x` for every input, proved in FloatLib. The `attn` family's field has
-a default, the specs, so an entry written before it existed still compiles and proves its
-obligation unchanged; its attention kernels are then the (slow) specs.
+nearest-even rounding of `e^x` for every input, proved in FloatLib. `sigmoid` and `tanh` are the
+nearest-even binary32 roundings of `1 / (1 + e^(−x))` and `tanh x` for every finite input
+([`ExactToolkit/Activation.lean`](../lean/contract/ExactToolkit/Activation.lean), proved in
+`ActivationProof.lean`). The contract imports `ActivationProof`, so an entry can use
+`toReal_sigmoidModel` and `toReal_tanhModel`: the spec's result is the rounding of the real
+function. A fast path then only has to land on that rounding. A NaN is quieted with its payload kept; `tanh(±∞) = ±1`,
+`tanh(±0) = ±0`; `sigmoid(+∞) = 1`, `sigmoid(−∞) = +0`, `sigmoid(±0) = 1/2`. The `attn` and `rnn`
+families' fields have defaults, the specs, so an entry that does not name them still compiles and
+proves its obligation; those kernels are then the (slow) specs.
 
 This is not a claim that every operation has only one rounding. Average pooling and normalization
 explicitly have several fixed steps. NaNs, infinities, payload handling and signed zeros follow
@@ -106,6 +122,33 @@ a `rows × cols` rectangle, read row-major. Padding is never a value.
   the padded input (`lo + n + hi` cells per axis); positions past it, from ceil mode, never
   count.
 
+## Recurrent layers
+
+`lstm` and `gru` take `T inW H x wih whh bih bhh`: `T` steps of `inW` inputs, row-major
+(time-major), and hidden size `H`. Weights use PyTorch's `nn.LSTM`/`nn.GRU` layouts: `wih` is
+`G·H × inW`, `whh` is `G·H × H`, `bih` and `bhh` are `G·H`, with the gate blocks in PyTorch's
+order (`G = 4`: `i, f, g, o`; `G = 3`: `r, z, n`). The initial `h` (and LSTM `c`) is `+0`, and
+those zeros are dot terms like any other value. The output is every step's `h`, `T × H`. With
+`R` the nearest-even rounding and `σ`, `tanh` the correctly rounded activations above:
+
+```text
+gate k:  a_k = R(Σ_j wih[k, j]·x_t[j] + Σ_j whh[k, j]·h[j] + bih[k] + bhh[k])   (one exact dot)
+
+LSTM:    i, f, o = σ(a_i), σ(a_f), σ(a_o);   g = tanh(a_g)
+         c' = R(f·c + i·g)                                                       (exact, one rounding)
+         h' = R(o · tanh(c'))
+
+GRU:     r, z = σ(a_r), σ(a_z)
+         hn = R(Σ_j whh[n, j]·h[j] + bhh[n])
+         n  = tanh(R(Σ_j wih[n, j]·x_t[j] + bih[n] + r·hn))                     (one exact dot)
+         h' = R(n − z·n + z·h)                                                    (exact, one rounding)
+```
+
+Dot terms are taken in the order written (inputs, hidden state, then biases), which fixes the
+zero-sign and NaN rules as for every other dot. The GRU is PyTorch's (`linear_before_reset`:
+`r` multiplies the rounded `hn`). `Layer.lastStep T n` keeps the last of `T` rows of `n` words
+(no arithmetic); a recurrent classifier is `lstm`/`gru` layers, `lastStep`, then `linear`.
+
 ## Stable normalization
 
 For finite inputs/gains/biases, positive finite epsilon and valid positive dimensions, statistics
@@ -155,6 +198,8 @@ normalization retains its pinned staged FloatLib fallback; the checked interface
 - Scale/shift: positive channel/spatial sizes and exact array lengths.
 - Residual addition: equal, nonempty activation and residual arrays.
 - Normalization: positive rows/width, exact lengths and the finite/epsilon conditions above.
+- Recurrent: positive `T`, `inW` and `H`; input `T·inW`, `wih` `G·H·inW`, `whh` `G·H·H`, both
+  biases `G·H`. `lastStep`: positive `T` and `n` and an input of `T·n`.
 
 `Layer.checked` checks the input before a layer; `runModelChecked` checks the initial length
 and every intermediate layer. Invalid inputs return `Except.error`. These checks establish a

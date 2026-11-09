@@ -15,7 +15,7 @@ timing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(timing)
 
 
-def collection(tmp_path, ratio):
+def collection(tmp_path, ratio, models=("mlp", "cnn", "mnet", "nmlp", "mixer", "tfm")):
     raw = tmp_path / "raw"
     raw.mkdir()
     manifest = {
@@ -39,7 +39,7 @@ def collection(tmp_path, ratio):
     (raw / "sessions.json").write_text(json.dumps([session]))
     cells = [
         f"{model}:b{batch}:{kind}"
-        for model in ("mlp", "cnn", "mnet", "nmlp", "mixer", "tfm")
+        for model in models
         for batch in (1, 8)
         for kind in ("normal", "wide", "sparse")
     ]
@@ -96,3 +96,11 @@ def test_bad_pairs_are_refused(tmp_path, damage):
     path.write_text("".join(json.dumps(e) + "\n" for e in events))
     with pytest.raises(RuntimeError):
         timing.analyse(tmp_path)
+
+
+def test_suite_with_the_recurrent_family_is_analysed(tmp_path):
+    collection(tmp_path, 0.9, models=("mlp", "cnn", "mnet", "nmlp", "mixer", "tfm", "rnn"))
+    _, _, sessions, cells, _ = timing.analyse(tmp_path)
+    assert sessions[0]["score"] == pytest.approx(0.9)
+    assert len(cells) == 5 * 42
+    assert any(row["cell"].startswith("rnn:") for row in cells)

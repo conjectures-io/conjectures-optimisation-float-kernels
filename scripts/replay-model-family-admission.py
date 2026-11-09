@@ -20,7 +20,24 @@ from statistics import median
 from model_family_policy import POLICY, confirm, revise
 
 ROOT = Path(__file__).resolve().parents[1]
-BOARDS = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
+BOARDS = (
+    "overall",
+    "mlp",
+    "resnet",
+    "mobilenet",
+    "normalized_mlp",
+    "mixer",
+    "transformer",
+    "recurrent",
+)
+
+
+def present_boards(rows):
+    """The boards an archive actually recorded, in canonical order."""
+    recorded = {row["board"] for row in rows}
+    return [board for board in BOARDS if board in recorded]
+
+
 RULES = ("original", "confident-gain", "family-guard")
 
 
@@ -66,7 +83,10 @@ def replay(directory):
     rows = []
     for path in sorted((directory / "raw/sessions").glob("*/result.json")):
         session = json.loads(path.read_text())
-        for board in BOARDS:
+        # Archives predate later families; replay only the families a session measured.
+        recorded = session["rounds"][0]["cells"]
+        families = [m for m in BOARDS[1:] if any(c.startswith(m + ":") for c in recorded)]
+        for board in ("overall", *families):
             cells = [
                 c
                 for c in session["rounds"][0]["cells"]
@@ -83,10 +103,10 @@ def replay(directory):
                 benchmark_identity=manifest["benchmark"],
             )
             # Reconstruct exactly the ordering used in the original collector's projection.
-            batches = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in BOARDS[1:]}
+            batches = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in families}
             cells = [
                 f"{m}:b{b}:{kind}"
-                for m in BOARDS[1:]
+                for m in families
                 for b in batches[m]
                 for kind in ("normal", "wide", "sparse")
                 if board == "overall" or m == board
@@ -227,7 +247,8 @@ def screening_plots(output, rows, groups, names):
     seeds = sorted({r["seed"] for r in selected_rows})
     colours = dict(zip(seeds, plt.get_cmap("tab10").colors, strict=False))
     limits = {}
-    for board in BOARDS:
+    boards = present_boards(selected_rows)
+    for board in boards:
         scores = [r["score"] for r in selected_rows if r["board"] == board]
         scores += [
             r["ratio_upper_bound"]
@@ -236,8 +257,11 @@ def screening_plots(output, rows, groups, names):
         ]
         limits[board] = (min(min(scores), 0.97) / 1.03, max(max(scores), 1) * 1.03)
     for rule in ("original", "family-guard"):
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10), squeeze=False)
-        for ax, board in zip(axes.flat, BOARDS, strict=True):
+        grid_rows = math.ceil(len(boards) / 3)
+        fig, axes = plt.subplots(grid_rows, 3, figsize=(18, 5 * grid_rows), squeeze=False)
+        for ax in axes.flat[len(boards) :]:
+            ax.set_visible(False)
+        for ax, board in zip(axes.flat, boards, strict=False):
             for i, group in enumerate(groups):
                 matches = sorted(
                     [
@@ -399,10 +423,11 @@ def report(output, manifests, rows, confirmed):
         if manifests[r["dataset"]]["stage"] == "short" and len(manifests[r["dataset"]]["pairs"]) > 1
     ]
     groups = sorted({(r["candidate"], r["reference"]) for r in main})
+    boards = present_boards(main)
     values = []
     for group in groups:
         group_values = []
-        for board in BOARDS:
+        for board in boards:
             selected = [
                 r for r in main if (r["candidate"], r["reference"]) == group and r["board"] == board
             ]
@@ -435,7 +460,7 @@ def report(output, manifests, rows, confirmed):
             ),
         )
         for i, group in enumerate(groups):
-            for j, board in enumerate(BOARDS):
+            for j, board in enumerate(boards):
                 selected = [
                     r
                     for r in main
@@ -451,7 +476,7 @@ def report(output, manifests, rows, confirmed):
                     fontsize=9,
                     bbox=dict(facecolor="white", alpha=0.8, edgecolor="none"),
                 )
-        ax.set_xticks(range(6), BOARDS, rotation=20)
+        ax.set_xticks(range(len(boards)), boards, rotation=20)
         ax.set_yticks(range(len(groups)), [f"{a} / {b}" for a, b in groups])
         ax.set_title(
             "Saved time ratios; revised policy + preassigned confirmation\nOne "

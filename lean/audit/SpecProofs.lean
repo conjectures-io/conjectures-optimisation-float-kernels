@@ -1,4 +1,6 @@
 import ExactSuiteProofs
+import ExactToolkit.ActivationProof
+import ExactToolkit.RecurrentProofs
 
 /-! Additional operator-side mathematical facts, checked separately from miner proofs. -/
 
@@ -31,6 +33,9 @@ end ExactRuntime.Audit
 #print axioms ExactRuntime.sqrtLower_bounds
 #print axioms ExactRuntime.guarded_eq
 #print axioms ExactRuntime.checked_layer_eq
+#print axioms ExactRuntime.convTransposeSpec_size
+#print axioms ExactRuntime.avgpoolSpec_size
+#print axioms ExactRuntime.maxpoolSpec_size
 #print axioms ExactRuntime.Audit.rowVariance_nonneg
 #print axioms ExactRuntime.Audit.checked_model_eq
 #print axioms ExactRuntime.sqrtAccuracy_correct
@@ -38,8 +43,19 @@ end ExactRuntime.Audit
 #print axioms ExactRuntime.TensorMath.linear_entry
 #print axioms ExactRuntime.TensorMath.gemm_entry
 #print axioms ExactRuntime.TensorMath.window_coordinates
+#print axioms ExactRuntime.TensorMath.pool_coordinates
+#print axioms ExactRuntime.TensorMath.pool_window_inside
+#print axioms ExactRuntime.TensorMath.pool_input_bound
 #print axioms ExactRuntime.TensorMath.conv2d_entry
+#print axioms ExactRuntime.TensorMath.depthwise_taps
 #print axioms ExactRuntime.TensorMath.depthwise_entry
+#print axioms ExactRuntime.TensorMath.convTranspose_entry
+#print axioms ExactRuntime.TensorMath.tapSource_eq_some_iff
+#print axioms ExactRuntime.TensorMath.tapSource_isSome_iff
+#print axioms ExactRuntime.TensorMath.sum_tapSource
+#print axioms ExactRuntime.TensorMath.sum_filter_range
+#print axioms ExactRuntime.TensorMath.tap_coordinates
+#print axioms ExactRuntime.TensorMath.convTranspose_total
 #print axioms ExactRuntime.TensorMath.avgpool_entry
 #print axioms ExactRuntime.TensorMath.maxpool_entry
 #print axioms ExactRuntime.TensorMath.addRelu_entry
@@ -78,3 +94,26 @@ end ExactRuntime.Audit
 #print axioms ExactSuite.accepted_cell_output_size
 #print axioms ExactSuite.prepared_sample_size
 #print axioms ExactSuite.accepted_cell_sample_shapes
+#print axioms ExactRuntime.lstmSpec_size
+#print axioms ExactRuntime.gruSpec_size
+#print axioms ExactRuntime.compareTanh_eq_real
+#print axioms ExactRuntime.compareSigmoid_eq_real
+#print axioms ExactRuntime.contains_tanhEnclosure
+#print axioms ExactRuntime.contains_sigmoidEnclosure
+#print axioms ExactRuntime.toReal_tanhModel
+#print axioms ExactRuntime.toReal_sigmoidModel
+#print axioms ExactSuite.rnn_wellShaped
+#print axioms ExactSuite.rnn_outputShape
+#print axioms ExactRuntime.TensorMath.rational_negW
+#print axioms ExactRuntime.TensorMath.recur_fold
+#print axioms ExactRuntime.TensorMath.recurWith_entry
+#print axioms ExactRuntime.TensorMath.lstm_entry
+#print axioms ExactRuntime.TensorMath.gru_entry
+#print axioms ExactRuntime.TensorMath.lstm_cell
+#print axioms ExactRuntime.TensorMath.lstm_hidden
+#print axioms ExactRuntime.TensorMath.gru_hidden
+#print axioms ExactRuntime.TensorMath.gate_total
+#print axioms ExactRuntime.TensorMath.gate_nonzero_math
+#print axioms ExactRuntime.TensorMath.cell_total
+#print axioms ExactRuntime.TensorMath.gru_update_total
+#print axioms ExactRuntime.TensorMath.gru_candidate_total

@@ -22,6 +22,9 @@ from loguru import logger  # noqa: E402
 
 from prototypes.single_seed_scoring import assess, measurement_hash  # noqa: E402
 
+# Full-suite cell counts: six families before the recurrent family, seven after (× 2 × 3).
+SUITE_CELL_COUNTS = (36, 42)
+
 
 def ci(values, rng):
     """Round-bootstrap CI of the session median, conditional on one fixed input seed."""
@@ -62,7 +65,10 @@ def analyse(directory):
         scores, orders = [], []
         for r, pair in sorted(paired.items()):
             ref, sub = pair["reference"], pair["candidate"]
-            if len(ref["cells"]) != 36 or ref["cells"].keys() != sub["cells"].keys():
+            if (
+                len(ref["cells"]) not in SUITE_CELL_COUNTS
+                or ref["cells"].keys() != sub["cells"].keys()
+            ):
                 raise RuntimeError("missing cells")
             if (
                 ref["reps"] != sub["reps"]
@@ -451,7 +457,7 @@ def plots(directory, sessions, cells, events):
     axes[1].xaxis.set_minor_formatter(NullFormatter())
     axes[0].legend(fontsize=8)
     fig.suptitle(
-        "Regression guard · 15 model × distribution groups per session\n"
+        "Regression guard · model × distribution groups per session\n"
         "Diamonds mark the worst group; dots are groups, not repeated measurements",
         fontsize=13,
     )
@@ -611,7 +617,7 @@ def report(directory, manifest, planned, sessions):
         "",
         "## Method and interpretation",
         "",
-        "- All 30 current cells, with identical inputs and repetition counts within a pair.",
+        "- Every suite cell, with identical inputs and repetition counts within a pair.",
         "- Raw cell observations are the benchmark's best-of-inner durations, not individual "
         "inner timings. Every process's original stdout/stderr is retained unchanged.",
         "- Starting order alternates; repeat sessions reverse their starting parity.",

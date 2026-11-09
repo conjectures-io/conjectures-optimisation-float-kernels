@@ -44,6 +44,11 @@ lean_exe exactDev where
   srcDir := "bench"
   root := `ExactDev
 
+-- Offline: a real fixture's outputs over its whole sample pool, for training-side accuracy checks.
+lean_exe realEval where
+  srcDir := "bench"
+  root := `RealEval
+
 lean_exe validateExact where
   srcDir := "audit"
   root := `ValidateSuite

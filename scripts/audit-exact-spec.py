@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import random
 import shutil
+import struct
 import subprocess
 import time
 from collections import Counter
@@ -196,9 +198,155 @@ def exp32(w):
         precision *= 2
 
 
+HALF = 0x3F000000
+
+
+def nearest_word(approximate, precision):
+    """The binary32 word nearest (ties to even) to a real known only through approximations.
+
+    `approximate(context)` returns `(q, error)`, rationals with the real within `error` of `q`
+    when computed at `context.prec` digits. Precision doubles until both ends of that interval
+    round to the same word; rounding is monotone, so that word is the real's. The callers' reals
+    (sigmoid and tanh of a nonzero binary32) are transcendental, never a rounding boundary, so
+    the loop ends."""
+    while True:
+        with localcontext() as context:
+            context.prec = precision
+            q, error = approximate(context)
+        lo, hi = round32(q - error), round32(q + error)
+        if lo == hi:
+            return lo
+        precision *= 2
+
+
 def sigmoid32(w):
-    """`1 / (1 + exp(-x))`, the spec's steps in its order; `-x` flips the sign bit."""
-    return divide(ONE, add(ONE, exp32(w ^ SIGN)))
+    """Correctly rounded binary32 logistic sigmoid `1 / (1 + e^(-x))`, from Python's correctly
+    rounded decimal `exp`, `+` and `/`.
+
+    Each decimal step has relative error at most half a unit in its last digit, `5·10^-p`; the
+    three together stay well below the `10^(3-p)` relative bound used. There is no cancellation:
+    `1 + e^(-x) > 1`. NaNs are quieted (payload and sign kept), `σ(+∞) = 1`, `σ(-∞) = +0`,
+    `σ(±0) = 1/2` exactly."""
+    if isnan(w):
+        return w | 0x400000
+    if w & ~SIGN == INF:
+        return 0 if w & SIGN else ONE
+    x = value(w)
+    if x == 0:
+        return HALF
+    if x < -104:  # σ(x) < e^x < e^-104 < 2^-150, half the least subnormal.
+        return 0
+    if x > 40:  # 1 - σ(x) < e^-x < 2^-57, far below half an ulp under 1 (2^-25).
+        return ONE
+    negated = Decimal(float(-x))  # binary32 converts exactly; never round the argument.
+
+    def approximate(context):
+        s = Q(context.divide(1, context.add(1, context.exp(negated))))
+        return s, s / 10 ** (context.prec - 3)
+
+    return nearest_word(approximate, 40)
+
+
+def tanh32(w):
+    """Correctly rounded binary32 `tanh`, odd: `tanh(-x) = -tanh(x)` exactly.
+
+    For `a = |x| > 0`, with `m = e^(-2a) - 1` (an `expm1`): `tanh a = -m / (m + 2)`. Computing `m`
+    as `exp(-2a) - 1` loses about `-log10(2a)` digits to cancellation, so precision starts at 40
+    plus those digits, and the error bound is absolute: `m` is within `10^(1-p)` of its true
+    value, `|d tanh/dm| = 2/(m + 2)^2 ≤ 2` on `m ∈ (-1, 0]`, and the last two steps add relative
+    `10^(1-p)` to a result below 1; `10^(3-p)` covers it all. NaNs are quieted, `tanh(±∞) = ±1`,
+    `tanh(±0) = ±0`."""
+    if isnan(w):
+        return w | 0x400000
+    sign = w & SIGN
+    if w & ~SIGN == INF:
+        return sign | ONE
+    if w & ~SIGN == 0:
+        return w
+    a = abs(value(w))
+    if a > 20:  # 1 - tanh(a) < 2e^-40 < 2^-56, far below half an ulp under 1 (2^-25).
+        return sign | ONE
+    exponent = Decimal(float(-2 * a))  # exact: twice a binary32 is a double
+
+    def approximate(context):
+        m = context.subtract(context.exp(exponent), 1)
+        t = context.divide(m.copy_negate(), context.add(m, 2))
+        return Q(t), Q(1, 10 ** (context.prec - 3))
+
+    lost = max(0, -Decimal(float(a)).adjusted())
+    return sign | nearest_word(approximate, 40 + lost)
+
+
+RECURRENT_GATES = {"lstm": 4, "gru": 3}
+
+
+def recurrent(op, dims, x, w, b):
+    """Every step's hidden state of an LSTM (gates i, f, g, o) or a GRU (r, z, n), `T × H`.
+
+    The probe sends `w = wih ++ whh` and `b = bih ++ bhh`, split at `G·H·inW` and `G·H`; out of
+    range reads are +0, as Lean's `a[i]!` (only valid shapes reach the raw probe)."""
+    steps, inner, hidden = dims
+    gates = RECURRENT_GATES[op]
+    wih, whh = w[: gates * hidden * inner], w[gates * hidden * inner :]
+    bih, bhh = b[: gates * hidden], b[gates * hidden :]
+
+    def at(a, i):
+        return a[i] if i < len(a) else 0
+
+    def step_input(t):
+        return [at(x, t * inner + j) for j in range(inner)]
+
+    def gate(h, t, k):
+        # One exact dot of [x_t; h; 1; 1] with [wih[k]; whh[k]; bih[k]; bhh[k]], rounded once.
+        return dot(
+            step_input(t) + list(h) + [ONE, ONE],
+            [at(wih, k * inner + j) for j in range(inner)]
+            + [at(whh, k * hidden + j) for j in range(hidden)]
+            + [at(bih, k), at(bhh, k)],
+        )
+
+    units = range(hidden)
+    h, c, out = [0] * hidden, [0] * hidden, []
+    for t in range(steps):
+        if op == "lstm":
+            pre = [gate(h, t, k) for k in range(4 * hidden)]
+            i_gate = [sigmoid32(pre[u]) for u in units]
+            f_gate = [sigmoid32(pre[hidden + u]) for u in units]
+            g_gate = [tanh32(pre[2 * hidden + u]) for u in units]
+            o_gate = [sigmoid32(pre[3 * hidden + u]) for u in units]
+            # c' = f·c + i·g, one exact two-term dot; h' = o · tanh c', one rounding.
+            c = [dot([f_gate[u], i_gate[u]], [c[u], g_gate[u]]) for u in units]
+            h = [mul(o_gate[u], tanh32(c[u])) for u in units]
+        else:
+            r = [sigmoid32(gate(h, t, u)) for u in units]
+            z = [sigmoid32(gate(h, t, hidden + u)) for u in units]
+            row = [2 * hidden + u for u in units]
+            hn = [
+                dot(
+                    list(h) + [ONE],
+                    [at(whh, row[u] * hidden + j) for j in units] + [at(bhh, row[u])],
+                )
+                for u in units
+            ]
+            n = [
+                tanh32(
+                    dot(
+                        step_input(t) + [ONE, hn[u]],
+                        [at(wih, row[u] * inner + j) for j in range(inner)]
+                        + [at(bih, row[u]), r[u]],
+                    )
+                )
+                for u in units
+            ]
+            # h' = n - z·n + z·h, the exact three-term dot [n, n, h]·[1, -z, z]; -z flips the sign.
+            h = [dot([n[u], n[u], h[u]], [ONE, z[u] ^ SIGN, z[u]]) for u in units]
+        out += h
+    return out
+
+
+def last_step(steps, n, x):
+    """Lean's `x.extract ((T - 1) * n) (T * n)`: natural subtraction, clamped to the array."""
+    return x[max(steps - 1, 0) * n : steps * n]
 
 
 def softmax(rows, n, x):
@@ -469,6 +617,14 @@ def reference(r):
         return [exp32(a) for a in x]
     if op == "silu":
         return [mul(a, sigmoid32(a)) for a in x]
+    if op == "sigmoid":
+        return [sigmoid32(a) for a in x]
+    if op == "tanh":
+        return [tanh32(a) for a in x]
+    if op in RECURRENT_GATES:
+        return recurrent(op, d, x, w, b)
+    if op == "lastStep":
+        return last_step(d[0], d[1], x)
     if op == "softmax":
         return softmax(d[0], d[1], x)
     if op == "scores":
@@ -655,6 +811,19 @@ def valid_layer(r):
         return min(d[:3]) > 0 and (len(x), len(w), len(b)) == (tokens * c, 4 * c * c, 4 * c)
     if op == "silu":
         return bool(x)
+    if op in RECURRENT_GATES:
+        # The probe splits w = wih ++ whh at G·H·inW and b = bih ++ bhh at G·H, so the parts
+        # have their sizes exactly when the totals do.
+        steps, inner, hidden = d
+        gates = RECURRENT_GATES[op]
+        return min(d) > 0 and (len(x), len(w), len(b)) == (
+            steps * inner,
+            gates * hidden * inner + gates * hidden * hidden,
+            2 * gates * hidden,
+        )
+    if op == "lastStep":
+        steps, n = d
+        return min(d) > 0 and len(x) == steps * n
     raise ValueError(op)
 
 
@@ -703,6 +872,58 @@ def random_geometry(rng, op):
                 dims[3], dims[14] = rng.randrange(0, 5), rng.randrange(0, 5)  # Both unused.
         if shape_ok(op, dims):
             return dims
+
+
+def recurrent_sizes(op, steps, inner, hidden):
+    """Lengths of the probe's (x, wih ++ whh, bih ++ bhh) for an LSTM or GRU layer."""
+    gates = RECURRENT_GATES[op]
+    return steps * inner, gates * hidden * (inner + hidden), 2 * gates * hidden
+
+
+def words_around(q, k=2):
+    """The `2k + 1` binary32 words around the rounding of `q` (same sign)."""
+    w = round32(q)
+    return [w + i for i in range(-k, k + 1) if (w + i) & ~SIGN <= MAX and (w + i) & ~SIGN]
+
+
+def hard_activation_words(rng, op, lo, hi, count, pool=3000):
+    """Inputs in [lo, hi] whose result lies closest to a binary32 rounding midpoint.
+
+    Only selects inputs; the float64 estimate (struct rounds a double to binary32, ties to even)
+    is never an expected answer."""
+
+    def f32(f):
+        return struct.unpack("<I", struct.pack("<f", f))[0]
+
+    def f(x):
+        return math.tanh(x) if op == "tanh" else 1 / (1 + math.exp(-x))
+
+    scored = []
+    for _ in range(pool):
+        # Log-uniform magnitudes reach tiny arguments as well as the saturated ends.
+        if rng.random() < 0.5:
+            x = rng.uniform(lo, hi)
+        else:
+            x = math.copysign(
+                2 ** rng.uniform(-30, math.log2(max(abs(lo), abs(hi)))), rng.random() - 0.5
+            )
+            x = min(max(x, lo), hi)
+        w = f32(x)
+        y = f(struct.unpack("<f", struct.pack("<I", w))[0])
+        if y <= 0:
+            continue
+        near = f32(y)
+        below = near if struct.unpack("<f", struct.pack("<I", near))[0] <= y else near - 1
+        a, b = (struct.unpack("<f", struct.pack("<I", v))[0] for v in (below, below + 1))
+        scored.append((abs((y - a) / (b - a) - 0.5), w))
+    return [w for _, w in sorted(scored)[:count]]
+
+
+def recurrent_requests(put, rng, label, steps, inner, hidden, fill, ops=RECURRENT_GATES):
+    """An LSTM and a GRU request of one shape, inputs and parameters drawn by `fill(n)`."""
+    for op in ops:
+        nx, nw, nb = recurrent_sizes(op, steps, inner, hidden)
+        put(op, label, dims=[steps, inner, hidden], x=fill(nx), w=fill(nw), b=fill(nb))
 
 
 def cases(seed, count):
@@ -849,6 +1070,25 @@ def cases(seed, count):
             x=[round32(Q(rng.randrange(-104 * 2**20, 89 * 2**20), 2**20)) for _ in range(200)],
         )
         put("silu", x=[finite() for _ in range(8)] + small(8))
+        for op, lo, hi in [("sigmoid", -110, 45), ("tanh", -22, 22)]:
+            put(op, x=[finite() for _ in range(8)] + small(8))
+            put(op, x=[round32(Q(rng.randrange(lo * 2**20, hi * 2**20), 2**20)) for _ in range(50)])
+        for op in RECURRENT_GATES:
+            steps, inner, hidden = rng.randrange(1, 5), rng.randrange(1, 4), rng.randrange(1, 4)
+            nx, nw, nb = recurrent_sizes(op, steps, inner, hidden)
+            # Moderate weights saturate gates; small ones keep them in the curved region.
+            weights = rng.choice([small, moderate])
+            put(op, dims=[steps, inner, hidden], x=small(nx), w=weights(nw), b=small(nb))
+            put(
+                "checked:" + op,
+                dims=[steps, inner, hidden],
+                x=small(nx),
+                w=small(nw),
+                b=small(nb),
+            )
+        steps, n = rng.randrange(1, 5), rng.randrange(1, 4)
+        put("lastStep", dims=[steps, n], x=[finite() for _ in range(steps * n)])
+        put("checked:lastStep", dims=[steps, n], x=[finite() for _ in range(steps * n)])
         heads, tokens, d = rng.randrange(1, 3), rng.randrange(1, 4), rng.randrange(1, 4)
         c = heads * d
         causal = rng.randrange(2)
@@ -1070,6 +1310,101 @@ def feature_cases(put, rng, words):
         put("maxpool", "maxpool-pair-order", dims=pool_dims(1, 1, 2, 1, 2), x=[first, second])
 
 
+def activation_edges(put, rng, words):
+    """sigmoid and tanh: specials, tiny and subnormal arguments, the saturation and underflow
+    thresholds, and inputs whose results lie nearest a rounding midpoint."""
+    ln2 = Q(6931471805599453, 10**16)  # The thresholds only need to land near the boundary.
+    tiny = [1, 2, 0x7FFFFF, 0x400000, 0x800000, 0x30800000, 0x2F800000, 0x0C000000]
+    tiny += [0x33800000, 0x34000000, 0x34800000, 0x39800000, 0x3A000000, 0x3A800000]
+    tiny += [w + 1 for w in tiny] + [w - 1 for w in tiny if w > 1]
+    tiny += [w | SIGN for w in tiny]
+    put("tanh", "tanh-specials", x=words)
+    put("sigmoid", "sigmoid-specials", x=words)
+    put("tanh", "activation-tiny", x=tiny)
+    put("sigmoid", "activation-tiny", x=tiny)
+    # tanh rounds to 1 above 13·ln 2 ≈ 9.0109 (1 - tanh a ≈ 2e^(-2a) = 2^-25).
+    large = words_around(13 * ln2, 3) + [round32(Q(v)) for v in (9, 9.5, 10, 17, 20, 21, 1e10)]
+    large += [MAX, 0x41A00001, 0x419FFFFF]
+    put("tanh", "tanh-saturation", x=large + [w | SIGN for w in large])
+    # sigmoid: 1 above 25·ln 2 ≈ 17.33; subnormal below -126·ln 2 ≈ -87.34; +0 below
+    # -150·ln 2 ≈ -103.97 (and certainly below -104), the oracle's shortcut boundaries too.
+    edges = words_around(25 * ln2, 3) + words_around(-126 * ln2, 3) + words_around(-150 * ln2, 3)
+    edges += words_around(Q(-104), 2) + words_around(Q(40), 2) + words_around(Q(-149) * ln2, 2)
+    edges += [round32(Q(v)) for v in (-88, -90, -100, -103, -103.5, -110, -1e10, 17, 18, 41)]
+    edges += [MAX, MAX | SIGN]
+    put("sigmoid", "sigmoid-saturation", x=edges)
+    put("silu", "silu-saturation", x=edges + tiny)
+    hard_tanh = hard_activation_words(rng, "tanh", 2.0**-14, 9.2, 60)
+    put("tanh", "tanh-near-midpoint", x=hard_tanh + [w | SIGN for w in hard_tanh])
+    put("sigmoid", "sigmoid-near-midpoint", x=hard_activation_words(rng, "sigmoid", -104, 18, 120))
+
+
+def recurrent_edges(put, rng, words):
+    """LSTM/GRU/lastStep: special words through every gate, saturated gates, signed zero sums,
+    the smallest shapes, and malformed shapes for the checked boundary."""
+    huge = [MAX, MAX | SIGN, 0x7149F2CA, 0xF149F2CA, 0x5F800000, 0xDF800000]  # 3.4e38, 1e30, 2^64
+    zeros = [0, SIGN, 0, SIGN, ONE, ONE | SIGN]  # Many exact zero sums with either sign.
+    subnormal = [1, SIGN | 1, 0x7FFFFF, SIGN | 0x400001, 0, ONE]
+
+    def small(n):
+        return [round32(Q(rng.randrange(-100, 101), 8)) for _ in range(n)]
+
+    pools = [words, huge + [ONE, ONE | SIGN, 0], zeros, subnormal]
+    for _ in range(40):
+        steps, inner, hidden = rng.randrange(1, 5), rng.randrange(1, 4), rng.randrange(1, 4)
+        for pool in pools:
+            recurrent_requests(
+                put,
+                rng,
+                "rnn-specials",
+                steps,
+                inner,
+                hidden,
+                lambda n, p=pool: rng.choices(p, k=n),
+            )
+        # Small inputs with a few huge weights: some gates saturate, others stay curved.
+        for op in RECURRENT_GATES:
+            nx, nw, nb = recurrent_sizes(op, steps, inner, hidden)
+            w = [rng.choice(huge) if rng.random() < 0.2 else v for v in small(nw)]
+            put(
+                op,
+                "rnn-saturated-gates",
+                dims=[steps, inner, hidden],
+                x=small(nx),
+                w=w,
+                b=small(nb),
+            )
+    for fill in [small, lambda n: rng.choices(words, k=n), lambda n: rng.choices(zeros, k=n)]:
+        recurrent_requests(put, rng, "rnn-minimal", 1, 1, 1, fill)
+        recurrent_requests(put, rng, "rnn-minimal", 4, 1, 1, fill)
+    # All-zero parameters: every pre-activation is a zero sum whose sign the terms decide.
+    for x0, w0 in [(0, 0), (SIGN, ONE), (SIGN, ONE | SIGN), (ONE, SIGN), (0, SIGN)]:
+        recurrent_requests(put, rng, "rnn-zero-sums", 2, 2, 2, lambda n, v=w0: [v] * n)
+        for op in RECURRENT_GATES:
+            nx, nw, nb = recurrent_sizes(op, 2, 1, 1)
+            put(op, "rnn-zero-sums", dims=[2, 1, 1], x=[x0] * nx, w=[w0] * nw, b=[SIGN] * nb)
+    # Exact cancellation: x·wih + bih = 0 in every gate (an input of 1, weights ±b).
+    for op in RECURRENT_GATES:
+        nx, nw, nb = recurrent_sizes(op, 3, 1, 2)
+        gates = RECURRENT_GATES[op]
+        bias = small(gates * 2)
+        put(
+            op,
+            "rnn-zero-sums",
+            dims=[3, 1, 2],
+            x=[ONE] * nx,
+            w=[v ^ SIGN for v in bias] + [0] * (nw - len(bias)),
+            b=bias + [0] * len(bias),
+        )
+    # lastStep keeps the last row; the raw spec clamps to the array (Lean's `extract`).
+    seq = [round32(Q(i + 1)) for i in range(7)]
+    for steps, n, x in [(3, 2, seq[:6]), (1, 7, seq), (7, 1, seq), (0, 3, seq[:5])]:
+        put("lastStep", "laststep-clamp", dims=[steps, n], x=x)
+    for steps, n, x in [(3, 2, seq[:5]), (5, 2, seq[:3]), (2, 0, seq), (3, 2, seq), (0, 0, [])]:
+        put("lastStep", "laststep-clamp", dims=[steps, n], x=x)
+    put("lastStep", "laststep-specials", dims=[2, 4], x=[NAN | 7, SIGN, INF, 1] + words[-4:])
+
+
 def edge_cases(seed):
     """Structured adversarial cases, independent of ordinary random small inputs."""
     rng = random.Random(seed)
@@ -1202,6 +1537,8 @@ def edge_cases(seed):
     ]
     put("exp", "exp-boundaries", x=exp_words)
     put("silu", "silu-specials", x=exp_words)
+    activation_edges(put, rng, words + exp_words)
+    recurrent_edges(put, rng, words)
     masked = INF | SIGN
     for row in (
         [masked, ONE, 0],
@@ -1258,6 +1595,17 @@ def edge_cases(seed):
         dict(op="rmsnorm", dims=[2, 3], x=[ONE] * 6, w=[ONE] * 3),
         dict(op="layernorm", dims=[2, 3], x=[ONE] * 6, w=[ONE] * 3, b=[0] * 3),
         dict(op="addRelu", x=[ONE] * 3, w=[ONE] * 3),
+        # Recurrent bases: T = 2, inW = 3, H = 2 (inW ≠ H, so a swapped split is wrong).
+        dict(op="lstm", dims=[2, 3, 2], x=[ONE] * 6, w=[ONE] * 40, b=[0] * 16),
+        dict(op="gru", dims=[2, 3, 2], x=[ONE] * 6, w=[ONE] * 30, b=[0] * 12),
+        dict(op="lstm", dims=[1, 1, 1], x=[ONE], w=[ONE] * 8, b=[0] * 8),
+        dict(op="gru", dims=[1, 1, 1], x=[ONE], w=[ONE] * 6, b=[0] * 6),
+        # Right totals for the other gate count; inW and H swapped.
+        dict(op="lstm", dims=[2, 3, 2], x=[ONE] * 6, w=[ONE] * 30, b=[0] * 12),
+        dict(op="gru", dims=[2, 3, 2], x=[ONE] * 6, w=[ONE] * 40, b=[0] * 16),
+        dict(op="lstm", dims=[3, 2, 3], x=[ONE] * 6, w=[ONE] * 40, b=[0] * 16),
+        dict(op="lastStep", dims=[3, 2], x=[round32(Q(i + 1)) for i in range(6)]),
+        dict(op="lastStep", dims=[1, 1], x=[ONE]),
     ]
     for base in bases:
         mutations = [base]
@@ -1353,8 +1701,10 @@ def main():
     actual = [json.loads(line) for line in run.stdout.splitlines()]
     assert len(actual) == len(requests) + len(diagnostics) + len(suite_requests), len(actual)
     suites = actual[-len(suite_requests) :]
+    # Three weight kinds of each model: at least the 7 (13 boundary) pre-recurrent models, plus
+    # whatever the probe adds (the `rnn` model).
     for suite, count in zip(suites, [21, 39]):
-        assert isinstance(suite, list) and len(suite) == count, suite
+        assert isinstance(suite, list) and len(suite) >= count and len(suite) % 3 == 0, suite
     models = [model for suite in suites for model in suite]
     model_failures = []
     for model in models:
@@ -1391,6 +1741,10 @@ def main():
         by_category=dict(Counter(r.get("label", "ordinary") for r in requests)),
         failures=failures,
         models_checked=len(models),
+        models_by_name=dict(Counter(model["model"] for model in models)),
+        layers_by_operation=dict(
+            Counter(record["request"]["op"] for model in models for record in model["trace"])
+        ),
         model_failures=model_failures,
         diagnostics=[
             dict(request=r, actual=a) for r, a in zip(diagnostics, actual[len(requests) :])
@@ -1405,6 +1759,7 @@ def main():
                 ROOT / "lean/contract/ExactToolkit/SqrtProof.lean",
                 ROOT / "lean/contract/ExactToolkit/TensorProofs.lean",
                 ROOT / "lean/contract/ExactToolkit/ModelProofs.lean",
+                ROOT / "lean/contract/ExactToolkit/Activation.lean",
                 ROOT / "lean/bench/ExactSuite.lean",
                 ROOT / "lean/audit/SpecProbe.lean",
                 Path(__file__).resolve(),

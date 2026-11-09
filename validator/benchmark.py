@@ -35,6 +35,7 @@ LEAN_MODELS = {
     "mobilenet": "mnet",
     "normalized_mlp": "nmlp",
     "transformer": "tfm",
+    "recurrent": "rnn",
 }
 
 

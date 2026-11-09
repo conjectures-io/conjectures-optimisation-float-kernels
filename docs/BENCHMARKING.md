@@ -12,27 +12,33 @@ champion; winning one board does not substitute individual kernels into another 
 | `mobilenet` | Depthwise/pointwise CNN | 1, 4 |
 | `normalized_mlp` | MLP with RMS and layer normalization | 1, 8 |
 | `mixer` | Token/channel mixing block | 1, 4 |
-| `overall` | Weighted combination of the five initially scored families | As above |
+| `recurrent` | LSTM → GRU sequence classifier (real fixtures: LSTM or GRU, one or two layers) | 1, 4 |
+| `overall` | Weighted combination of the six scored families | As above |
 
-The initial scored set is MLP, ResNet, MobileNet, normalized MLP and Mixer. Transformer remains
-available as an optional synthetic-only local research board (`--board transformer`), but the
-default config generator omits it from board rewards. To leave time for the real-model suite, the
-default synthetic plan scores batch 1 only, across normal, wide-exponent and sparse cells: three
-cells per family and 15 for Overall. `--synthetic-full` opts into all supported batch sizes, or
+The scored set targets small devices: MLP, ResNet, MobileNet, normalized MLP, Mixer and
+Recurrent. Transformer remains available as an optional synthetic-only local research board
+(`--board transformer`), but the default config generator omits it from boards and rewards. To
+leave time for the real-model suite, the default synthetic plan scores batch 1 only, across
+normal, wide-exponent and sparse cells: three cells per family and 18 for Overall. `--synthetic-full` opts into all supported batch sizes, or
 repeat `--synthetic-cell` to specify an exact custom cell set. Config validation rejects a board
 whose family has no selected synthetic cell.
 
 A root seed draws **six workloads**: two typical, two scale and two boundary cases, with total
 profile weights **50/30/20%**. Shapes and values vary, including odd boundary sizes. The compact
-default gives 18 workload/cell combinations per family and 90 for Overall, per environment/root
+default gives 18 workload/cell combinations per family and 108 for Overall, per environment/root
 seed; the full batch matrix doubles that synthetic cost. A local full-matrix orchestration pilot
 with three paired rounds and three baseline rounds exhausted its 20-minute benchmark budget before
 finishing, so batch-size expansion is opt-in while mixed real/synthetic timing is calibrated.
 The synthetic suite measures compact generated inference workloads. When enabled, the real suite
 also participates in promotion using the fixed `benchmark.suite_weights` (equal weights by
 default). Its trained image, UCI-HAR sensor and appliance-energy time-series fixtures exercise
-inference for supported MLP, normalized MLP, ResNet, MobileNet and Mixer boards. Both suite scores
+inference for supported MLP, normalized MLP, ResNet, MobileNet and Mixer boards, and trained
+LSTM/GRU sequence models (adapter `recurrent-v1`, `--real-recurrent`) the Recurrent board. Both suite scores
 are reported separately. Transformer remains synthetic until a compatible real fixture exists.
+
+Recurrent inference time is dominated by the correctly rounded `sigmoid` and `tanh` (several per
+hidden unit per step), so recurrent models are small: hidden sizes up to 64 (fixtures) and
+sequences of at most 256 steps (adapter limits), with synthetic cells sized well below that.
 
 A kernel affects a score only through the models that call it. No current model uses
 `convTranspose`, a convolution shape other than `ConvShape.simple`, or pooling other than
@@ -157,7 +163,7 @@ crash, a failed native build, or invalid output.
 
 ## Rewards
 
-Each of the six boards has a configurable reward allocation paid entirely to its current eligible
+Each of the seven boards has a configurable reward allocation paid entirely to its current eligible
 champion. The default rank shares are `[1.0, 0.0]`: previous champions retain their history but
 receive no reward. One submission may hold several boards. An unheld board’s allocation goes to
 the treasury. Board reward weights are distinct

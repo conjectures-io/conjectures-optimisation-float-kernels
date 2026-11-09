@@ -87,7 +87,7 @@ def validate_records(records, seeds):
                 raise ValueError(f"Invalid paired activation: {key}")
         if r["final"]:
             finals[key[:3]] += 1
-    if {r["seed"] for r in records} != set(seeds) or len(cells) != len(seeds) * 36:
+    if {r["seed"] for r in records} != set(seeds) or len(cells) != len(seeds) * 42:
         raise ValueError("Missing seed/cell output")
     for seed, cell in cells:
         family, batch, _ = cell.split(":")

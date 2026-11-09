@@ -52,7 +52,8 @@ submission_files or competition-side rate-limit table exists. The central API ow
   records. `promotions.source_environment` freezes verification/specification provenance.
   Audit results do not change eligibility or publication; explicit operator source restrictions do.
 
-Board names are text; standard config generates overall/mlp/resnet/mobilenet/normalized_mlp/mixer/transformer.
+Board names are text; standard config generates overall/mlp/resnet/mobilenet/normalized_mlp/mixer/recurrent,
+and `overall` includes recurrent. A transformer board exists only when a config names it explicitly.
 Published board/rank allocations are configurable. Missing ranks and unregistered recipients route
 to treasury. Supersession preserves history; operator disqualification excludes a rank.
 

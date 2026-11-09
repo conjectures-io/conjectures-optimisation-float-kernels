@@ -55,6 +55,9 @@ def layerDescription : Layer → String × Bool
   | .addSaved relu => ("addSaved", relu)
   | .attention .. => ("attention", false)
   | .silu => ("silu", false)
+  | .lstm .. => ("lstm", false)
+  | .gru .. => ("gru", false)
+  | .lastStep .. => ("lastStep", false)
 
 def checkedStep (layer : Layer) (state : Array Word × Array Word) :
     IO (Array Word × Array Word) := do
