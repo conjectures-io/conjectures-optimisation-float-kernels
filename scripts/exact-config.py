@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
 import platform
 import sys
 from pathlib import Path
@@ -17,12 +19,97 @@ from benchmark import machine_identity  # noqa: E402
 import fingerprint  # noqa: E402
 
 
+def fixture_lines(
+    fixture_id: str, target: Path, samples_per_run: int, assets_dir: Path
+) -> list[str]:
+    manifest_path = target / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"missing sample-addressable fixture {target}")
+    manifest = json.loads(manifest_path.read_text())
+    if manifest["format"] != "sample-addressable-f32-v1" or manifest["workload_id"] != fixture_id:
+        raise ValueError(f"unsupported fixture format: {target}")
+    assets_dir = assets_dir.resolve()
+    asset_paths = {}
+    for name, digest_key in (
+        ("weights_path", "weights_sha256"),
+        ("samples_path", "samples_sha256"),
+    ):
+        relative = Path(manifest[name])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"fixture asset path must stay inside {assets_dir}: {relative}")
+        path = (assets_dir / relative).resolve()
+        path.relative_to(assets_dir)
+        if not path.is_file():
+            raise ValueError(f"missing fixture asset: {path}")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != manifest[digest_key]:
+            raise ValueError(f"fixture asset checksum mismatch: {path}")
+        asset_paths[name] = path
+    weights = asset_paths["weights_path"]
+    samples = asset_paths["samples_path"]
+    return [
+        "",
+        "[[benchmark.real_workloads]]",
+        f"id = {fixture_id!r}",
+        f"family = {manifest['family']!r}",
+        f"model = {manifest['model']!r}",
+        f"dataset = {manifest['dataset']!r}",
+        f"adapter = {manifest['adapter']!r}",
+        f"weights_path = {weights.relative_to(ROOT).as_posix()!r}",
+        f"weights_sha256 = {manifest['weights_sha256']!r}",
+        f"samples_path = {samples.relative_to(ROOT).as_posix()!r}",
+        f"samples_sha256 = {manifest['samples_sha256']!r}",
+        "asset_revision = "
+        + repr(
+            hashlib.sha256(
+                (manifest["weights_sha256"] + manifest["samples_sha256"]).encode()
+            ).hexdigest()
+        ),
+        f"sample_count = {manifest['sample_count']}",
+        f"sample_words = {manifest['sample_words']}",
+        f"samples_per_run = {samples_per_run}",
+    ]
+
+
+def fixtures_for_adapter(assets_dir: Path, adapter: str) -> list[tuple[str, Path]]:
+    fixtures = []
+    seen_ids = set()
+    for manifest_path in sorted((assets_dir / "models").glob("**/manifest.json")):
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("adapter") != adapter:
+            continue
+        fixture_id = manifest.get("workload_id")
+        if not isinstance(fixture_id, str) or fixture_id in seen_ids:
+            raise ValueError(f"missing or duplicate workload_id in {manifest_path}: {fixture_id!r}")
+        seen_ids.add(fixture_id)
+        fixtures.append((fixture_id, manifest_path.parent))
+    return fixtures
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--environment", default="local")
     parser.add_argument(
-        "--quick", action="store_true", help="development only: 5 rounds, 2 ms cells"
+        "--assets-dir",
+        type=Path,
+        default=Path(os.environ.get("TORCHLEAN_BENCHMARK_ASSETS", ROOT / "data/benchmark/assets")),
+        help=(
+            "local fixture bundle (default: data/benchmark/assets; may be overridden by "
+            "TORCHLEAN_BENCHMARK_ASSETS)"
+        ),
+    )
+    parser.add_argument(
+        "--quick", action="store_true", help="development only: one paired and baseline round"
+    )
+    parser.add_argument("--rounds", type=int, default=12, help="paired observations per workload")
+    parser.add_argument(
+        "--inner", type=int, default=1, help="fresh processes per paired observation"
+    )
+    parser.add_argument(
+        "--baseline-rounds", type=int, default=3, help="baseline telemetry observations"
+    )
+    parser.add_argument(
+        "--min-rounds", type=int, help="minimum paired rounds required for admission"
     )
     parser.add_argument(
         "--reference", type=Path, default=ROOT / "kernels/exact/incumbent/Kernel.lean"
@@ -33,13 +120,73 @@ def main():
         help="development deployment only: also evaluate uploads the API tagged dev",
     )
     parser.add_argument(
-        "--board", choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+        "--board",
+        choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer"),
+    )
+    parser.add_argument(
+        "--real-image-zoo",
+        action="store_true",
+        help="include local trained image-zoo fixtures in the scored real suite",
+    )
+    parser.add_argument(
+        "--real-uci-har",
+        action="store_true",
+        help="include local UCI-HAR sensor fixtures in the scored real suite",
+    )
+    parser.add_argument(
+        "--real-appliance-mixer",
+        action="store_true",
+        help="include the local Appliance Energy Mixer fixture in the scored real suite",
+    )
+    parser.add_argument(
+        "--synthetic-full",
+        action="store_true",
+        help="include every supported synthetic batch/kind cell instead of batch-1 defaults",
+    )
+    parser.add_argument(
+        "--synthetic-cell",
+        action="append",
+        help="explicit synthetic cell to score; repeat to build a custom compact suite",
     )
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output already exists; edit it or choose a new path")
     source = args.reference.resolve()
+    assets_dir = args.assets_dir if args.assets_dir.is_absolute() else ROOT / args.assets_dir
+    assets_dir = assets_dir.resolve()
+    try:
+        assets_dir.relative_to(ROOT.resolve())
+    except ValueError:
+        parser.error(
+            "--assets-dir must be inside this repository so workers can sandbox the assets"
+        )
     proof, bench = fingerprint.proof(), fingerprint.benchmark()
+    rounds, inner, baseline_rounds = (
+        (1, 1, 1) if args.quick else (args.rounds, args.inner, args.baseline_rounds)
+    )
+    if min(rounds, inner, baseline_rounds) < 1:
+        parser.error("round and process counts must be positive")
+    min_rounds = args.min_rounds if args.min_rounds is not None else min(5, rounds)
+    if not 1 <= min_rounds <= rounds:
+        parser.error("--min-rounds must be between 1 and --rounds")
+    synthetic_models = (
+        [args.board] if args.board else ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"]
+    )
+    if args.synthetic_cell:
+        synthetic_cells = args.synthetic_cell
+    else:
+        kinds = ("normal", "wide", "sparse")
+        synthetic_cells = [
+            f"{model}:b{batch}:{kind}"
+            for model in synthetic_models
+            for batch in (
+                ((1, 8) if model in ("mlp", "normalized_mlp") else (1, 4))
+                if args.synthetic_full
+                else (1,)
+            )
+            for kind in kinds
+        ]
+
     lines = [
         "# Development configuration; calibrate production settings before enabling payouts.",
         f"proof_identity = {proof!r}",
@@ -52,10 +199,19 @@ def main():
         "verification_seconds = 1800",
         f"dev_intake = {'true' if args.dev_intake else 'false'}",
         "",
+        "[benchmark]",
+        'suites = ["synthetic", "real"]'
+        if args.real_image_zoo or args.real_uci_har or args.real_appliance_mixer
+        else 'suites = ["synthetic"]',
+        f"synthetic_cells = {synthetic_cells!r}",
+        "suite_weights = { synthetic = 0.5, real = 0.5 }"
+        if args.real_image_zoo or args.real_uci_har or args.real_appliance_mixer
+        else "suite_weights = { synthetic = 1.0 }",
+        "",
         "[timing]",
-        f"rounds = {5 if args.quick else 11}",
-        "inner = 3",
-        f"cell_ms = {2 if args.quick else 50}",
+        f"rounds = {rounds}",
+        f"inner = {inner}",
+        f"baseline_rounds = {baseline_rounds}",
         "run_seconds = 300",
         "# Build and measurement limits default by architecture and model count.",
         "",
@@ -64,7 +220,7 @@ def main():
         "guard = 1.10",
         "draws = 2000",
         "quantile = 0.05",
-        "min_rounds = 5",
+        f"min_rounds = {min_rounds}",
         "",
         f"[environments.{args.environment}]",
         "weight = 1.0",
@@ -77,15 +233,19 @@ def main():
         "",
         "[rewards.board_weights]",
     ]
+    # The first scored season uses the five families with real fixtures. Keep Transformer
+    # available through --board for local kernel experiments, but do not silently add a seventh
+    # reward board to the default dev configuration.
     names = ["mlp", "resnet", "mobilenet", "normalized_mlp", "mixer"]
     selected = [args.board] if args.board else ["overall", *names]
     lines += [
-        f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.1}" for name in selected
+        f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.5 / len(names)}"
+        for name in selected
     ]
     for board in selected:
         lines += ["", f"[boards.{board}.models]"]
         lines += [
-            f"{name} = {0.2 if board == 'overall' else 1.0}"
+            f"{name} = {1 / len(names) if board == 'overall' else 1.0}"
             for name in (names if board == "overall" else [board])
         ]
         lines += [
@@ -94,6 +254,24 @@ def main():
             f"path = {str(source)!r}",
             f"sha256 = {hashlib.sha256(source.read_bytes()).hexdigest()!r}",
         ]
+    if args.real_image_zoo:
+        fixtures = fixtures_for_adapter(assets_dir, "image-zoo-v1")
+        if not fixtures:
+            parser.error(f"--real-image-zoo requires fixtures under {assets_dir / 'models'}")
+        for fixture_id, target in fixtures:
+            lines += fixture_lines(fixture_id, target, 1, assets_dir)
+    if args.real_uci_har:
+        fixtures = fixtures_for_adapter(assets_dir, "uci-har-v1")
+        if not fixtures:
+            parser.error(f"--real-uci-har requires fixtures under {assets_dir / 'models'}")
+        for fixture_id, target in fixtures:
+            lines += fixture_lines(fixture_id, target, 1, assets_dir)
+    if args.real_appliance_mixer:
+        fixtures = fixtures_for_adapter(assets_dir, "appliance-mixer-v1")
+        if not fixtures:
+            parser.error(f"--real-appliance-mixer requires fixtures under {assets_dir / 'models'}")
+        for fixture_id, target in fixtures:
+            lines += fixture_lines(fixture_id, target, 1, assets_dir)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines) + "\n")
     print(args.output)

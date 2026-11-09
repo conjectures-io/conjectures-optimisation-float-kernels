@@ -108,10 +108,10 @@ def test_replay_keeps_family_gain_separate_from_other_families(tmp_path):
         row["board"]: row for row in json.loads((tmp_path / "summaries/decisions.json").read_text())
     }
     assert decisions["mobilenet"]["score"] == pytest.approx(0.5)
-    assert decisions["overall"]["score"] == pytest.approx(0.5**0.2)
+    assert decisions["overall"]["score"] == pytest.approx(0.5 ** (1 / len(experiment.MODELS)))
     assert decisions["mobilenet"]["outcome"] == "qualifies"
     assert decisions["overall"]["outcome"] == "qualifies"
-    for board in ("mlp", "resnet", "normalized_mlp", "mixer"):
+    for board in ("mlp", "resnet", "normalized_mlp", "mixer", "transformer"):
         assert decisions[board]["score"] == pytest.approx(1)
         assert decisions[board]["outcome"] == "above-bar"
     assert (tmp_path / "visualizations/family-comparison.svg").exists()

@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import time
 from collections import Counter
+from decimal import Decimal, localcontext
 from fractions import Fraction as Q
 from pathlib import Path
 
@@ -163,6 +164,110 @@ def sqrt32(w):
     if w & SIGN:
         return NAN
     return sqrt_rational(value(w))
+
+
+def exp32(w):
+    """Correctly rounded binary32 exp, from Python's correctly rounded decimal `exp`.
+
+    The decimal result is within half a unit of its last digit, so the true value lies within one
+    unit of it; precision doubles until both ends of that interval round to the same word. The
+    true value is never a rounding boundary (e^x is irrational for rational x != 0).
+    """
+    if isnan(w):
+        return w | 0x400000
+    if w & ~SIGN == INF:
+        return 0 if w & SIGN else INF
+    x = value(w)
+    if x == 0:
+        return ONE
+    if x > 89:  # e^89 is beyond the overflow midpoint
+        return INF
+    if x < -104:  # e^-104 is below half the least subnormal, 2^-150
+        return 0
+    precision = 40
+    while True:
+        with localcontext() as context:
+            context.prec = precision
+            result = context.exp(Decimal(float(x)))  # binary32 converts exactly
+        unit = Q(1, 10 ** (precision - 1 - result.adjusted()))
+        lo, hi = round32(Q(result) - unit), round32(Q(result) + unit)
+        if lo == hi:
+            return lo
+        precision *= 2
+
+
+def sigmoid32(w):
+    """`1 / (1 + exp(-x))`, the spec's steps in its order; `-x` flips the sign bit."""
+    return divide(ONE, add(ONE, exp32(w ^ SIGN)))
+
+
+def softmax(rows, n, x):
+    def at(i):
+        return x[i] if i < len(x) else 0
+
+    out = []
+    for r in range(rows):
+        top = at(r * n)
+        for t in range(n):
+            top = maximum(top, at(r * n + t))
+        e = [exp32(subtract(at(r * n + t), top)) for t in range(n)]
+        total = dot(e, [ONE] * n)
+        out += [divide(v, total) for v in e]
+    return out
+
+
+def scores(heads, tokens, d, causal, q, k):
+    c = heads * d
+
+    def at(a, i):
+        return a[i] if i < len(a) else 0
+
+    out = []
+    for h in range(heads):
+        for i in range(tokens):
+            for j in range(tokens):
+                if causal and j > i:
+                    out.append(INF | SIGN)
+                else:
+                    out.append(
+                        dot(
+                            [at(q, i * c + h * d + t) for t in range(d)],
+                            [at(k, j * c + h * d + t) for t in range(d)],
+                        )
+                    )
+    return out
+
+
+def mix(heads, tokens, d, p, v):
+    c = heads * d
+
+    def at(a, i):
+        return a[i] if i < len(a) else 0
+
+    return [
+        dot(
+            [at(p, (h * tokens + i) * tokens + j) for j in range(tokens)],
+            [at(v, j * c + h * d + t) for j in range(tokens)],
+        )
+        for i in range(tokens)
+        for h in range(heads)
+        for t in range(d)
+    ]
+
+
+def attention(dims, x, w, b):
+    """Projections by `linear`, then scores, softmax, mix and the output projection."""
+    tokens, heads, d, causal = dims
+    c = heads * d
+    ws = [w[i * c * c : (i + 1) * c * c] for i in range(3)] + [w[3 * c * c :]]
+    bs = [b[i * c : (i + 1) * c] for i in range(3)] + [b[3 * c :]]
+
+    def project(inp, i):
+        return reference(dict(op="linear", dims=[tokens, c, c], x=inp, w=ws[i], b=bs[i]))
+
+    q, k, v = (project(x, i) for i in range(3))
+    p = softmax(heads * tokens, tokens, scores(heads, tokens, d, causal == 1, q, k))
+    return project(mix(heads, tokens, d, p, v), 3)
 
 
 def activate(w, relu):
@@ -360,6 +465,18 @@ def reference(r):
         return [dot(x, [ONE] * len(x))]
     if op == "save":
         return x
+    if op == "exp":
+        return [exp32(a) for a in x]
+    if op == "silu":
+        return [mul(a, sigmoid32(a)) for a in x]
+    if op == "softmax":
+        return softmax(d[0], d[1], x)
+    if op == "scores":
+        return scores(d[0], d[1], d[2], d[3] == 1, x, w)
+    if op == "mix":
+        return mix(d[0], d[1], d[2], x, w)
+    if op == "attention":
+        return attention(d, x, w, b)
     if op == "sqrt":
         return [sqrt_rational(Q(d[0], d[1]))]
     if op.startswith("checked:"):
@@ -532,6 +649,12 @@ def valid_layer(r):
             and all(a & ~SIGN < INF for a in x + w + [eps] + (b if op == "layernorm" else []))
             and value(eps) > 0
         )
+    if op == "attention":
+        tokens, heads, d_ = d[:3]
+        c = heads * d_
+        return min(d[:3]) > 0 and (len(x), len(w), len(b)) == (tokens * c, 4 * c * c, 4 * c)
+    if op == "silu":
+        return bool(x)
     raise ValueError(op)
 
 
@@ -720,6 +843,25 @@ def cases(seed, count):
                 b=small(3),
             )
         put("model", x=small(4), w=small(4), b=small(2))
+        put("exp", x=[finite() for _ in range(8)] + small(8))
+        put(
+            "exp",
+            x=[round32(Q(rng.randrange(-104 * 2**20, 89 * 2**20), 2**20)) for _ in range(200)],
+        )
+        put("silu", x=[finite() for _ in range(8)] + small(8))
+        heads, tokens, d = rng.randrange(1, 3), rng.randrange(1, 4), rng.randrange(1, 4)
+        c = heads * d
+        causal = rng.randrange(2)
+        put("scores", dims=[heads, tokens, d, causal], x=small(tokens * c), w=small(tokens * c))
+        put("softmax", dims=[heads * tokens, tokens], x=small(heads * tokens * tokens))
+        put("mix", dims=[heads, tokens, d], x=small(heads * tokens * tokens), w=small(tokens * c))
+        put(
+            "attention",
+            dims=[tokens, heads, d, causal],
+            x=small(tokens * c),
+            w=small(4 * c * c),
+            b=small(4 * c),
+        )
     return out
 
 
@@ -1040,7 +1182,56 @@ def edge_cases(seed):
                 w=[ONE] * 3,
                 b=[0] * 3,
             )
+    # exp: specials, the overflow and underflow boundaries, tiny arguments, and the inputs on
+    # which FloatLib's approximate exp misrounds (correct rounding must hold there too).
+    exp_words = words + [
+        0x42B17217,
+        0x42B17218,
+        0x42B17219,
+        0xC2CE8ED0,
+        0xC2CFF1B5,
+        0xC2D00000,
+        0x33800000,
+        0xB3800000,
+        0x33000000,
+        0x00000001,
+        0xBBF0EDF1,
+        0xC16912CD,
+        0x3EBF4A81,
+        0x429675E7,
+    ]
+    put("exp", "exp-boundaries", x=exp_words)
+    put("silu", "silu-specials", x=exp_words)
+    masked = INF | SIGN
+    for row in (
+        [masked, ONE, 0],
+        [masked, masked, masked],
+        [NAN | 7, ONE, 0],
+        [0x7F800123, ONE, NAN | 9],
+        [INF, ONE, 0],
+        [INF, INF, 0],
+        [MAX, MAX | SIGN, 0],
+        [0, SIGN, 1],
+    ):
+        put("softmax", "softmax-specials", dims=[1, 3], x=row)
+    for _ in range(40):
+        put(
+            "scores",
+            "scores-specials",
+            dims=[1, 2, 2, 1],
+            x=rng.choices(words, k=4),
+            w=rng.choices(words, k=4),
+        )
+        put(
+            "mix",
+            "mix-specials",
+            dims=[1, 2, 2],
+            x=rng.choices(words, k=4),
+            w=rng.choices(words, k=4),
+        )
     bases = [
+        dict(op="attention", dims=[2, 1, 2, 1], x=[ONE] * 4, w=[ONE] * 16, b=[0] * 8),
+        dict(op="silu", x=[ONE] * 3),
         dict(op="linear", dims=[2, 3, 2], x=[ONE] * 6, w=[ONE] * 6, b=[0] * 2),
         dict(op="gemm", dims=[1, 2, 3, 2], x=[ONE] * 6, w=[ONE] * 6),
         dict(
@@ -1162,7 +1353,7 @@ def main():
     actual = [json.loads(line) for line in run.stdout.splitlines()]
     assert len(actual) == len(requests) + len(diagnostics) + len(suite_requests), len(actual)
     suites = actual[-len(suite_requests) :]
-    for suite, count in zip(suites, [18, 33]):
+    for suite, count in zip(suites, [21, 39]):
         assert isinstance(suite, list) and len(suite) == count, suite
     models = [model for suite in suites for model in suite]
     model_failures = []

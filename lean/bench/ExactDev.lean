@@ -8,7 +8,7 @@ Times the entry in `work/Submission.lean` against FloatLib's kernels (the specs)
 `Float32`, and checks every output against the spec.
 
 * `exactDev`: `sum` and `dot` at three sizes and three data types;
-* `exactDev profile <model>`: one sample of a model (`mlp`, `cnn`, `mnet`, `nmlp`, `mixer`),
+* `exactDev profile <model>`: one sample of a model (`mlp`, `cnn`, `mnet`, `nmlp`, `mixer`, `tfm`),
   layer by layer;
 * `exactDev models`: the model suite against the spec kernels (slow: FloatLib's are ~50x slower).
 -/
@@ -67,13 +67,16 @@ def ExactRuntime.Layer.label : Layer → String
   | .gemm m k n _ => s!"gemm {m}×{k}·{k}×{n}"
   | .conv s _ _ _ => s!"conv2d {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
   | .depthwise s _ _ _ => s!"depthwise {s.kh}×{s.kw} {s.cin} on {s.h}×{s.w}"
+  | .convTranspose s _ _ _ => s!"convTranspose {s.kh}×{s.kw} {s.cin}→{s.cout} on {s.h}×{s.w}"
   | .bn _ c hw _ _ => s!"scaleShift {c}×{hw}"
-  | .maxpool c h w k => s!"maxpool {k}×{k} {c}×{h}×{w}"
-  | .avgpool c h w k => s!"avgpool {k}×{k} {c}×{h}×{w}"
+  | .maxpool s => s!"maxpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
+  | .avgpool s => s!"avgpool {s.kh}×{s.kw} {s.c}×{s.h}×{s.w}"
   | .rmsnorm rows n _ _ => s!"rmsnorm {rows}×{n}"
   | .layernorm rows n _ _ _ => s!"layernorm {rows}×{n}"
   | .save => "save"
   | .addSaved _ => "addRelu"
+  | .attention T heads d _ _ _ _ _ _ _ _ _ => s!"attention {T} tokens, {heads}×{d}"
+  | .silu => "silu"
 
 /-- One sample of a model, layer by layer. -/
 def profile (model : String) : IO Unit := do

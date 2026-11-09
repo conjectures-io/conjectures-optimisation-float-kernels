@@ -32,7 +32,7 @@ TIMEOUT = {
 PARTIAL = {
     "build_seconds": 40.0,
     "rounds": [{"reference_first": True, "cells": {}}],
-    "rounds_planned": 11,
+    "rounds_planned": 12,
     "calibration": {"s0|mlp:b1:relu": 90},
 }
 
@@ -63,18 +63,23 @@ def test_a_candidate_timeout_is_timed_out_and_keeps_its_evidence(store, config, 
         ("timed-out", "info", reason)
     }
     for decision, environment, seed in decisions(store).values():
-        assert decision == {
+        expected = {
             "outcome": "timed-out",
             "reason": reason,
             "score": None,
             "timeout": {k: v for k, v in TIMEOUT.items() if k not in ("side", "finished")}
             | {
+                "peak_memory_bytes": None,
+                "bounded_by_overall": None,
+                "phase_budget_seconds": None,
+                "configured_phase_seconds": None,
                 "environment": environment,
                 "seed": seed,
                 "rounds_completed": 1,
-                "rounds_planned": 11,
+                "rounds_planned": 12,
             },
         }
+        assert decision == expected, f"{decision!r} != {expected!r}"
     with db.session_scope(store.sessions) as s:
         errors = [j.error for j in s.scalars(select(m.BenchmarkJob))]
     assert errors == [failure, failure]
@@ -103,6 +108,24 @@ def test_oversized_evidence_is_dropped_not_the_failure(store, config):
     assert (
         errors == [{"kind": "candidate", "reason": "r", "timeout": TIMEOUT, "truncated": True}] * 2
     )
+
+
+def test_baseline_failure_is_accepted_and_requeued_with_evidence(store, config):
+    repo, worker = setup(store, config)
+    accepted(store, config)
+    repo.plan(config)
+    failure = {
+        "kind": "baseline",
+        "reason": "benchmark-timeout: baseline invocation exceeded its 300s time allowance",
+        "timeout": TIMEOUT | {"side": "baseline"},
+        "partial": PARTIAL,
+    }
+    fail_all(worker, failure)
+    with db.session_scope(store.sessions) as s:
+        jobs = list(s.scalars(select(m.BenchmarkJob)))
+    assert len(jobs) == 2
+    assert all(job.state == "queued" for job in jobs)
+    assert all(job.error == failure for job in jobs)
 
 
 def test_the_migration_relabels_timeouts_decided_before_it(store, config, monkeypatch):

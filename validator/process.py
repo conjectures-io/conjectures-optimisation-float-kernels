@@ -57,7 +57,15 @@ def install_signals():
 
 
 def supervised(
-    command, heartbeat, timeout, interval, log_path, env_extra=None, pass_fds=(), cancelled=None
+    command,
+    heartbeat,
+    timeout,
+    interval,
+    log_path,
+    env_extra=None,
+    pass_fds=(),
+    cancelled=None,
+    poll=None,
 ):
     from sandbox import require_backend
 
@@ -74,6 +82,7 @@ def supervised(
         )
         start = time.monotonic()
         next_heartbeat = start
+        next_poll = start
         try:
             while proc.poll() is None:
                 if cancelled is not None and cancelled():
@@ -84,6 +93,10 @@ def supervised(
                     if not heartbeat():
                         raise RuntimeError("lease lost")
                     next_heartbeat = time.monotonic() + interval
+                if poll is not None and time.monotonic() >= next_poll:
+                    if poll() is False:
+                        raise RuntimeError("lease lost while persisting progress")
+                    next_poll = time.monotonic() + 0.5
                 time.sleep(min(interval, 0.5))
             return proc.returncode
         finally:

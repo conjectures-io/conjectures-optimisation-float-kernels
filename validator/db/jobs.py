@@ -6,6 +6,7 @@ import json
 import uuid
 from types import SimpleNamespace
 
+from comparisons import validate_bundle_result
 from scoring import validate_result
 from sqlalchemy import text
 
@@ -47,8 +48,29 @@ class WorkerDb:
                 {"id": jid, "owner": owner, "token": token},
             )
 
+    def write_progress(self, jid, owner, token, attempt, sequence, payload):
+        with session_scope(self.sessions) as s:
+            return s.scalar(
+                text(
+                    "SELECT public.write_benchmark_progress("
+                    ":id,:owner,:token,:attempt,:sequence,CAST(:payload AS jsonb))"
+                ),
+                {
+                    "id": jid,
+                    "owner": owner,
+                    "token": token,
+                    "attempt": attempt,
+                    "sequence": sequence,
+                    "payload": json.dumps(payload, allow_nan=False),
+                },
+            )
+
     def complete(self, jid, owner, token, result):
-        validate_result(self.requests[jid], result)
+        request = self.requests[jid]
+        if "comparisons" in request:
+            validate_bundle_result(request, result)
+        else:
+            validate_result(request, result)
         with session_scope(self.sessions) as s:
             return s.scalar(
                 text("SELECT public.complete(:id,:owner,:token,CAST(:result AS jsonb))"),
@@ -80,6 +102,23 @@ class WorkerDb:
                 {"id": jid, "owner": owner, "token": token},
             ).one()
             return bytes(row.candidate), bytes(row.reference)
+
+    def sources_bundle(self, jid):
+        with session_scope(self.sessions) as s:
+            owner, token = self.claims[jid]
+            rows = s.execute(
+                text("SELECT * FROM public.bundle_sources(:id,:owner,:token)"),
+                {"id": jid, "owner": owner, "token": token},
+            ).all()
+            if not rows:
+                raise RuntimeError("claimed comparison bundle has no authorized source set")
+            candidate = bytes(rows[0].candidate)
+            references = {}
+            for row in rows:
+                if bytes(row.candidate) != candidate:
+                    raise RuntimeError("bundle source query returned inconsistent candidate data")
+                references[row.reference_hash] = bytes(row.reference)
+            return candidate, references
 
     def access(self):
         with session_scope(self.sessions) as s:

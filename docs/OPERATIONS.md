@@ -58,8 +58,7 @@ It creates a **development policy** measured for the current checkout/host:
 | Setting | Generated default |
 |---|---|
 | Root seeds | One fresh seed per evaluation, six generated workloads per seed |
-| Paired / inner rounds | 11 / 3 |
-| Cell calibration | 50 ms |
+| Paired / fresh-process repetitions | 11 / 3 |
 | Build / measurement budgets | 960 s / 1200 s |
 | Per-binary invocation cap | 300 s |
 | Promotion / guard | 0.97 / 1.10 |

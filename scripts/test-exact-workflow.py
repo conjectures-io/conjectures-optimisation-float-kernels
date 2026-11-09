@@ -2,7 +2,8 @@
 """Rehearse proof -> leased jobs -> board decisions -> rewards, in a scratch DB.
 
 Requires CREATE DATABASE on --admin-url, the Lean build environment and working sandbox limits.
-Does not use the API or submit chain weights. Short timings exercise plumbing, not admission noise.
+Does not use the API or submit chain weights. By default, short timings exercise plumbing, not
+admission noise; pass --config to rehearse a separately generated full benchmark policy.
 """
 
 from __future__ import annotations
@@ -36,12 +37,18 @@ def main():
     parser.add_argument("--admin-url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--config",
+        type=Path,
+        help="use this generated policy instead of making the default one-round synthetic policy",
+    )
+    parser.add_argument(
         "--candidate", type=Path, default=ROOT / "kernels/exact/incumbent/Kernel.lean"
     )
     parser.add_argument("--minutes", type=float, default=15)
     parser.add_argument("--reference", type=Path)
     parser.add_argument(
-        "--board", choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+        "--board",
+        choices=("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer"),
     )
     args = parser.parse_args()
     out = args.output.resolve()
@@ -79,21 +86,24 @@ def main():
         frozen[name] = hashlib.sha256(data).hexdigest()
     (out / "source-manifest.json").write_text(json.dumps(frozen, indent=2))
     config = out / "config.toml"
-    extra = (["--reference", str(args.reference)] if args.reference else []) + (
-        ["--board", args.board] if args.board else []
-    )
-    subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts/exact-config.py"),
-            "--quick",
-            "--output",
-            str(config),
-            *extra,
-        ],
-        env=environment(),
-        check=True,
-    )
+    if args.config:
+        config.write_bytes(args.config.resolve().read_bytes())
+    else:
+        extra = (["--reference", str(args.reference)] if args.reference else []) + (
+            ["--board", args.board] if args.board else []
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/exact-config.py"),
+                "--quick",
+                "--output",
+                str(config),
+                *extra,
+            ],
+            env=environment(),
+            check=True,
+        )
     expected = len(Config.load(config).boards)
     # A declaration, not a comment: intake refuses a copy of a reference up to comments.
     candidate = args.candidate.read_bytes() + b"\ndef localWorkflowSmokeCase : Nat := 0\n"

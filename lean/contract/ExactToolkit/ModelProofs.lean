@@ -19,13 +19,15 @@ def Layer.shapeStep (layer : Layer) (shape : Nat × Nat) : Nat × Nat :=
   | .rmsnorm rows n _ _ | .layernorm rows n _ _ _ => (rows * n, shape.2)
   | .save => (shape.1, shape.1)
   | .addSaved _ => shape
+  | .attention T heads d _ _ _ _ _ _ _ _ _ => (T * (heads * d), shape.2)
+  | .silu => shape
 
 theorem layer_shape (layer : Layer) (state : Array Word × Array Word) :
     arrayShape (layer.apply specKernels state) = layer.shapeStep (arrayShape state) := by
   cases layer <;>
     simp [arrayShape, Layer.apply, Layer.shapeStep, specKernels, specDense, specConv,
-      specElem, specNorm, avgpoolSpec, avgpoolWith, maxpoolSpec, scaleShiftSpec, addReluSpec,
-      depthwiseSpec, depthwiseWith, conv2dWith, convTransposeSpec, convTransposeWith,
+      specElem, specNorm, specAttn, avgpoolSpec, avgpoolWith, maxpoolSpec, scaleShiftSpec,
+      addReluSpec, depthwiseSpec, depthwiseWith, conv2dWith, convTransposeSpec, convTransposeWith,
       ConvShape.depthwise, ConvShape.ho, ConvShape.wo, ConvShape.ekh, ConvShape.ekw]
 
 theorem layers_shape (layers : List Layer) (state : Array Word × Array Word) :
@@ -97,6 +99,11 @@ def Layer.acceptsShape (layer : Layer) (shape : Nat × Nat) : Prop :=
   | .layernorm r n _ g b => r > 0 ∧ n > 0 ∧ shape.1 = r * n ∧ g.size = n ∧ b.size = n
   | .save => True
   | .addSaved _ => shape.1 = shape.2 ∧ shape.1 > 0
+  | .attention T heads d _ wq bq wk bk wv bv wo bo =>
+      T > 0 ∧ heads > 0 ∧ d > 0 ∧ shape.1 = T * (heads * d) ∧
+        [wq, wk, wv, wo].all (·.size == heads * d * (heads * d)) = true ∧
+        [bq, bk, bv, bo].all (·.size == heads * d) = true
+  | .silu => shape.1 > 0
 
 /-- Shape constraints are decidable without running any kernels. -/
 instance (layer : Layer) (shape : Nat × Nat) : Decidable (layer.acceptsShape shape) := by

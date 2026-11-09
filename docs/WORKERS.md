@@ -103,19 +103,21 @@ completed evaluations or promotion-level disqualification history.
 ## Independent build and measurement budgets
 
 Defaults keep proof verification separate (30 minutes), then give native preparation and
-measurement their own clocks:
+measurement separate overall ceilings. Shared preparation and each uncached binary build also
+have independent configurable caps; until representative pilots calibrate them, each phase inherits
+the overall build cap. The overall cap still bounds the sum of build stages:
 
 | Phase | amd64 | ARM64 |
 |---|---:|---:|
-| Cold preparation: shared modules + reference/candidate binaries | 5 min | 16 min |
+| Overall cold build ceiling | 5 min | 16 min |
 | Cached preparation: validate/load both binaries | 2 min | 3 min |
-| Overall measurement, including calibration | 20 min | 20 min |
-| Single-model-family measurement, including calibration | 6 min | 6 min |
+| Overall measurement, including baseline validation | 20 min | 20 min |
+| Single-model-family measurement, including baseline validation | 6 min | 6 min |
 
 The generated config records the environment's `architecture` (`x86_64`/`amd64` or
 `aarch64`/`arm64`). An environment without an architecture uses the conservative ARM64
 build defaults. One-model boards default to six minutes; multi-model boards to twenty.
-Rounds, inner measurements and cell targets remain 11 / 3 / 50 ms.
+Paired rounds and fresh-process repetitions are 12 / 3 by default.
 
 Override only the values that need changing:
 
@@ -123,18 +125,31 @@ Override only the values that need changing:
 [environments.dev-amd64.timing]
 build_seconds = 300
 cached_build_seconds = 120
+shared_build_seconds = 300
+baseline_build_seconds = 300
+reference_build_seconds = 300
+candidate_build_seconds = 300
 
 [boards.mlp.timing]
 benchmark_seconds = 360
 ```
 
 Environment overrides affect only preparation limits; board overrides affect only measurement
-and per-invocation limits. Explicit global `[timing]` values still override the defaults for all
+and per-invocation limits. `build_seconds` is the overall ceiling. The four `*_build_seconds`
+fields cap shared preparation and each role independently; omitted phase caps inherit
+`build_seconds`. Explicit global `[timing]` values still override the defaults for all
 boards/environments, unless a more specific override is supplied. Existing configs with explicit
 960/1200-second limits therefore keep them: regenerate/review the policy to adopt these defaults.
 Resolved per-environment limits are frozen in evaluation strata and measurement requests.
 `run_seconds = 300` caps one invocation, additionally bounded by the measurement time remaining.
-No deadline resets per executable, command or round.
+No build phase can exceed the overall build ceiling, even when its individual cap is larger.
+
+On Linux, `GATE_BUILD_MEMORY_MB` and `GATE_BENCH_MEMORY_MB` request transient systemd-scope
+memory caps. Preflight verifies that the scope exposes an effective cgroup memory limit no higher
+than requested; a successful `systemd-run` exit by itself is not enough. If a host cannot provide
+that controller, preflight fails before candidate work. Setting either value to `0` explicitly
+disables that cap and is only appropriate for local diagnostics; peak-memory telemetry is then
+unavailable.
 
 A binary cache is keyed by source, benchmark identity and measured execution identity, with a
 manifest checking its size, executable permission and SHA-256. Cold preparation publishes these
@@ -142,6 +157,19 @@ artifacts atomically. Later family jobs with both valid binaries skip shared/nat
 The cache is reusable across boards/seeds, not across different hardware identities. Missing or
 corrupt artifacts select cold preparation; loss after selecting a cached job is an infrastructure
 retry, never a miner rejection. Cache eviction or a changed reference can require cold work again.
+
+Benchmark workers append bounded progress events for completed build stages and measured sides to
+`benchmark_job_progress` while they hold the job lease. The worker API is protocol 3; apply the
+matching Alembic migration before deploying this worker version. Progress is diagnostic and does
+not replace the validated final result or affect scoring. An operator can inspect the event stream
+with:
+
+```sql
+SELECT attempt, sequence, created_at, payload
+FROM benchmark_job_progress
+WHERE job_id = :job_id
+ORDER BY attempt, sequence;
+```
 
 The parent freezes the preparation mode for its child while holding the checkout lock and uses
 that mode's build allowance + measurement allowance + 60 seconds for its watchdog. A warm
@@ -153,7 +181,10 @@ preparation failures remain infrastructure errors. Hitting the outer `supervisor
 safety net is an infrastructure error because it cannot reliably identify the responsible side.
 Proof-only verification retains its separately configured `verification_seconds` limit.
 
-Successful results record `preparation.mode` and its budget, plus `stage_seconds` for build, calibration, rounds and total measurement;
+Successful results record `preparation.mode` and its budget, plus `stage_seconds` for total build,
+between-stage build overhead, each role build, baseline process time, rounds and total measurement.
+Scoring verifies that total build time equals the recorded role durations plus that overhead, within
+rounding tolerance. Per-process wall times are also retained;
 `timing_seconds` remains the round timing for existing analysis tools. The benchmark fingerprint
 covers the execution-budget helper. Deploy identical code on coordinator and workers and
 regenerate or review configs using `scripts/exact-config.py`.

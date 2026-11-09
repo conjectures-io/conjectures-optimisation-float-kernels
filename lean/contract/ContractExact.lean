@@ -1,11 +1,13 @@
 import ExactToolkit.Values
 import ExactToolkit.StableNorm
 import ExactToolkit.SqrtProof
+import FloatLib.Floats.Formats.BinaryInterchange.Transcendentals.CorrectlyRounded.Runtime
 
 /-!
 # ContractExact: the exact-runtime slot's pinned specs, models and obligation
 
-Scalar operations use FloatLib definitions; normalization uses exact rational statistics and
+Scalar operations use FloatLib definitions, `exp` included (FloatLib's correctly rounded
+binary32 exponential); normalization uses exact rational statistics and
 a proved square-root rounding bridge. Most kernels are dot products: `dotOf n fa fb` is
 FloatLib's correctly rounded dot product of `[fa 0, …, fa (n-1)]` and `[fb 0, …, fb (n-1)]` (the
 exact sum of the products, rounded once), and a kernel says where its operands come from.
@@ -23,12 +25,16 @@ exact sum of the products, rounded once), and a kernel says where its operands c
 | element | `scaleShift` | FloatLib's `fma` per element (`x·s + t`, one rounding), per channel |
 | norm | `rmsnorm` | exact mean square; round the square-root denominator, then the final scaled quotient |
 | norm | `layernorm` | exact mean, centering and variance; round the denominator, then the final affine expression |
+| attn | `scores` | per head, each output a `dotOf` over a query row and a key row; optional causal mask (−∞ above the diagonal) |
+| attn | `mix` | per head, each output a `dotOf` over a row of weights and a column of values |
+| attn | `softmax` | per row: FloatLib's `maximum`, then `exp (x − max)`, their exact sum, and each `div` by it |
+| attn | `silu` | `x · sigmoid x`, with `sigmoid x = 1 / (1 + exp (−x))`, FloatLib's steps in this order |
 
 Each dot-based spec is written once over a dot product (`linearWith dot …`) and the spec is that
 definition with `dotOf`; an entry may use the same definitions with a faster proved dot product.
 
 An entry provides one `Kernels` record and proves `Obligation`: each kernel equals its spec. Then
-every model runs exactly as the spec models do (`runModel_eq`). Each family also has its own
+every model runs exactly as the spec models do (`runModel_eq`). Each of the six families has its own
 obligation, for family boards.
 -/
 
@@ -395,6 +401,71 @@ def rmsnormSpec := rmsnormWith dotOf
 /-- The `layernorm` spec: stable statistics on its domain, otherwise FloatLib's staged steps. -/
 def layernormSpec := layernormWith dotOf
 
+/-! ## Attention and activations (`T` tokens of `heads · d` channels; head `h` owns channels
+`h·d … h·d + d - 1`) -/
+
+/-- FloatLib's correctly rounded binary32 exponential on a word: the nearest-even rounding of
+`e^x`, proved for every input (`CorrectlyRounded.toReal_exp_eq_roundAt`). -/
+@[inline] def expW (w : Word) : Word :=
+  toWord (Model.Transcendentals.CorrectlyRounded.exp (ofW w))
+
+/-- `-w`: the sign bit flipped (exact, NaNs included). -/
+@[inline] def negW (w : Word) : Word := w ^^^ 0x80000000
+
+/-- Negative infinity, a masked score. -/
+abbrev negInfW : Word := 0xFF800000
+
+/-- `S[h, i, j] = Σ_t Q[i, h·d + t] · K[j, h·d + t]`; with `causal`, `-∞` where `j > i`. The
+`1/√d` scale belongs in the query weights. -/
+@[specialize] def scoresWith (dot : DotFn) (heads T d : Nat) (causal : Bool) (Q K : Array Word) :
+    Array Word :=
+  let c := heads * d
+  Array.ofFn (n := heads * (T * T)) fun q =>
+    let h := q.val / (T * T)
+    let i := q.val / T % T
+    let j := q.val % T
+    if causal && j > i then negInfW
+    else dot d (fun t => Q[i * c + h * d + t]!) (fun t => K[j * c + h * d + t]!)
+
+/-- The `scores` spec: `scoresWith` run with FloatLib's dot product. -/
+def scoresSpec := scoresWith dotOf
+
+/-- `O[i, h·d + t] = Σ_j P[h, i, j] · V[j, h·d + t]`. -/
+@[specialize] def mixWith (dot : DotFn) (heads T d : Nat) (P V : Array Word) : Array Word :=
+  let c := heads * d
+  Array.ofFn (n := T * c) fun q =>
+    let i := q.val / c
+    let h := q.val % c / d
+    let t := q.val % d
+    dot T (fun j => P[(h * T + i) * T + j]!) (fun j => V[j * c + h * d + t]!)
+
+/-- The `mix` spec: `mixWith` run with FloatLib's dot product. -/
+def mixSpec := mixWith dotOf
+
+/-- Row `r`'s maximum, FloatLib's IEEE `maximum` from left to right. -/
+def rowMax (n : Nat) (x : Array Word) (r : Nat) : Word :=
+  toWord <| (List.range n).foldl (fun acc t => Model.maximum acc (ofW x[r * n + t]!))
+    (ofW x[r * n]!)
+
+/-- Each row: `e = exp (x - max)`, then each `e` divided by the row's exact sum of `e`. -/
+@[specialize] def softmaxWith (dot : DotFn) (rows n : Nat) (x : Array Word) : Array Word :=
+  let mx := Array.ofFn (n := rows) fun r => rowMax n x r.val
+  let e := Array.ofFn (n := rows * n) fun q =>
+    expW (toWord (Model.sub (ofW x[q.val]!) (ofW mx[q.val / n]!)))
+  let s := Array.ofFn (n := rows) fun r => dot n (fun t => e[r.val * n + t]!) (fun _ => oneW)
+  Array.ofFn (n := rows * n) fun q => toWord (Model.div (ofW e[q.val]!) (ofW s[q.val / n]!))
+
+/-- The `softmax` spec: `softmaxWith` run with FloatLib's dot product. -/
+def softmaxSpec := softmaxWith dotOf
+
+/-- `1 / (1 + exp (-x))`, FloatLib's steps in this order. -/
+def sigmoidW (w : Word) : Word :=
+  toWord (Model.div (ofW oneW) (Model.add (ofW oneW) (ofW (expW (negW w)))))
+
+/-- SiLU (swish): `x · sigmoid x`, one more rounding. -/
+def siluSpec (x : Array Word) : Array Word :=
+  x.map fun w => toWord (Model.mul (ofW w) (ofW (sigmoidW w)))
+
 /-! ## The kernels, by family -/
 
 /-- The core family: `sum` and `dot`. -/
@@ -425,13 +496,25 @@ structure NormKernels where
   rmsnorm : Nat → Nat → Word → Array Word → Array Word → Array Word
   layernorm : Nat → Nat → Word → Array Word → Array Word → Array Word → Array Word
 
-/-- An entry's 13 kernels, by family. -/
+/-- The attention family: scores, weighted values, softmax and SiLU. -/
+structure AttnKernels where
+  scores : Nat → Nat → Nat → Bool → Array Word → Array Word → Array Word
+  mix : Nat → Nat → Nat → Array Word → Array Word → Array Word
+  softmax : Nat → Nat → Array Word → Array Word
+  silu : Array Word → Array Word
+
+/-- The attention family's specs. -/
+def specAttn : AttnKernels := ⟨scoresSpec, mixSpec, softmaxSpec, siluSpec⟩
+
+/-- An entry's 17 kernels, by family. `attn` defaults to the specs, so an entry that doesn't name
+it still compiles and proves its obligation. -/
 structure Kernels where
   core : CoreKernels
   dense : DenseKernels
   conv : ConvKernels
   elem : ElementKernels
   norm : NormKernels
+  attn : AttnKernels := specAttn
 
 /-- The core family's specs. -/
 def specCore : CoreKernels := ⟨sumSpec, dotSpec⟩
@@ -443,8 +526,8 @@ def specConv : ConvKernels := ⟨conv2dSpec, depthwiseSpec, convTransposeSpec⟩
 def specElem : ElementKernels := ⟨avgpoolSpec, maxpoolSpec, addReluSpec, scaleShiftSpec⟩
 /-- The normalisation family's specs. -/
 def specNorm : NormKernels := ⟨rmsnormSpec, layernormSpec⟩
-/-- All 13 specs: what an entry's kernels must equal. -/
-def specKernels : Kernels := ⟨specCore, specDense, specConv, specElem, specNorm⟩
+/-- All 17 specs: what an entry's kernels must equal. -/
+def specKernels : Kernels := ⟨specCore, specDense, specConv, specElem, specNorm, specAttn⟩
 
 /-- The obligation an entry proves: each of its kernels equals the spec. -/
 def Obligation (K : Kernels) : Prop := K = specKernels
@@ -459,20 +542,24 @@ def ConvObligation (k : ConvKernels) : Prop := k = specConv
 def ElementObligation (k : ElementKernels) : Prop := k = specElem
 /-- The normalisation family equals its specs. -/
 def NormObligation (k : NormKernels) : Prop := k = specNorm
+/-- The attention family equals its specs. -/
+def AttnObligation (k : AttnKernels) : Prop := k = specAttn
 
-/-- Champions of the five families together meet the whole obligation. -/
+/-- Champions of the six families together meet the whole obligation. -/
 theorem obligation_of_families (K : Kernels) (h1 : CoreObligation K.core)
     (h2 : DenseObligation K.dense) (h3 : ConvObligation K.conv) (h4 : ElementObligation K.elem)
-    (h5 : NormObligation K.norm) : Obligation K := by
-  obtain ⟨c, d, v, e, n⟩ := K
+    (h5 : NormObligation K.norm) (h6 : AttnObligation K.attn) : Obligation K := by
+  obtain ⟨c, d, v, e, n, a⟩ := K
   simp only [CoreObligation, DenseObligation, ConvObligation, ElementObligation,
-    NormObligation] at h1 h2 h3 h4 h5
-  subst h1 h2 h3 h4 h5
+    NormObligation, AttnObligation] at h1 h2 h3 h4 h5 h6
+  subst h1 h2 h3 h4 h5 h6
   rfl
 
 /-! ## Models: a list of layers, run on each sample -/
 
-/-- One layer of a model; `save` and `addSaved` make residual connections. -/
+/-- One layer of a model; `save` and `addSaved` make residual connections. `attention` is
+multi-head self-attention on `T` tokens: projections by `linear`, then `scores`, `softmax`, `mix`
+and the output projection. -/
 inductive Layer where
   | linear (rows inW outW : Nat) (relu : Bool) (w b : Array Word)
   | gemm (m k n : Nat) (a : Array Word)       -- left-multiply the activation (`k × n`) by `a`
@@ -486,6 +573,8 @@ inductive Layer where
   | layernorm (rows n : Nat) (eps : Word) (g b : Array Word)
   | save                                      -- remember the activation
   | addSaved (relu : Bool)                    -- add the remembered activation (residual)
+  | attention (T heads d : Nat) (causal : Bool) (wq bq wk bk wv bv wo bo : Array Word)
+  | silu
 
 /-- One layer on `(activation, saved)`. -/
 def Layer.apply (K : Kernels) : Layer → Array Word × Array Word → Array Word × Array Word
@@ -501,6 +590,14 @@ def Layer.apply (K : Kernels) : Layer → Array Word × Array Word → Array Wor
   | .layernorm rows n eps g b, (x, s) => (K.norm.layernorm rows n eps x g b, s)
   | .save, (x, _) => (x, x)
   | .addSaved relu, (x, s) => (K.elem.addRelu relu x s, s)
+  | .attention T heads d causal wq bq wk bk wv bv wo bo, (x, s) =>
+    let c := heads * d
+    let q := K.dense.linear T c c false x wq bq
+    let k := K.dense.linear T c c false x wk bk
+    let v := K.dense.linear T c c false x wv bv
+    let p := K.attn.softmax (heads * T) T (K.attn.scores heads T d causal q k)
+    (K.dense.linear T c c false (K.attn.mix heads T d p v) wo bo, s)
+  | .silu, (x, s) => (K.attn.silu x, s)
 
 /-- Run `layers` on each of `samples` consecutive inputs of `size` words; concatenate outputs. -/
 def runModel (K : Kernels) (layers : List Layer) (samples size : Nat) (x : Array Word) :

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import socket
@@ -54,6 +55,60 @@ def report(job, error, seconds):
     )
 
 
+def progress_poller(repo, job, owner, path):
+    """Forward complete JSONL progress events to the DB without blocking scoring on telemetry."""
+    offset = 0
+    next_retry = 0.0
+
+    def poll():
+        nonlocal offset, next_retry
+        if (
+            not path.is_file()
+            or path.stat().st_size <= offset
+            or not hasattr(repo, "write_progress")
+        ):
+            return True
+        if time.monotonic() < next_retry:
+            return True
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            while line := stream.readline():
+                if not line.endswith(b"\n"):
+                    break
+                try:
+                    record = json.loads(line)
+                    event_sequence = record["sequence"]
+                    event = record["event"]
+                    if type(event_sequence) is not int or not isinstance(event, dict):
+                        raise ValueError("invalid progress record")
+                    encoded = json.dumps(event, allow_nan=False).encode()
+                    if len(encoded) > 1024 * 1024:
+                        event = {
+                            "phase": event.get("phase", "unknown"),
+                            "truncated": True,
+                            "bytes": len(encoded),
+                            "sha256": hashlib.sha256(encoded).hexdigest(),
+                        }
+                    accepted = repo.write_progress(
+                        job.id,
+                        owner,
+                        job.token,
+                        getattr(job, "attempts", 1),
+                        event_sequence,
+                        event,
+                    )
+                except Exception as exc:
+                    logger.warning("benchmark progress write for job {} deferred: {}", job.id, exc)
+                    next_retry = time.monotonic() + 5
+                    return True
+                if not accepted:
+                    return False
+                offset += len(line)
+        return True
+
+    return poll
+
+
 def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
     lease = job.lease_seconds
     started = time.monotonic()
@@ -93,34 +148,52 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
     with tempfile.TemporaryDirectory(prefix="exact-job-") as tmp:
         path = Path(tmp)
         try:
-            candidate, reference = repo.sources(job.id)
+            if "comparisons" in job.request:
+                candidate, references = repo.sources_bundle(job.id)
+            else:
+                candidate, reference = repo.sources(job.id)
+                references = None
             (path / "candidate").write_bytes(candidate)
-            (path / "reference").write_bytes(reference)
             (path / "request.json").write_text(json.dumps(job.request))
             mode = preparation_mode(job.request)
+            progress_path = path / "progress.jsonl"
+            poll_progress = progress_poller(repo, job, owner, progress_path)
+            command = [
+                sys.executable,
+                "-m",
+                "benchmark",
+                "--request",
+                str(path / "request.json"),
+                "--candidate",
+                str(path / "candidate"),
+                "--result",
+                str(path / "result.json"),
+                "--progress",
+                str(progress_path),
+                "--preparation-mode",
+                mode,
+            ]
+            if references is None:
+                (path / "reference").write_bytes(reference)
+                command.extend(("--reference", str(path / "reference")))
+            else:
+                reference_dir = path / "references"
+                reference_dir.mkdir()
+                for source_hash, content in references.items():
+                    (reference_dir / source_hash).write_bytes(content)
+                command.extend(("--references-dir", str(reference_dir)))
             supervised(
-                [
-                    sys.executable,
-                    "-m",
-                    "benchmark",
-                    "--request",
-                    str(path / "request.json"),
-                    "--candidate",
-                    str(path / "candidate"),
-                    "--reference",
-                    str(path / "reference"),
-                    "--result",
-                    str(path / "result.json"),
-                    "--preparation-mode",
-                    mode,
-                ],
+                command,
                 lambda: repo.heartbeat(job.id, owner, job.token),
                 supervisor_seconds(job.request["timing"], mode),
                 lease / 3,
                 path / "process.log",
                 pass_fds=tuple(fd for fd in (host_lock_fd, checkout_lock_fd) if fd is not None),
                 env_extra={"GATE_LOCK_HELD": "1"} if checkout_lock_fd is not None else None,
+                poll=poll_progress,
             )
+            if not poll_progress():
+                raise RuntimeError("lease lost while persisting progress")
             result = json.loads((path / "result.json").read_text())
             if "error" in result:
                 fail(result["error"])
@@ -132,9 +205,13 @@ def execute(repo, job, owner, host_lock_fd=None, checkout_lock_fd=None):
                     events.warning("benchmark_result_discarded", **fields, reason="lease lost")
         except BudgetExceeded as exc:
             logger.warning("benchmark job {} ran out of time: {}", job.id, exc)
+            if "poll_progress" in locals():
+                poll_progress()
             fail({"kind": "infrastructure", "reason": f"supervisor-timeout: {exc}"})
         except Exception as exc:
             logger.warning("exact job {} failed: {}", job.id, exc)
+            if "poll_progress" in locals():
+                poll_progress()
             fail({"kind": "infrastructure", "reason": str(exc)})
 
 

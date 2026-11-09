@@ -33,6 +33,7 @@ LEAN_MODELS = {
     "mobilenet": "mnet",
     "normalized_mlp": "nmlp",
     "mixer": "mixer",
+    "transformer": "tfm",
 }
 SCORING_PATH = ROOT / "validator/scoring.py"
 CONFIG_PATH = ROOT / "validator/config.py"

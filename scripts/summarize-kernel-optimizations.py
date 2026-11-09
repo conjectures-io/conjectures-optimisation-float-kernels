@@ -14,7 +14,7 @@ from statistics import median
 from model_family_policy import confirm, revise
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/kernel-optimization-plots")
-BOARDS = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+BOARDS = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
 
 
 def block_upper(scores, length, draws=2000):

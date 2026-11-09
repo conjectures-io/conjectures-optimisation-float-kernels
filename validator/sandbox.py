@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import os
 import platform
+import queue
 import re
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from duplicates import normalized, without_comments
 from loguru import logger
@@ -165,11 +167,7 @@ def check_limits() -> None:
             continue
         if not shutil.which("systemd-run"):
             raise RuntimeError("systemd-run is required for GATE_*_MEMORY_MB; 0 lifts the caps")
-        probe = subprocess.run(
-            wrap + ["true"], env=sandbox_env(), capture_output=True, text=True, timeout=30
-        )
-        if probe.returncode != 0:
-            raise RuntimeError(f"systemd resource limits are unavailable: {probe.stderr.strip()}")
+        _check_memory_scope(wrap, memory_mb)
     if _FILE_MB > 0 and not shutil.which("prlimit"):
         raise RuntimeError("prlimit (util-linux) is required for GATE_FILE_MB; 0 lifts the cap")
 
@@ -195,6 +193,10 @@ def run(
     env_extra: dict | None = None,
     memory_mb: int = _BUILD_MEMORY_MB,
     layer: Path = LAYER,
+    input_file: Path | None = None,
+    asset_files: dict[str, Path] | None = None,
+    on_output_line=None,
+    resource_usage: dict | None = None,
 ):
     # Runs `cmd` in bwrap with no network, a minimal environment and a `memory_mb` scope. Only the
     # system programs and libraries, the toolchain, the Lean workspace and `pinned` (absent before
@@ -227,6 +229,37 @@ def run(
         wipe(SCRATCH)
         shutil.copytree(CONFIG, SCRATCH, symlinks=True)
         box += ["--bind", str(SCRATCH), str(CONFIG)]
+    if input_file is not None:
+        if input_file.is_symlink() or not input_file.is_file():
+            raise ValueError("benchmark input seed file must be a regular file")
+        if _SANDBOX:
+            box += ["--ro-bind", str(input_file.resolve()), "/benchmark-input-seeds"]
+            env_extra = (env_extra or {}) | {"BENCH_INPUT_SEED_FILE": "/benchmark-input-seeds"}
+        else:
+            env_extra = (env_extra or {}) | {"BENCH_INPUT_SEED_FILE": str(input_file.resolve())}
+    if env_extra and env_extra.get("BENCH_WARMUP_INPUT_SEED_FILE"):
+        warmup_file = Path(env_extra["BENCH_WARMUP_INPUT_SEED_FILE"])
+        if warmup_file.is_symlink() or not warmup_file.is_file():
+            raise ValueError("benchmark warm-up seed file must be a regular file")
+        if _SANDBOX:
+            box += ["--ro-bind", str(warmup_file.resolve()), "/benchmark-warmup-input-seeds"]
+            env_extra = env_extra | {
+                "BENCH_WARMUP_INPUT_SEED_FILE": "/benchmark-warmup-input-seeds"
+            }
+        else:
+            env_extra = env_extra | {"BENCH_WARMUP_INPUT_SEED_FILE": str(warmup_file.resolve())}
+    for asset_id, asset_path in (asset_files or {}).items():
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", asset_id):
+            raise ValueError("invalid benchmark asset id")
+        if asset_path.is_symlink() or not asset_path.is_file():
+            raise ValueError(f"benchmark asset is not a regular file: {asset_id}")
+        if _SANDBOX:
+            target = f"/benchmark-assets/{asset_id}.bin"
+            if not any(
+                box[i : i + 2] == ["--dir", "/benchmark-assets"] for i in range(len(box) - 1)
+            ):
+                box += ["--dir", "/benchmark-assets"]
+            box += ["--ro-bind", str(asset_path.resolve()), target]
     fsize = ["prlimit", f"--fsize={_FILE_MB * 2**20}", "--"] if _FILE_MB > 0 else []
     argv = (
         ["setpriv", "--pdeathsig", "KILL", "--"]
@@ -236,30 +269,233 @@ def run(
         + cmd
     )
     t0 = time.monotonic()
-    with subprocess.Popen(
-        argv,
-        cwd=LIB,
-        env=sandbox_env(env_extra),
+    memory_sampler = (
+        CgroupMemorySampler()
+        if resource_usage is not None and memory_mb > 0 and platform.system() == "Linux"
+        else None
+    )
+
+    def sample_memory(pid):
+        if memory_sampler is not None:
+            memory_sampler.sample(pid)
+
+    def save_resource_usage():
+        if resource_usage is not None:
+            resource_usage["peak_memory_bytes"] = (
+                memory_sampler.peak_bytes if memory_sampler is not None else None
+            )
+
+    try:
+        with subprocess.Popen(
+            argv,
+            cwd=LIB,
+            env=sandbox_env(env_extra),
+            text=True,
+            start_new_session=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        ) as proc:
+            reader = None
+            try:
+                if on_output_line is None:
+                    out, _ = proc.communicate(timeout=timeout)
+                else:
+                    lines = []
+                    received = queue.Queue()
+
+                    def read_lines():
+                        try:
+                            for line in proc.stdout:
+                                received.put((line, time.monotonic_ns()))
+                        finally:
+                            received.put(None)
+
+                    reader = threading.Thread(target=read_lines, daemon=True)
+                    reader.start()
+                    end = time.monotonic() + timeout
+                    eof = False
+                    while not eof or proc.poll() is None:
+                        sample_memory(proc.pid)
+                        left = end - time.monotonic()
+                        if left <= 0:
+                            raise subprocess.TimeoutExpired(argv, timeout)
+                        try:
+                            event = received.get(timeout=min(left, 0.1))
+                        except queue.Empty:
+                            continue
+                        if event is None:
+                            eof = True
+                            continue
+                        line, received_ns = event
+                        lines.append(line)
+                        on_output_line(line.rstrip("\r\n"), received_ns)
+                    proc.wait()
+                    sample_memory(proc.pid)
+                    reader.join(timeout=1)
+                    out = "".join(lines)
+            except subprocess.TimeoutExpired:
+                sample_memory(proc.pid)
+                os.killpg(proc.pid, signal.SIGKILL)
+                if reader is None:
+                    out, _ = proc.communicate()
+                else:
+                    reader.join()
+                    proc.wait()
+                    out = "".join(lines)
+                logger.warning(f"[run] {Path(cmd[0]).name} timed out after {timeout:.0f}s")
+                save_resource_usage()
+                return 124, out
+            except BaseException:
+                os.killpg(proc.pid, signal.SIGKILL)
+                if reader is None:
+                    proc.communicate()
+                else:
+                    reader.join()
+                    proc.wait()
+                raise
+        logger.debug(
+            f"[run] {' '.join(cmd[:3])} exit={proc.returncode} in {time.monotonic() - t0:.1f}s"
+        )
+        save_resource_usage()
+        return proc.returncode, out
+    finally:
+        if _SANDBOX:
+            wipe(SCRATCH)
+
+
+class CgroupMemorySampler:
+    """Read the process scope's cgroup peak; unavailable counters stay explicitly absent."""
+
+    def __init__(self, proc_root: Path = Path("/proc"), cgroup_root: Path = Path("/sys/fs/cgroup")):
+        self.proc_root = proc_root
+        self.cgroup_root = cgroup_root
+        self.counter: Path | None = None
+        self.peak_bytes: int | None = None
+
+    def _process_tree(self, pid: int) -> list[int]:
+        result, pending = [], [pid]
+        while pending:
+            current = pending.pop()
+            if current in result:
+                continue
+            result.append(current)
+            try:
+                children = self.proc_root / str(current) / "task" / str(current) / "children"
+                pending.extend(int(value) for value in children.read_text().split())
+            except (OSError, ValueError):
+                continue
+        return result
+
+    def _scope_directories(self, pid: int) -> list[Path]:
+        candidates = []
+        for process in self._process_tree(pid):
+            try:
+                entries = (self.proc_root / str(process) / "cgroup").read_text().splitlines()
+            except OSError:
+                continue
+            for entry in entries:
+                fields = entry.split(":", 2)
+                if len(fields) != 3:
+                    continue
+                hierarchy, controllers, path = fields
+                if hierarchy == "0" and not controllers:
+                    candidates.append((path, self.cgroup_root))
+                    break
+                if "memory" in controllers.split(","):
+                    candidates.append((path, self.cgroup_root / "memory"))
+                    break
+        # The launcher stays in the worker's service cgroup. Prefer its child scope, which is the
+        # exact boundary carrying MemoryMax and includes the sandboxed descendants.
+        candidates = [
+            item
+            for item in candidates
+            if any(part.endswith(".scope") for part in item[0].split("/"))
+        ]
+        candidates.sort(key=lambda item: len(item[0]), reverse=True)
+        directories = []
+        for relative, root in candidates:
+            parts = PurePosixPath(relative).parts
+            if ".." in parts:
+                continue
+            directory = root.joinpath(*[part for part in parts if part != "/"])
+            if directory not in directories:
+                directories.append(directory)
+        return directories
+
+    def memory_limit_bytes(self, pid: int) -> int | None:
+        """Return the transient scope's effective limit, or None if the controller is absent."""
+        for directory in self._scope_directories(pid):
+            for filename in ("memory.max", "memory.limit_in_bytes"):
+                candidate = directory / filename
+                try:
+                    value = candidate.read_text().strip()
+                except OSError:
+                    continue
+                if value == "max":
+                    return None
+                try:
+                    return int(value)
+                except ValueError:
+                    return None
+        return None
+
+    def _locate_counter(self, pid: int) -> None:
+        for directory in self._scope_directories(pid):
+            for filename in ("memory.peak", "memory.max_usage_in_bytes"):
+                candidate = directory / filename
+                if candidate.is_file():
+                    self.counter = candidate
+                    return
+
+    def sample(self, pid: int) -> None:
+        if self.counter is None:
+            self._locate_counter(pid)
+        if self.counter is None:
+            return
+        try:
+            value = int(self.counter.read_text().strip())
+        except (OSError, ValueError):
+            return
+        if value < 0:
+            return
+        self.peak_bytes = max(self.peak_bytes or 0, value)
+
+
+def _check_memory_scope(wrap: list[str], memory_mb: int) -> None:
+    """Prove systemd's requested cap exists in the scope's cgroup before running workloads."""
+    process = subprocess.Popen(
+        wrap + ["sleep", "0.25"],
+        env=sandbox_env(),
         text=True,
-        start_new_session=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-    ) as proc:
-        try:
-            out, _ = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            out, _ = proc.communicate()
-            logger.warning(f"[run] {Path(cmd[0]).name} timed out after {timeout:.0f}s")
-            return 124, out
-        except BaseException:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            raise
-    logger.debug(
-        f"[run] {' '.join(cmd[:3])} exit={proc.returncode} in {time.monotonic() - t0:.1f}s"
     )
-    return proc.returncode, out
+    sampler = CgroupMemorySampler()
+    observed = None
+    deadline = time.monotonic() + 2
+    try:
+        while process.poll() is None and time.monotonic() < deadline:
+            observed = sampler.memory_limit_bytes(process.pid)
+            if observed is not None:
+                break
+            time.sleep(0.01)
+        output, _ = process.communicate(timeout=2)
+    except BaseException:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=2)
+        raise
+    if process.returncode != 0:
+        raise RuntimeError(f"systemd resource limits are unavailable: {output.strip()}")
+    if observed is None:
+        raise RuntimeError(
+            "systemd accepted MemoryMax but the scope exposes no effective cgroup memory limit; "
+            "enable the memory controller or set the corresponding GATE_*_MEMORY_MB value to 0"
+        )
+    if observed > memory_mb * 2**20:
+        raise RuntimeError(
+            f"systemd memory scope limit is {observed} bytes, above the requested {memory_mb} MiB"
+        )
 
 
 class Budget:

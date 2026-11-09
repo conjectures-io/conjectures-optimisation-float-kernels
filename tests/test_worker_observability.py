@@ -196,7 +196,6 @@ def test_benchmark_events_follow_fenced_writes(monkeypatch, error, saved, event,
             "timing": {
                 "rounds": 1,
                 "inner": 1,
-                "cell_ms": 1,
                 "run_seconds": 1,
                 "build_seconds": 1,
                 "benchmark_seconds": 1,
@@ -229,7 +228,7 @@ def test_benchmark_events_follow_fenced_writes(monkeypatch, error, saved, event,
 def test_a_candidate_timeout_is_reported_as_a_result_not_a_failure(monkeypatch):
     capture = Capture()
     axiom.init("torchlean-benchmark-worker", client=capture)
-    timing = dict(rounds=1, inner=1, cell_ms=1, run_seconds=1, build_seconds=1, benchmark_seconds=1)
+    timing = dict(rounds=1, inner=1, run_seconds=1, build_seconds=1, benchmark_seconds=1)
     job = SimpleNamespace(id=3, token="private-token", lease_seconds=30, request={"timing": timing})
     saved = []
     repo = SimpleNamespace(
@@ -262,6 +261,26 @@ def test_a_candidate_timeout_is_reported_as_a_result_not_a_failure(monkeypatch):
         "invocation",
         "s0|mlp:b1:normal",
     )
+
+
+def test_progress_poller_forwards_only_complete_append_only_events(tmp_path):
+    path = tmp_path / "progress.jsonl"
+    writes = []
+
+    class Repo:
+        def write_progress(self, *args):
+            writes.append(args)
+            return True
+
+    job = SimpleNamespace(id=5, token="token", attempts=2)
+    poll = benchmark_worker.progress_poller(Repo(), job, "host", path)
+    path.write_bytes(b'{"sequence":0,"event":{"phase":"build_stage"}}\n{"sequence":1')
+    assert poll()
+    assert len(writes) == 1 and writes[0][3:] == (2, 0, {"phase": "build_stage"})
+    with path.open("ab") as stream:
+        stream.write(b',"event":{"phase":"side"}}\n')
+    assert poll()
+    assert [entry[4] for entry in writes] == [0, 1]
 
 
 def monitor_renderer():

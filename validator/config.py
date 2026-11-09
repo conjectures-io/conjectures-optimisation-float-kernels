@@ -8,22 +8,38 @@ import json
 import math
 import re
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from multiseed import workloads
+from multiseed import WorkloadRecord, workload_records
 from timing import DEFAULT_TIMING, build_defaults, validate_timing
+from workload import RealWorkloadSpec
 
-MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+MODELS = ("mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
 BATCHES = {m: (1, 8) if m in ("mlp", "normalized_mlp") else (1, 4) for m in MODELS}
 KINDS = ("normal", "wide", "sparse")
-VERSION = "exact-boards-v3-multiseed"
+VERSION = "exact-boards-v12-fresh-process-warmups"
+WARMUP_POLICY = "independent-unscored-input-v1"
+BASELINE_SOURCE = Path(__file__).resolve().parents[1] / "kernels/exact/baseline/Kernel.lean"
+DEFAULT_SYNTHETIC_CELLS = tuple(f"{model}:b1:{kind}" for model in MODELS for kind in KINDS)
+
+
+def baseline_hash() -> str:
+    return hashlib.sha256(BASELINE_SOURCE.read_bytes()).hexdigest()
 
 
 def digest(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
+
+
+def file_digest(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -37,10 +53,29 @@ class MeasurementRequest:
     timing: dict
     benchmark_identity: str
     workloads: list[dict]
+    baseline_hash: str | None = None
+    suites: tuple[str, ...] = ("synthetic",)
+    real_workloads: tuple[dict, ...] = ()
+    real_sample_plan: dict | None = None
+    synthetic_input_plan: dict | None = None
+    real_warmup_plan: dict | None = None
+    synthetic_warmup_plan: dict | None = None
+    warmup_policy: str | None = None
 
     @classmethod
     def parse(cls, request):
-        if set(request) != set(cls.__dataclass_fields__):
+        fields = set(cls.__dataclass_fields__)
+        required = fields - {
+            "baseline_hash",
+            "suites",
+            "real_workloads",
+            "real_sample_plan",
+            "synthetic_input_plan",
+            "real_warmup_plan",
+            "synthetic_warmup_plan",
+            "warmup_policy",
+        }
+        if not required <= set(request) or set(request) - fields:
             raise ValueError("invalid measurement request fields")
         cells = request["cells"]
         if not isinstance(cells, (list, tuple)) or not cells or len(set(cells)) != len(cells):
@@ -50,12 +85,223 @@ class MeasurementRequest:
             raise ValueError("unknown measurement cell")
         for key in ("identity", "candidate_hash", "reference_hash", "benchmark_identity"):
             sha(request[key])
+        if request.get("baseline_hash") is not None:
+            sha(request["baseline_hash"])
+        warmup_policy = request.get("warmup_policy")
+        if warmup_policy not in (None, WARMUP_POLICY):
+            raise ValueError("unknown warm-up policy")
         if type(request["seed"]) is not int or not 0 <= request["seed"] < 2**32:
             raise ValueError("invalid measurement seed")
-        if request["workloads"] != workloads(request["seed"]):
-            raise ValueError("workload plan mismatch")
+        suites = tuple(request.get("suites", ("synthetic",)))
+        if (
+            not suites
+            or "synthetic" not in suites
+            or len(set(suites)) != len(suites)
+            or set(suites) - {"synthetic", "real"}
+        ):
+            raise ValueError("suites must include synthetic and may include real")
+        try:
+            records = tuple(WorkloadRecord.parse(item) for item in request["workloads"])
+            real_records = tuple(
+                RealWorkloadSpec.parse(item) for item in request.get("real_workloads", ())
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid workload plan: {exc}") from exc
+        if ("synthetic" in suites and records != workload_records(request["seed"])) or (
+            "synthetic" not in suites and records
+        ):
+            raise ValueError("synthetic workload plan mismatch")
+        if ("real" in suites and not real_records) or ("real" not in suites and real_records):
+            raise ValueError("real suite selection and workload list disagree")
+        if len({item.id for item in real_records}) != len(real_records):
+            raise ValueError("real workload ids must be unique")
         validate_timing(request["timing"])
-        return cls(**(request | {"cells": tuple(sorted(cells))}))
+        sample_plan = request.get("real_sample_plan")
+        warmup_sample_plan = request.get("real_warmup_plan")
+        if not real_records:
+            if sample_plan not in (None, {}) or warmup_sample_plan not in (None, {}):
+                raise ValueError("real sample or warm-up plan supplied without real workloads")
+            sample_plan = None
+            warmup_sample_plan = None
+        else:
+            if not isinstance(sample_plan, dict) or set(sample_plan) != {
+                item.id for item in real_records
+            }:
+                raise ValueError("real workload plan requires coordinator-selected sample IDs")
+            normalized = {}
+            for item in real_records:
+                selected_rounds = sample_plan[item.id]
+                if (
+                    not isinstance(selected_rounds, list)
+                    or len(selected_rounds) != request["timing"]["rounds"]
+                ):
+                    raise ValueError(f"invalid real sample rounds for {item.id}")
+                normalized[item.id] = []
+                for selected_passes in selected_rounds:
+                    if (
+                        not isinstance(selected_passes, list)
+                        or len(selected_passes) != request["timing"]["inner"]
+                    ):
+                        raise ValueError(f"invalid real sample passes for {item.id}")
+                    pass_records = []
+                    for samples in selected_passes:
+                        if (
+                            not isinstance(samples, list)
+                            or len(samples) != item.samples_per_run
+                            or any(
+                                type(index) is not int or not 0 <= index < item.sample_count
+                                for index in samples
+                            )
+                            or len(set(samples)) != len(samples)
+                        ):
+                            raise ValueError(f"invalid real sample IDs for {item.id}")
+                        pass_records.append(list(samples))
+                    normalized[item.id].append(pass_records)
+            sample_plan = normalized
+            if warmup_policy == WARMUP_POLICY and warmup_sample_plan is None:
+                raise ValueError("coordinator-selected real warm-up plan is required")
+            if warmup_sample_plan is not None:
+                if not isinstance(warmup_sample_plan, dict) or set(warmup_sample_plan) != {
+                    item.id for item in real_records
+                }:
+                    raise ValueError("real workload plan requires coordinator-selected warm-up IDs")
+                normalized_warmups = {}
+                for item in real_records:
+                    if item.sample_count < 2:
+                        raise ValueError(f"real workload {item.id} needs two samples for warm-up")
+                    selected_rounds = warmup_sample_plan[item.id]
+                    scored_rounds = sample_plan[item.id]
+                    if (
+                        not isinstance(selected_rounds, list)
+                        or len(selected_rounds) != request["timing"]["rounds"]
+                    ):
+                        raise ValueError(f"invalid real warm-up rounds for {item.id}")
+                    normalized_warmups[item.id] = []
+                    for round_index, selected_passes in enumerate(selected_rounds):
+                        if (
+                            not isinstance(selected_passes, list)
+                            or len(selected_passes) != request["timing"]["inner"]
+                        ):
+                            raise ValueError(f"invalid real warm-up passes for {item.id}")
+                        pass_records = []
+                        for pass_index, samples in enumerate(selected_passes):
+                            if (
+                                not isinstance(samples, list)
+                                or len(samples) != 1
+                                or type(samples[0]) is not int
+                                or not 0 <= samples[0] < item.sample_count
+                                or samples[0] in scored_rounds[round_index][pass_index]
+                            ):
+                                raise ValueError(f"real warm-up sample must differ for {item.id}")
+                            pass_records.append(list(samples))
+                        normalized_warmups[item.id].append(pass_records)
+                warmup_sample_plan = normalized_warmups
+        input_plan = request.get("synthetic_input_plan")
+        warmup_input_plan = request.get("synthetic_warmup_plan")
+        if not records:
+            if input_plan not in (None, {}) or warmup_input_plan not in (None, {}):
+                raise ValueError("synthetic input or warm-up plan supplied without workloads")
+            input_plan = None
+            warmup_input_plan = None
+        elif "suites" in request and input_plan is None:
+            raise ValueError("coordinator-selected synthetic input plan is required")
+        elif input_plan is not None:
+            expected_keys = {f"{record.id}|{cell}" for record in records for cell in cells}
+            if not isinstance(input_plan, dict) or set(input_plan) != expected_keys:
+                raise ValueError("synthetic input plan must cover every workload and cell")
+            normalized_inputs = {}
+            seen_inputs = set()
+            for key, selected_rounds in input_plan.items():
+                if (
+                    not isinstance(selected_rounds, list)
+                    or len(selected_rounds) != request["timing"]["rounds"]
+                ):
+                    raise ValueError(f"invalid synthetic input rounds for {key}")
+                normalized_inputs[key] = []
+                for selected_passes in selected_rounds:
+                    if (
+                        not isinstance(selected_passes, list)
+                        or len(selected_passes) != request["timing"]["inner"]
+                        or any(
+                            not isinstance(values, list)
+                            or len(values) != 1
+                            or any(
+                                type(value) is not int or not 0 <= value < 2**32 for value in values
+                            )
+                            for values in selected_passes
+                        )
+                    ):
+                        raise ValueError(f"invalid synthetic input seeds for {key}")
+                    flattened = [value for values in selected_passes for value in values]
+                    if seen_inputs.intersection(flattened):
+                        raise ValueError(
+                            "synthetic input seeds must be distinct across observations"
+                        )
+                    seen_inputs.update(flattened)
+                    normalized_inputs[key].append([list(values) for values in selected_passes])
+            input_plan = normalized_inputs
+            if warmup_policy == WARMUP_POLICY and warmup_input_plan is None:
+                raise ValueError("coordinator-selected synthetic warm-up plan is required")
+            if warmup_input_plan is not None:
+                if (
+                    not isinstance(warmup_input_plan, dict)
+                    or set(warmup_input_plan) != expected_keys
+                ):
+                    raise ValueError("synthetic warm-up plan must cover every workload and cell")
+                normalized_warmups = {}
+                scored_seeds = {
+                    value
+                    for rounds in input_plan.values()
+                    for passes in rounds
+                    for group in passes
+                    for value in group
+                }
+                warmup_seeds = set()
+                for key, selected_rounds in warmup_input_plan.items():
+                    if (
+                        not isinstance(selected_rounds, list)
+                        or len(selected_rounds) != request["timing"]["rounds"]
+                    ):
+                        raise ValueError(f"invalid synthetic warm-up rounds for {key}")
+                    normalized_warmups[key] = []
+                    for selected_passes in selected_rounds:
+                        if (
+                            not isinstance(selected_passes, list)
+                            or len(selected_passes) != request["timing"]["inner"]
+                        ):
+                            raise ValueError(f"invalid synthetic warm-up passes for {key}")
+                        pass_records = []
+                        for values in selected_passes:
+                            if (
+                                not isinstance(values, list)
+                                or len(values) != 1
+                                or type(values[0]) is not int
+                                or not 0 <= values[0] < 2**32
+                                or values[0] in scored_seeds
+                                or values[0] in warmup_seeds
+                            ):
+                                raise ValueError(
+                                    f"invalid or repeated synthetic warm-up seed for {key}"
+                                )
+                            warmup_seeds.add(values[0])
+                            pass_records.append(list(values))
+                        normalized_warmups[key].append(pass_records)
+                warmup_input_plan = normalized_warmups
+        return cls(
+            **(
+                request
+                | {
+                    "cells": tuple(sorted(cells)),
+                    "suites": suites,
+                    "real_workloads": tuple(item.json() for item in real_records),
+                    "real_sample_plan": sample_plan,
+                    "synthetic_input_plan": input_plan,
+                    "real_warmup_plan": warmup_sample_plan,
+                    "synthetic_warmup_plan": warmup_input_plan,
+                    "warmup_policy": warmup_policy,
+                }
+            )
+        )
 
     def identity_hash(self):
         return digest(asdict(self))
@@ -100,6 +346,10 @@ class Config:
     seed_mode: str = "fixed"
     # Plan uploads the API tagged `dev` (a development deployment); production plans only subnet.
     dev_intake: bool = False
+    suites: tuple[str, ...] = ("synthetic",)
+    synthetic_cells: tuple[str, ...] = DEFAULT_SYNTHETIC_CELLS
+    real_workloads: tuple[RealWorkloadSpec, ...] = ()
+    suite_weights: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
@@ -129,10 +379,82 @@ class Config:
             "seed_mode",
             "seed_count",
             "dev_intake",
+            "benchmark",
         }
         if set(raw) - allowed:
             raise ValueError(f"unknown configuration keys: {set(raw) - allowed}")
         data = copy.deepcopy(raw)
+        benchmark = data.pop("benchmark", {})
+        if not isinstance(benchmark, dict) or set(benchmark) - {
+            "suites",
+            "synthetic_cells",
+            "real_workloads",
+            "suite_weights",
+        }:
+            raise ValueError(
+                "benchmark accepts suites, synthetic_cells, real_workloads and suite_weights"
+            )
+        suites = tuple(benchmark.get("suites", ("synthetic",)))
+        if (
+            not suites
+            or "synthetic" not in suites
+            or len(set(suites)) != len(suites)
+            or set(suites) - {"synthetic", "real"}
+        ):
+            raise ValueError("benchmark.suites must include synthetic and may include real")
+        all_cells = {
+            f"{model}:b{batch}:{kind}"
+            for model in MODELS
+            for batch in BATCHES[model]
+            for kind in KINDS
+        }
+        synthetic_cells = tuple(benchmark.get("synthetic_cells", DEFAULT_SYNTHETIC_CELLS))
+        if (
+            not synthetic_cells
+            or len(set(synthetic_cells)) != len(synthetic_cells)
+            or set(synthetic_cells) - all_cells
+        ):
+            raise ValueError("benchmark.synthetic_cells must be unique supported cell names")
+        real_workloads = tuple(
+            RealWorkloadSpec.parse(item) for item in benchmark.get("real_workloads", ())
+        )
+        if len({item.id for item in real_workloads}) != len(real_workloads):
+            raise ValueError("real workload ids must be unique")
+        if ("real" in suites and not real_workloads) or ("real" not in suites and real_workloads):
+            raise ValueError("benchmark real suite and real_workloads must be enabled together")
+        configured_suite_weights = benchmark.get("suite_weights")
+        if configured_suite_weights is None:
+            configured_suite_weights = {name: 1 / len(suites) for name in suites}
+        suite_weights = weights(configured_suite_weights, "benchmark suite weights")
+        if set(suite_weights) != set(suites):
+            raise ValueError("benchmark suite weights must exactly match enabled suites")
+        if "real" in suites:
+            for workload in real_workloads:
+                root = Path(__file__).resolve().parents[1]
+                paths = []
+                for relative, expected_hash in (
+                    (workload.weights_path, workload.weights_sha256),
+                    (workload.samples_path, workload.samples_sha256),
+                ):
+                    source = root / relative
+                    asset = source.resolve()
+                    try:
+                        asset.relative_to(root)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"real workload asset escapes repository: {workload.id}"
+                        ) from exc
+                    if (
+                        not asset.is_file()
+                        or source.is_symlink()
+                        or asset.stat().st_size > 512 * 2**20
+                        or file_digest(asset) != expected_hash
+                    ):
+                        raise ValueError(
+                            f"real workload asset missing or hash mismatch: {workload.id}"
+                        )
+                    paths.append(asset)
+                workload.validate_assets(*paths)
         timing_overrides = data.get("timing", {})
         data["timing"] = DEFAULT_TIMING | timing_overrides
         if "cached_build_seconds" not in timing_overrides:
@@ -148,6 +470,10 @@ class Config:
         ):
             raise ValueError("seeds must be unique UInt32 values")
         data["seeds"] = tuple(seeds)
+        data["suites"] = suites
+        data["synthetic_cells"] = tuple(sorted(synthetic_cells))
+        data["real_workloads"] = real_workloads
+        data["suite_weights"] = suite_weights
         if data.get("seed_mode") == "fresh" and seeds:
             raise ValueError("fresh mode uses seed_count, not seeds")
         if type(data.get("seed_count", 1)) is not int or not 1 <= data.get("seed_count", 1) <= 100:
@@ -169,11 +495,25 @@ class Config:
             sha(env["identity"])
             overrides = {
                 k: timing_overrides[k]
-                for k in ("build_seconds", "cached_build_seconds")
+                for k in (
+                    "build_seconds",
+                    "cached_build_seconds",
+                    "shared_build_seconds",
+                    "baseline_build_seconds",
+                    "reference_build_seconds",
+                    "candidate_build_seconds",
+                )
                 if k in timing_overrides
             }
             local = env.get("timing", {})
-            if set(local) - {"build_seconds", "cached_build_seconds"}:
+            if set(local) - {
+                "build_seconds",
+                "cached_build_seconds",
+                "shared_build_seconds",
+                "baseline_build_seconds",
+                "reference_build_seconds",
+                "candidate_build_seconds",
+            }:
                 raise ValueError("environment timing overrides may only change build limits")
             limits = build_defaults(env.get("architecture", "arm64")) | overrides | local
             if "cached_build_seconds" not in overrides and "cached_build_seconds" not in local:
@@ -196,8 +536,17 @@ class Config:
             model_weights = weights(board["models"], "models")
             if set(model_weights) - set(MODELS):
                 raise ValueError("unknown workload model")
+            for model in model_weights:
+                if not any(cell.startswith(f"{model}:") for cell in synthetic_cells):
+                    raise ValueError(
+                        f"benchmark.synthetic_cells has no cell for model family {model}"
+                    )
             local = board.get("timing", {})
-            if set(local) - {"benchmark_seconds", "run_seconds"}:
+            if set(local) - {
+                "benchmark_seconds",
+                "run_seconds",
+                "baseline_rounds",
+            }:
                 raise ValueError("board timing overrides may only change measurement limits")
             board["timing"] = (
                 {
@@ -265,12 +614,12 @@ class Config:
     def plan(self, board: str) -> dict:
         models = weights(self.boards[board]["models"], "models")
         timing = self.timing | self.boards[board]["timing"]
-        cells = {
-            f"{m}:b{b}:{kind}": weight / 6
-            for m, weight in models.items()
-            for b in BATCHES[m]
-            for kind in KINDS
-        }
+        cells = {}
+        for model, weight in models.items():
+            model_cells = [cell for cell in self.synthetic_cells if cell.startswith(f"{model}:")]
+            if not model_cells:
+                raise ValueError(f"synthetic plan has no cells for model family {model}")
+            cells.update(dict.fromkeys(model_cells, weight / len(model_cells)))
         env_weights = self.boards[board].get(
             "environments", {e: env["weight"] for e, env in self.environments.items()}
         )
@@ -286,22 +635,38 @@ class Config:
             if weight > 0
             for seed in (self.seeds if self.seed_mode == "fixed" else range(self.seed_count))
         ]
+        real_workloads = [
+            workload.json() for workload in self.real_workloads if workload.family in models
+        ]
+        suites = [name for name in self.suites if name != "real" or real_workloads]
+        configured_weights = self.suite_weights
+        if set(configured_weights) != set(self.suites):
+            configured_weights = {name: 1 / len(self.suites) for name in self.suites}
+        suite_weights = {name: configured_weights[name] for name in suites}
+        suite_total = sum(suite_weights.values())
+        suite_weights = {name: weight / suite_total for name, weight in suite_weights.items()}
         for st in strata:
             resolved = timing | self.environments[st["environment"]]["timing"]
             if resolved != timing:
                 st["timing"] = resolved
         return {
             "version": VERSION,
-            "workload_policy": "six-workloads-50-30-20-v1",
+            "workload_policy": "six-workloads-50-30-20-compact-cells-v2-coordinator-input-plan",
             "board": board,
             "initial_reference": self.boards[board]["reference"]["sha256"],
+            "baseline_hash": baseline_hash(),
             "seed_mode": self.seed_mode,
             "cells": cells,
+            "synthetic_cells": self.synthetic_cells,
             "strata": strata,
             "timing": timing,
             "admission": self.admission,
             "proof_identity": self.proof_identity,
             "benchmark_identity": self.benchmark_identity,
+            "suites": suites,
+            "suite_weights": suite_weights,
+            "real_workloads": real_workloads,
+            "warmup_policy": WARMUP_POLICY,
         }
 
     def identity(self, board: str) -> str:

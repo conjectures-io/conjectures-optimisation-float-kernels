@@ -115,7 +115,7 @@ def test_source_size_downgrade_refuses_data_loss(store, monkeypatch):
         with pytest.raises(DBAPIError, match="Cannot downgrade: sources larger than 256000"):
             command.downgrade(cfg, "tensor_0003")
         with store.engine.connect() as c:
-            assert c.scalar(text("SELECT version_num FROM alembic_version")) == "tensor_0004"
+            assert c.scalar(text("SELECT version_num FROM alembic_version")) == "tensor_0007"
             assert (
                 c.scalar(text("SELECT content FROM sources WHERE sha256=:h"), {"h": digest})
                 == content

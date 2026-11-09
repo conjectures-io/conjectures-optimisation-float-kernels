@@ -161,7 +161,7 @@ def main():
                 returncode=process.returncode,
             )
             events.write(json.dumps(record) + "\n")
-            if process.returncode != 0 or len(cells) != 30:
+            if process.returncode != 0 or len(cells) != 36:
                 raise RuntimeError(f"bench {prefix} failed: {process.stderr[-600:]}")
             return record
 

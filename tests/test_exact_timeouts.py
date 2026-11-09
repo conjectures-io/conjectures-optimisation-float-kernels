@@ -65,7 +65,6 @@ def test_supervisor_failure_is_infrastructure(monkeypatch, exc, kind):
             "timing": {
                 "rounds": 25,
                 "inner": 3,
-                "cell_ms": 100,
                 "run_seconds": 300,
                 "build_seconds": 480,
                 "benchmark_seconds": 900,

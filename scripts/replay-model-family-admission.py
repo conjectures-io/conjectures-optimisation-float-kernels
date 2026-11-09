@@ -20,7 +20,7 @@ from statistics import median
 from model_family_policy import POLICY, confirm, revise
 
 ROOT = Path(__file__).resolve().parents[1]
-BOARDS = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer")
+BOARDS = ("overall", "mlp", "resnet", "mobilenet", "normalized_mlp", "mixer", "transformer")
 RULES = ("original", "confident-gain", "family-guard")
 
 

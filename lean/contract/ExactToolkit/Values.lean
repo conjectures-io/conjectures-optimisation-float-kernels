@@ -27,7 +27,7 @@ open FloatLib.Floats.Formats.BinaryInterchange FloatLib.Floats
 /-- FloatLib's correctly rounded dot product of the words (0 for unequal lengths). -/
 def dotSpec (a b : Array UInt32) : UInt32 :=
   match Model.dot Fmt (a.map (Model.ofUInt32 (fmt := Fmt))) (b.map (Model.ofUInt32 (fmt := Fmt)))
-      .nearestEven with
+      .nearest with
   | .ok z => toWord z
   | .error _ => 0
 

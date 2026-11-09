@@ -371,7 +371,7 @@ theorem dotSpec_nonzero_math (a b : Array Word) (hs : a.size = b.size)
     have he := (hf j (by omega)).2
     rw [getElem!_pos b j hj'] at he
     simp [R, isFinite_ofUInt32, he]
-  have hex := Model.Reduction.Internal.dotState_exact_toRat (destination := Fmt) L R hLR hLf hRf
+  have hex := Model.Reduction.Internal.dotState_exact_toRat (destination := Fmt) L R hLR
   have hmath : Model.Reduction.Semantics.finiteDotSlice L R 0 L.size (by simp)
       (by simp [hLR]) = exactDot a b := by
     simpa [L, R] using finiteDot_math a b hs hf
@@ -380,8 +380,9 @@ theorem dotSpec_nonzero_math (a b : Array Word) (hs : a.size = b.size)
     simpa using hn
   refine ⟨(Model.Reduction.Internal.dotState L R hLR :
     Model.Reduction.Internal.State Fmt).exact, hex.trans hmath, ?_⟩
-  unfold dotSpec Model.dot
-  rw [Model.Reduction.dotWithStatus_eq_round_of_finite_nonzero Fmt L R .nearestEven
+  unfold dotSpec
+  rw [← Model.Reduction.map_value_dot]
+  rw [Model.Reduction.dot_status_eq_round_of_finite_nonzero Fmt L R .nearest
     hLR hLf hRf hn']
   rfl
 
@@ -407,7 +408,7 @@ theorem dotSpec_zero_math (a b : Array Word) (hs : a.size = b.size)
     rw [getElem!_pos b j hj'] at he
     simp [R, isFinite_ofUInt32, he]
   let state : Model.Reduction.Internal.State Fmt := Model.Reduction.Internal.dotState L R hLR
-  have hex := Model.Reduction.Internal.dotState_exact_toRat (destination := Fmt) L R hLR hLf hRf
+  have hex := Model.Reduction.Internal.dotState_exact_toRat (destination := Fmt) L R hLR
   have hmath : Model.Reduction.Semantics.finiteDotSlice L R 0 L.size (by simp)
       (by simp [hLR]) = exactDot a b := by
     simpa [L, R] using finiteDot_math a b hs hf
@@ -419,12 +420,13 @@ theorem dotSpec_zero_math (a b : Array Word) (hs : a.size = b.size)
   have hflags : state.sawFiniteTerm = decide (a.size ≠ 0) ∧
       state.allTermsNegativeZero = dallNZ a b 0 a.size := by
     simpa [state, Model.Reduction.Internal.dotState, L, R] using flags
-  unfold dotSpec Model.dot
-  rw [Model.Reduction.dotWithStatus_eq_zero_of_finite Fmt L R .nearestEven hLR hLf hRf hzero]
+  unfold dotSpec
+  rw [← Model.Reduction.map_value_dot]
+  rw [Model.Reduction.dot_status_eq_zero_of_finite Fmt L R .nearest hLR hLf hRf hzero]
   simp only [Except.map]
   change toWord (Model.zero Fmt (state.sawFiniteTerm && (state.allTermsNegativeZero ||
     !state.allTermsPositiveZero &&
-      (Model.IEEERoundingMode.nearestEven == Model.IEEERoundingMode.towardNegativeInfinity)))) = _
+      (Model.IEEERoundingMode.nearest == Model.IEEERoundingMode.down)))) = _
   simp [hflags.1, hflags.2]
 
 theorem rational_one : rationalWord oneW = 1 := by

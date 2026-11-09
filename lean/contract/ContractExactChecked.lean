@@ -51,6 +51,12 @@ def PoolShape.Valid (s : PoolShape) : Prop :=
 
 def PoolValid (s : PoolShape) (x : Array Word) : Prop := s.Valid ∧ x.size = s.c * s.h * s.w
 
+/-- `T` tokens of `heads · d` channels, and four `c × c` projections with `c` biases each. -/
+def AttentionValid (T heads d : Nat) (x wq bq wk bk wv bv wo bo : Array Word) : Prop :=
+  T > 0 ∧ heads > 0 ∧ d > 0 ∧ x.size = T * (heads * d) ∧
+    [wq, wk, wv, wo].all (·.size == heads * d * (heads * d)) = true ∧
+    [bq, bk, bv, bo].all (·.size == heads * d) = true
+
 instance (r i o : Nat) (x w b : Array Word) : Decidable (LinearValid r i o x w b) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
 instance (batch m k n : Nat) (a b : Array Word) : Decidable (GemmValid batch m k n a b) :=
@@ -65,6 +71,9 @@ instance (s : ConvTShape) (x w b : Array Word) : Decidable (ConvTValid s x w b) 
 instance (s : PoolShape) : Decidable s.Valid := by unfold PoolShape.Valid; infer_instance
 instance (s : PoolShape) (x : Array Word) : Decidable (PoolValid s x) := by
   unfold PoolValid; infer_instance
+instance (T heads d : Nat) (x wq bq wk bk wv bv wo bo : Array Word) :
+    Decidable (AttentionValid T heads d x wq bq wk bk wv bv wo bo) :=
+  inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
 
 /-- A fast path can assume validity while the exposed function remains universally equal. -/
 def guarded {α β : Type} (valid : α → Prop) [DecidablePred valid]
@@ -92,6 +101,9 @@ def Layer.valid (l : Layer) (state : Array Word × Array Word) : Bool :=
     | .layernorm r n eps g b => stableNormDomain r n eps x g && b.size == n && b.all finiteWord
     | .save => true
     | .addSaved _ => x.size == saved.size && !x.isEmpty
+    | .attention T heads d _ wq bq wk bk wv bv wo bo =>
+      decide (AttentionValid T heads d x wq bq wk bk wv bv wo bo)
+    | .silu => !x.isEmpty
 
 /-- Validate before calling any miner code; the rejected branch does not evaluate it. -/
 def Layer.checked (K : Kernels) (l : Layer) (state : Array Word × Array Word) :
@@ -149,6 +161,18 @@ theorem checked_layer_eq (K : Kernels) (l : Layer) (st out : Array Word × Array
     (layernormSpec r n eps x g b).size = r * n := by
   unfold layernormSpec layernormWith
   split <;> simp [layernormStable, layernormLegacyWith]
+
+@[simp] theorem scoresSpec_size (heads T d : Nat) (causal : Bool) (q k : Array Word) :
+    (scoresSpec heads T d causal q k).size = heads * (T * T) := by simp [scoresSpec, scoresWith]
+
+@[simp] theorem mixSpec_size (heads T d : Nat) (p v : Array Word) :
+    (mixSpec heads T d p v).size = T * (heads * d) := by simp [mixSpec, mixWith]
+
+@[simp] theorem softmaxSpec_size (rows n : Nat) (x : Array Word) :
+    (softmaxSpec rows n x).size = rows * n := by simp [softmaxSpec, softmaxWith]
+
+@[simp] theorem siluSpec_size (x : Array Word) : (siluSpec x).size = x.size := by
+  simp [siluSpec]
 
 theorem rmsnorm_stable_on_domain (r n : Nat) (eps : Word) (x g : Array Word)
     (h : stableNormDomain r n eps x g = true) :

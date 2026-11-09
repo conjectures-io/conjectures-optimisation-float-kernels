@@ -16,3 +16,5 @@ __pycache__/
 .env
 validator/.work/
 lean/autoresearch/
+data/benchmark/assets/
+data/benchmark/runs/

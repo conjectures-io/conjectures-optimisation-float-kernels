@@ -5,11 +5,8 @@ package competition where
   leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩]
 
 require floatlib from git
-  "https://github.com/lean-dojo/FloatLib" @ "0d91825727839f597fd06b22fdd038ea21480f0c"
+  "https://github.com/lean-dojo/FloatLib" @ "3fd7c01a0503c74e4f5cbd8b1415d62be3880379"
 
--- TorchLean, for the link proofs under `stage2/` only; FloatLib's pin above wins over its `@ main`.
-require TorchLean from git
-  "https://github.com/lean-dojo/TorchLean" @ "de3192df4779877ceb65cfe470a4d4ce9d480a5b"
 
 lean_lib Contract where
   srcDir := "contract"
@@ -21,7 +18,7 @@ lean_lib Submission where
 
 lean_lib BenchCore where
   srcDir := "bench"
-  roots := #[`ExactSuite]
+  roots := #[`ExactSuite, `RealSuite]
 
 -- Research-only references for exactShowcase; not imported by VerifyExact or benchExact.
 lean_lib ScalarReference where

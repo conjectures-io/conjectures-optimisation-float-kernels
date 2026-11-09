@@ -1,9 +1,10 @@
 import ExactSuite
+import FloatLib.Floats.Formats.BinaryInterchange.Transcendentals.ExpLog
 
 /-!
 # Audit of an exact-runtime entry (not used by the gate)
 
-Calls each of the 12 kernels of the entry in `work/Submission.lean` and of the specs on the same
+Calls each of the 16 kernels of the entry in `work/Submission.lean` and of the specs on the same
 inputs and compares every output word. The inputs cover the suite's data types and the cases the
 suite never times: subnormals, huge values, huge exponent gaps, NaNs and infinities, zeros, ties,
 exact cancellation, and shapes at the edges (empty, mismatched and short arrays). A proved entry
@@ -34,11 +35,20 @@ batches and rows up to 17), both mixing values near 1 with values near 2^-30, so
 code rounds differently; `normtie` makes the norms' outputs exact ties (normal and subnormal),
 `overtie` makes `sum` and `dot` exact ties at the overflow boundary; `sqrttie` builds
 normalisation rows whose square root is an exact midpoint, `offset` rows with a mean much larger
-than their spread, and `subtie` dot products that tie on the subnormal grid. -/
+than their spread, and `subtie` dot products that tie on the subnormal grid. `exphard` holds the
+inputs on which FloatLib's approximate `exp` misrounds, with random signs, so `exp (-x)` reaches
+them too. -/
 def kinds : List String :=
   ["normal", "wide", "sparse", "subnormal", "tiny", "huge", "gap", "special", "zeros", "negzero",
     "zerosign", "ties", "cancel", "mixed", "long", "many", "sqrttie", "offset", "subtie", "normtie",
-    "overtie"]
+    "overtie", "exphard"]
+
+/-- Inputs on which FloatLib's approximate binary32 `exp` is one ulp off the correctly rounded
+result (found by an exhaustive search over every binary32 input). -/
+def expHard : Array UInt32 := #[0x33800000, 0x383A3EF1, 0x39C6BE5B, 0x3EA585A0, 0x3EAA23C4,
+  0x3EABEDA0, 0x3EBF4A81, 0x3F8386DD, 0x3F856D73, 0x3FE67199, 0x4016BD40, 0x40197AA8, 0x401AF84E,
+  0x40A470E2, 0x416EE114, 0x4178966E, 0x41F77C01, 0x4288942B, 0x428A94C5, 0x429675E7, 0xBBF0EDF1,
+  0xC16912CD]
 
 /-- A sign and a fraction from `w`, with exponent field `e`. -/
 @[inline] def withExp (w : UInt32) (e : UInt32) : UInt32 :=
@@ -62,6 +72,7 @@ def edgeWord (kind : String) (w c : UInt32) : UInt32 :=
   | "zeros" => if c % 4 != 0 then w &&& 0x80000000 else near
   | "negzero" => 0x80000000
   | "ties" => (w &&& 0x80000000) ||| #[0x3F800000, 0x33800000, 0x33000000, 0x33C00000][(c % 4).toNat]!
+  | "exphard" => expHard[(w % expHard.size.toUInt32).toNat]! ^^^ (c &&& 0x80000000)
   | _ => near
 
 /-- `n` words of `kind` from `seed`. For `cancel`, the second half repeats the first, negated
@@ -150,13 +161,18 @@ def runCase (E S : Kernels) (malformed : Bool) (kernel kind : String) (seed : UI
     -- `long`: conv2d windows of 270–405 terms (30–45 input channels, 3×3, on a small image),
     -- depthwise windows up to 9×9; `many`: up to 17 output channels (depthwise: 17 channels)
     let s : ConvShape :=
-      if kind == "long" && kernel == "conv2d" then ⟨d 0 30 16, d 1 2 3, d 2 2 3, d 3 1 3, 3, 3, d 6 1 2, d 7 0 3⟩
-      else if kind == "long" then ⟨d 0 1 3, d 1 3 8, d 2 3 8, d 3 1 3, d 4 1 9, d 5 1 9, d 6 1 3, d 7 0 4⟩
-      else if kind == "many" then ⟨if kernel == "conv2d" then d 0 1 2 else d 0 1 17, d 1 1 5, d 2 1 5, d 3 1 17,
-        d 4 1 3, d 5 1 3, d 6 1 2, d 7 0 2⟩
-      else ⟨d 0 1 3, d 1 1 6, d 2 1 6, d 3 1 3, d 4 1 3, d 5 1 3, d 6 1 2, d 7 0 2⟩
+      if kind == "long" && kernel == "conv2d" then
+        .simple (d 0 30 16) (d 1 2 3) (d 2 2 3) (d 3 1 3) 3 3 (d 6 1 2) (d 7 0 3)
+      else if kind == "long" then
+        .simple (d 0 1 3) (d 1 3 8) (d 2 3 8) (d 3 1 3) (d 4 1 9) (d 5 1 9) (d 6 1 3) (d 7 0 4)
+      else if kind == "many" then
+        .simple (if kernel == "conv2d" then d 0 1 2 else d 0 1 17)
+          (d 1 1 5) (d 2 1 5) (d 3 1 17) (d 4 1 3) (d 5 1 3) (d 6 1 2) (d 7 0 2)
+      else .simple (d 0 1 3) (d 1 1 6) (d 2 1 6) (d 3 1 3)
+          (d 4 1 3) (d 5 1 3) (d 6 1 2) (d 7 0 2)
     let inp := maybeShort malformed r[15]! (arr (s.cin * s.h * s.w) 1)
-    let shape := s!"cin={s.cin} {s.h}x{s.w} cout={s.cout} k={s.kh}x{s.kw} stride={s.stride} pad={s.pad}"
+    let shape := s!"cin={s.cin} {s.h}x{s.w} cout={s.cout} k={s.kh}x{s.kw} " ++
+      s!"stride={s.strideH}x{s.strideW} pad={s.padT},{s.padL},{s.padB},{s.padR}"
     if kernel == "conv2d" then
       let wts := arr (s.cout * s.cin * s.kh * s.kw) 2
       let b := arr s.cout 3
@@ -168,9 +184,10 @@ def runCase (E S : Kernels) (malformed : Bool) (kernel kind : String) (seed : UI
   | "avgpool" | "maxpool" =>
     let (c, h, w, k) := (dm 0 1 3 1 17, dl 1 1 7 1 16, dl 2 1 7 1 16, dl 3 1 3 1 5)
     let inp := maybeShort malformed r[15]! (arr (c * h * w) 1)
+    let pool := PoolShape.square c h w k
     let shape := s!"c={c} {h}x{w} k={k}"
-    if kernel == "avgpool" then ⟨shape, E.elem.avgpool c h w k inp, S.elem.avgpool c h w k inp⟩
-    else ⟨shape, E.elem.maxpool c h w k inp, S.elem.maxpool c h w k inp⟩
+    if kernel == "avgpool" then ⟨shape, E.elem.avgpool pool inp, S.elem.avgpool pool inp⟩
+    else ⟨shape, E.elem.maxpool pool inp, S.elem.maxpool pool inp⟩
   | "addRelu" =>
     let n := dl 0 0 32 32 1069
     let a := arr n 1
@@ -209,12 +226,36 @@ def runCase (E S : Kernels) (malformed : Bool) (kernel kind : String) (seed : UI
     else
       let b := if kind == "normtie" then Array.replicate n 0 else arr n 3
       ⟨shape, E.norm.layernorm rows n e x g b, S.norm.layernorm rows n e x g b⟩
+  | "scores" | "mix" =>
+    let (heads, T, dd) := if kind == "many" then (d 0 1 5, d 1 1 9, d 2 1 5)
+      else (d 0 1 3, d 1 1 5, dl 2 1 5 24 300)
+    let c := heads * dd
+    let shape := s!"heads={heads} T={T} d={dd}"
+    if kernel == "scores" then
+      let causal := r[13]! % 2 == 0
+      let Q := maybeShort malformed r[15]! (arr (T * c) 1)
+      let K := arr (T * c) 2
+      ⟨s!"{shape} causal={causal}", E.attn.scores heads T dd causal Q K,
+        S.attn.scores heads T dd causal Q K⟩
+    else
+      let P := maybeShort malformed r[15]! (arr (heads * T * T) 1)
+      let V := arr (T * c) 2
+      ⟨shape, E.attn.mix heads T dd P V, S.attn.mix heads T dd P V⟩
+  | "softmax" =>
+    let (rows, n) := if kind == "many" then (d 0 1 17, d 1 1 8) else (dl 0 1 3 1 2, dl 1 1 24 24 300)
+    -- some rows get masked (`-∞`) entries, as causal attention scores do
+    let x := (maybeShort malformed r[15]! (arr (rows * n) 1)).mapIdx fun i w =>
+      if r[12]! % 3 == 0 && (i + r[11]!.toNat) % 3 == 0 then negInfW else w
+    ⟨s!"{rows}x{n}", E.attn.softmax rows n x, S.attn.softmax rows n x⟩
+  | "silu" =>
+    let x := maybeShort malformed r[15]! (arr (dl 0 0 32 32 1069) 1)
+    ⟨s!"n={x.size}", E.attn.silu x, S.attn.silu x⟩
   | _ => ⟨"unknown kernel", #[], #[0]⟩
 
-/-- The 12 kernels, as `runCase` names them. -/
+/-- The 16 kernels, as `runCase` names them. -/
 def kernelNames : List String :=
   ["sum", "dot", "linear", "gemm", "conv2d", "depthwise", "avgpool", "maxpool", "addRelu",
-    "scaleShift", "rmsnorm", "layernorm"]
+    "scaleShift", "rmsnorm", "layernorm", "scores", "mix", "softmax", "silu"]
 
 /-! ## The audit -/
 
@@ -268,7 +309,7 @@ def flushSum : Kernels :=
 /-- `maxpool` that loses the sign of a −0 result. -/
 def zeroSignMaxpool : Kernels :=
   { specKernels with elem := { specElem with
-      maxpool := fun c h w k inp => (maxpoolSpec c h w k inp).map fun v =>
+      maxpool := fun s inp => (maxpoolSpec s inp).map fun v =>
         if v == 0x80000000 then 0 else v } }
 
 /-- `dot` that rounds after every product and every sum, left to right. -/
@@ -303,8 +344,8 @@ def dotTiesAway (a b : Array UInt32) : UInt32 :=
   if !(a.all finiteWord && b.all finiteWord) then r else
   let exact := (List.range (min a.size b.size)).foldl
     (fun acc i => acc + rationalWord a[i]! * rationalWord b[i]!) (0 : ℚ)
-  let lo := dotMode .towardNegativeInfinity a b
-  let hi := dotMode .towardPositiveInfinity a b
+  let lo := dotMode .down a b
+  let hi := dotMode .up a b
   if lo != hi && finiteWord lo && finiteWord hi &&
       2 * exact == rationalWord lo + rationalWord hi then (if exact > 0 then hi else lo) else r
 
@@ -319,8 +360,10 @@ def foldDotFn : DotFn := fun n fa fb => toWord <| (List.range n).foldl (fun acc 
 /-- Element `t` of a window with out-of-image reads clamped to the edge instead of zero. -/
 def windowClamp (s : ConvShape) (inp : Array UInt32) (y x t : Nat) : UInt32 :=
   let c := t / (s.kh * s.kw)
-  let yy := min (s.h - 1) ((y * s.stride + t / s.kw % s.kh) - s.pad)
-  let xx := min (s.w - 1) ((x * s.stride + t % s.kw) - s.pad)
+  let dy := t / s.kw % s.kh
+  let dx := t % s.kw
+  let yy := min (s.h - 1) (y * s.strideH + dy * s.dilH - s.padT)
+  let xx := min (s.w - 1) (x * s.strideW + dx * s.dilW - s.padL)
   inp[(c * s.h + yy) * s.w + xx]!
 
 /-- One mutant: a name, the kernel it changes, and the kernels with the change. -/
@@ -429,8 +472,51 @@ def withDot (d : Array UInt32 → Array UInt32 → UInt32) : Kernels :=
 def withSum (f : Array UInt32 → UInt32) : Kernels :=
   { specKernels with core := { specCore with sum := f } }
 
+/-- Replace the attention family. -/
+def withAttn (a : AttnKernels) : Kernels := { specKernels with attn := a }
+
+/-- Softmax with its own exponent argument, sum and final step (the spec: `x - max`, the exact
+sum, a division). -/
+def softmaxWithSteps (shift : Word → Word → Word) (sum : Array Word → Word)
+    (scale : Word → Word → Word) (rows n : Nat) (x : Array Word) : Array Word :=
+  let mx := Array.ofFn (n := rows) fun r => rowMax n x r.val
+  let e := Array.ofFn (n := rows * n) fun q => expW (shift x[q.val]! mx[q.val / n]!)
+  let s := Array.ofFn (n := rows) fun r => sum (Array.ofFn (n := n) fun t => e[r.val * n + t.val]!)
+  Array.ofFn (n := rows * n) fun q => scale e[q.val]! s[q.val / n]!
+
+/-- The spec's step `x - max`, and its division. -/
+def subW (a b : Word) : Word := toWord (Model.sub (ofW a) (ofW b))
+def divW (a b : Word) : Word := toWord (Model.div (ofW a) (ofW b))
+
 /-- The mutants, one plausible bug each. -/
 def mutants : List Mutant := [
+  ⟨"softmax skips the max subtraction", "softmax", withAttn { specAttn with
+    softmax := softmaxWithSteps (fun a _ => a) sumSpec divW }⟩,
+  ⟨"softmax multiplies by the sum's reciprocal", "softmax", withAttn { specAttn with
+    softmax := softmaxWithSteps subW sumSpec fun e s =>
+      toWord (Model.mul (ofW e) (Model.div (ofW oneW) (ofW s))) }⟩,
+  ⟨"softmax rounds its sum at every step", "softmax", withAttn { specAttn with
+    softmax := softmaxWithSteps subW (fun e => e.foldl (fun acc w =>
+      toWord (Model.add (ofW acc) (ofW w))) 0) divW }⟩,
+  ⟨"silu divides x by 1 + exp(-x)", "silu", withAttn { specAttn with
+    silu := fun x => x.map fun w =>
+      toWord (Model.div (ofW w) (Model.add (ofW oneW) (ofW (expW (negW w))))) }⟩,
+  ⟨"silu uses FloatLib's approximate exp", "silu", withAttn { specAttn with
+    silu := fun x => x.map fun w => toWord (Model.mul (ofW w) (Model.div (ofW oneW)
+      (Model.add (ofW oneW) (Model.exp (ofW (negW w)))))) }⟩,
+  ⟨"scores masks with the largest negative finite value", "scores", withAttn { specAttn with
+    scores := fun heads T d causal Q K => (scoresSpec heads T d causal Q K).map fun w =>
+      if w == negInfW then 0xFF7FFFFF else w }⟩,
+  ⟨"scores ignores the causal mask", "scores", withAttn { specAttn with
+    scores := fun heads T d _ Q K => scoresSpec heads T d false Q K }⟩,
+  ⟨"mix reads V transposed", "mix", withAttn { specAttn with
+    mix := fun heads T d P V =>
+      let c := heads * d
+      Array.ofFn (n := T * c) fun q =>
+        let i := q.val / c
+        let h := q.val % c / d
+        let t := q.val % d
+        dotOf T (fun j => P[(h * T + i) * T + j]!) (fun j => V[(h * d + t) * T + j]!) }⟩,
   ⟨"sum flushes subnormal inputs", "sum", flushSum⟩,
   ⟨"sum flushes a subnormal result", "sum", withSum fun x =>
     let r := sumSpec x; if expOf r == 0 && fracOf r != 0 then r &&& 0x80000000 else r⟩,
@@ -476,22 +562,25 @@ def mutants : List Mutant := [
       depthwiseSpec s relu inp (Array.ofFn (n := s.cin * (s.kh * s.kw)) fun i =>
         wts[i.val % (s.kh * s.kw)]!) b } }⟩,
   ⟨"avgpool divides by k, not k²", "avgpool", { specKernels with elem := { specElem with
-    avgpool := fun c h w k inp => Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-      let ch := q.val / (h / k * (w / k))
-      let y := q.val / (w / k) % (h / k)
-      let x := q.val % (w / k)
-      toWord (Model.div (ofW (dotOf (k * k) (poolAt h w k inp ch y x) (fun _ => oneW)))
-        (ofW (natW k))) } }⟩,
+    avgpool := fun s inp => Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+      let ch := q.val / (s.ho * s.wo)
+      let y := q.val / s.wo % s.ho
+      let x := q.val % s.wo
+      let win := s.window y x
+      let total := dotOf (win.rows * win.cols) (poolCell s inp ch win) (fun _ => oneW)
+      toWord (Model.div (ofW total) (ofW (natW s.kh))) } }⟩,
   ⟨"avgpool rounds every step of its sum", "avgpool", { specKernels with elem := { specElem with
     avgpool := avgpoolWith foldDotFn } }⟩,
   ⟨"maxpool loses the sign of −0", "maxpool", zeroSignMaxpool⟩,
   ⟨"maxpool ignores NaNs", "maxpool", { specKernels with elem := { specElem with
-    maxpool := fun c h w k inp => Array.ofFn (n := c * (h / k * (w / k))) fun q =>
-      let ch := q.val / (h / k * (w / k))
-      let y := q.val / (w / k) % (h / k)
-      let x := q.val % (w / k)
-      toWord <| (List.range (k * k)).foldl (fun acc t =>
-        Model.maximumNumber acc (ofW (poolAt h w k inp ch y x t))) (ofW (poolAt h w k inp ch y x 0)) } }⟩,
+    maxpool := fun s inp => Array.ofFn (n := s.c * (s.ho * s.wo)) fun q =>
+      let ch := q.val / (s.ho * s.wo)
+      let y := q.val / s.wo % s.ho
+      let x := q.val % s.wo
+      let win := s.window y x
+      toWord <| (List.range (win.rows * win.cols)).foldl (fun acc t =>
+        Model.maximumNumber acc (ofW (poolCell s inp ch win t)))
+        (ofW (poolCell s inp ch win 0)) } }⟩,
   ⟨"addRelu returns the canonical NaN", "addRelu", { specKernels with elem := { specElem with
     addRelu := fun relu a b => (addReluSpec relu a b).map fun r => if isNaNW r then 0x7FC00000 else r } }⟩,
   ⟨"scaleShift rounds twice (no fma)", "scaleShift", { specKernels with elem := { specElem with
