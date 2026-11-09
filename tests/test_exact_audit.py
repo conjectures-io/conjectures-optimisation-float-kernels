@@ -421,7 +421,10 @@ def test_auditor_database_role_cannot_change_competition(audit_setup, config, st
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("fixture, expected", [("incumbent", "clean"), ("auditwrong", "failed")])
+@pytest.mark.parametrize(
+    "fixture, expected",
+    [("incumbent", "clean"), ("auditwrong", "failed"), ("auditwrongrnn", "failed")],
+)
 def test_real_sandboxed_independent_auditor(store, config, tmp_path, fixture, expected):
     import sandbox as gate
     from provenance import specification_identity
