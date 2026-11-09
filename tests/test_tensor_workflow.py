@@ -530,7 +530,13 @@ def test_independent_board_jobs_isolate_timeout_and_keep_partial_evidence(store,
     evaluation_ids = repo.plan(shared)
     with db.session_scope(store.sessions) as s:
         jobs = list(s.scalars(select(m.BenchmarkJob).order_by(m.BenchmarkJob.id)))
-        links = list(s.scalars(select(m.EvaluationJob).order_by(m.EvaluationJob.id)))
+        links = list(
+            s.scalars(
+                select(m.EvaluationJob).order_by(
+                    m.EvaluationJob.evaluation_id, m.EvaluationJob.job_id
+                )
+            )
+        )
         evaluations = list(s.scalars(select(m.Evaluation).order_by(m.Evaluation.id)))
     assert len(evaluation_ids) == len(jobs) == len(links) == 3
     assert [evaluation.board for evaluation in evaluations] == ["mlp", "resnet", "overall"]
