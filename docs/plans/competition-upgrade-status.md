@@ -1,6 +1,8 @@
 # Status: operations to add to the TorchLean competition
 
-As of 2026-11-05, branch `feat/competition-upgrade-ops` (private repo, not pushed). Tracks the Notion task "Operations to add to TorchLean competition – part of the
+As of 2026-11-09, branch `feat/exact-competition-upgrade` (private repo), which combines
+`feat/competition-upgrade-ops`, `feat/floatlib3-attention`, `feat/real-model-benchmark` and
+`feat/recurrent-family`. Tracks the Notion task "Operations to add to TorchLean competition – part of the
 upgrade". The plan is in [competition-upgrade.md](competition-upgrade.md).
 
 Legend: ✅ done · ⏳ in progress · ❌ not started · ➖ not needed
@@ -14,19 +16,23 @@ The columns follow the Notion page's five steps for every addition:
 4. **Importer**: `tools/onnx2exrt.py` maps the ONNX operation.
 5. **Competition** (Part 2 only): miners make it fast under proof.
 
-Steps 2–4 live in `conjectures-io/exact-inference`; nothing there has changed yet.
+Steps 2–4 live in `conjectures-io/exact-inference`; the port of the new specification there is in
+progress on its branch `feat/sync-competition-upgrade`.
 
 ## Summary
 
 | | Items | Done | In progress | Not started |
 |---|---|---|---|---|
 | Part 1 – we build ourselves | 8 | 0 | 0 | 8 |
-| Part 2 – subnet competition | 6 | 2 (spec level) | 0 | 4 |
+| Part 2 – subnet competition | 6 | 5 (spec level) | 0 | 1 |
 
-The two Part 2 items done at spec level are the **convolution variants** and the **pooling
-variants**. They are in the contract, proved, and cross-checked against an independent oracle
-and ONNX Runtime. They do not yet reach `exactrt`, `exact-c`, the importer or any benchmark
-model.
+Done at spec level: the **convolution variants** and **pooling variants** (proved, cross-checked
+against an independent oracle and ONNX Runtime); **`exp` activations** (FloatLib 3's correctly
+rounded `exp`, and correctly rounded `sigmoid` and `tanh` proved in
+`ExactToolkit/ActivationProof.lean`); **attention** (`scores`, `mix`, `softmax`, `silu`); and
+**recurrent** (`lstm`, `gru`, with a `recurrent` board in `overall`, nine trained real fixtures and
+meaning proofs in `ExactToolkit/RecurrentProofs.lean`). See
+[recurrent-family.md](recurrent-family.md). Not started: int8.
 
 ## Part 1 – we build ourselves
 
@@ -50,10 +56,10 @@ partial coverage from before this upgrade.
 |---|---|---|---|---|---|---|
 | Convolution variants | dilation, asymmetric padding, `auto_pad=SAME`, separate strides, general groups, native 1-D, `ConvTranspose` | ✅ | ❌ | ❌ | ❌ | ✅ kernels and proofs; ❌ no benchmark model, not launched |
 | Pooling variants | padded/strided pooling, `ceil_mode`, `GlobalMaxPool`, non-square global average | ✅ | ❌ | ❌ | ❌ | ✅ kernels and proofs; ❌ no benchmark model, not launched |
-| `exp`/`log` activations | Exp Log Tanh Sigmoid Softmax LogSoftmax SiLU GELU Elu Softplus | ❌ | ❌ | ❌ | ❌ | ❌ Blocked on decision D3 |
-| Attention | Attention, scaled MatMul + Softmax | ❌ | ❌ | ❌ | ❌ | ❌ Needs Softmax and the graph format |
+| `exp`/`log` activations | Exp Log Tanh Sigmoid Softmax LogSoftmax SiLU GELU Elu Softplus | ⏳ Exp, Sigmoid, Tanh, Softmax, SiLU (correctly rounded); others ❌ | ⏳ | ⏳ | ❌ | ✅ through attention and recurrent kernels |
+| Attention | Attention, scaled MatMul + Softmax | ✅ `Layer.attention` | ⏳ | ❌ | ❌ | ➖ no scored board (transformers left out for small devices) |
 | int8 | QLinearConv QLinearMatMul QuantizeLinear DequantizeLinear | ❌ | ❌ | ❌ | ❌ | ❌ Needs an int8 tensor type end to end |
-| Recurrent (candidate) | LSTM GRU | ❌ | ❌ | ❌ | ❌ | ❌ Needs the `exp` activations |
+| Recurrent | LSTM GRU | ✅ `lstm`, `gru`, `lastStep` | ⏳ | ⏳ | ⏳ | ✅ `recurrent` board in `overall`, nine trained fixtures |
 
 ### Convolution variants, feature by feature
 
@@ -94,8 +100,8 @@ partial coverage from before this upgrade.
 
 ## Decisions blocking further progress
 
-- **D3:** what `exp`/`log`/`tanh` mean in the contract (FloatLib's approximation, or correctly
-  rounded). Blocks the activations, attention and LSTM/GRU.
+- **D3 (decided):** `exp`, `sigmoid` and `tanh` are correctly rounded. `log` and the remaining
+  activations are still open.
 - **D2:** graph semantics in the spec. Blocks the Part 1 graph format and multi-branch models.
 - **D4/D5:** season mechanics and scope, including which model families and boards carry the
   new kernels.

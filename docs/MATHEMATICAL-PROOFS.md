@@ -34,6 +34,35 @@ The reference may use larger integer intermediates than the previous hand-writte
 This changes the implementation, not the specified output bits. Independent native comparisons
 cover both sides of squared midpoints, ties, extreme exponents and the overflow boundary.
 
+## Correctly rounded sigmoid and tanh
+
+Files: `lean/contract/ExactToolkit/Activation.lean` (the definitions) and `ActivationProof.lean`.
+
+**`toReal_tanhModel` and `toReal_sigmoidModel` prove that for every finite input the result is
+finite and is the nearest-even rounding of `Real.tanh x` and of `1 / (1 + e^(−x))`**, for every
+IEEE descriptor, so in particular binary32 (`tanhCR`, `sigmoidCR`, the contract's `tanhW` and
+`sigmoidW`). Specials (NaN, ±∞, ±0) are pinned by the definitions themselves.
+
+Each definition tries an enclosure search first and falls back to exact comparisons; both paths
+are covered:
+
+- `compareTanh_eq_real` and `compareSigmoid_eq_real`: the comparators order the true value
+  against every rational candidate. For `0 < b < 1`, `tanh a < b ⟺ 2a < log((1+b)/(1−b))`
+  (through Mathlib's `artanh`: `strictMonoOn_artanh`, `artanh_tanh`, `artanh_eq_half_log`) and
+  `σ x < b ⟺ x < log(b/(1−b))` (`realSigmoid_logit`, `realSigmoid_strictMono`). FloatLib's
+  `compareLog_eq_real` decides the logarithm comparison exactly, and
+  `AlgebraicRounding.toReal_round_eq_roundAt` turns an exact comparator into a nearest-even
+  rounding. Finiteness follows from `|tanh| < 1`, `0 < σ < 1` and FloatLib's
+  `one_lt_overflowThreshold`.
+- `contains_tanhEnclosure` and `contains_sigmoidEnclosure`: every enclosure the search builds
+  contains the true value. FloatLib's `contains_exp` encloses `e^(−2|x|)` or `e^(−x)`, and
+  `tanh a = (1 − e^(−2a)) / (1 + e^(−2a))` (`tanh_eq_exp_neg_two`) and `σ = 1 / (1 + e)` are
+  decreasing in `e`. Far from zero the enclosures are the constant bounds `[0, 2^(−46)]` for
+  `e^(−t)` with `t ≥ 32` (`exp_neg_le_inv_two_pow`, from `log 2 < 0.6931471808`) and
+  `[0, 2^(−184)]` for `σ x` with `x < −128`. `tanhSearch_spec` and `sigmoidSearch_spec` then
+  use FloatLib's `toReal_eq_roundAt_of_round?_eq_some`: an accepted search rounds every value in
+  its enclosure, in particular the true one.
+
 ## Tensor and reduction mathematics
 
 File: `lean/contract/ExactToolkit/TensorProofs.lean`, namespace `ExactRuntime.TensorMath`.
@@ -48,6 +77,7 @@ File: `lean/contract/ExactToolkit/TensorProofs.lean`, namespace `ExactRuntime.Te
 | Convolution | `window_coordinates` takes the group `g` and uses signed coordinates to characterize zero padding: tap `(c, dy, dx)` is channel `g·cpg + c` at `(y·strideH + dy·dilH − padT, x·strideW + dx·dilW − padL)`, zero outside the image. `conv2d_entry` and `conv_total` establish the nested sum over the group's channels and the filter, plus bias. This is NCHW/OIHW cross-correlation, without filter reversal. |
 | Depthwise | `depthwise_taps`: for `0 < cin`, the depthwise geometry has `kh·kw` taps and one output channel per group. `depthwise_entry` and `depthwise_total` (which needs `0 < cin`): only the matching input channel and its own filter contribute; multiplier one. |
 | Transposed convolution | `convTranspose_entry`: each output is the exact dot of the listed contributing taps (`convTTaps`), with `convTInput`/`convTWeight` as operands and the bias last, then optional ReLU. `tapSource_eq_some_iff`, `tapSource_isSome_iff` (for a positive stride): `tapSource` returns exactly the input index `i < n` with `i·stride + d·dil = p + pad`, the only one. `sum_filter_range` turns the sum over the filtered tap array into a `Finset` sum, `sum_tapSource` picks out the one source position, and `tap_coordinates` decodes flat tap `(c·kh + dy)·kw + dx`. `convTranspose_total` (for positive strides) proves that the flat reduction equals `convTValue`: the bias plus, over the group's input channels `c` and filter taps `(dy, dx)`, every input position `(iy, ix)` inside the image with `iy·strideH + dy·dilH = y + padT` and `ix·strideW + dx·dilW = x + padL`, times `w[g·cpg + c, o mod opg, dy, dx]`. This is ONNX `ConvTranspose` with `cin × (cout/groups) × kh × kw` weights. Taps that reach no input contribute nothing. The generic dot theorems supply the rounding meaning. |
+| Recurrent layers | File `RecurrentProofs.lean`. `lstm_entry`, `gru_entry` (through `recurWith_entry` and `recur_fold`): output `(t, u)` is unit `u` of the hidden state after `t + 1` steps (`stateAfter`) from the zero state. `lstm_cell`, `lstm_hidden`, `gru_hidden` expose one step unit by unit. `gate_total`: a gate's dot product is exactly `gateValue`, `Σ_j x[t, j]·w_ih[k, j] + Σ_j h[j]·w_hh[k, j] + b_ih[k] + b_hh[k]`; `gate_nonzero_math`: with finite operands and a nonzero value, the gate is that rational rounded once. `cell_total`: the LSTM cell's exact sum is `f·c + i·g`. `gru_update_total`: the GRU update's is `n − z·n + z·h` (`rational_negW`: flipping the sign bit negates the value). `gru_candidate_total`: the candidate's is `Σ x·w_in + b_in + r·hn`. With `dotOf_nonzero_math` each is rounded once, and with the activation theorems above every value in a step is an exact rational expression of finite words, rounded once. |
 | Average pooling | `pool_coordinates`, `pool_window_inside`, `pool_total`, `avgpool_entry` on `PoolShape` windows: a window's cells are a rectangle of image cells that never reaches the padding; its exact sum is rounded once, then divided with FloatLib by `PoolShape.divisor`. This deliberately retains two rounding steps. |
 | Maximum pooling | `maxpool_entry` gives the bitwise ordered IEEE fold over the window's image cells. `maxpool_math` proves it is a mathematical extended-real maximum on nonempty non-NaN windows, including infinities. |
 | Elementwise operations | `addRelu_entry`, `scaleShift_entry`: pointwise FloatLib addition/FMA with the intended channel broadcasting. `relu_finite_math` proves finite ReLU is rational `max(0,x)`; `relu_preserves_nan` records its NaN behavior. |
@@ -134,8 +164,9 @@ their premises. Executable validation of current profiles complements these narr
 .venv/bin/python scripts/check-exact-proofs.py --replay
 ```
 
-The command builds the four proof modules, checks the audit's theorem axiom reports, and fails
-if a report is missing or an additional axiom appears. `--replay` also checks all four modules
+The command builds the proof modules (square root, tensors, models, activations, recurrent layers
+and the suite), checks the audit's theorem axiom reports, and fails
+if a report is missing or an additional axiom appears. `--replay` also checks every module
 with `leanchecker`. The existing nightly/manual Lean CI job runs the axiom audit after setup.
 
 For independent executable comparisons, build `exactSpecProbe` and run:
