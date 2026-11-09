@@ -510,6 +510,8 @@ def editable_config(config):
         "synthetic_cells": list(raw.pop("synthetic_cells")),
         "real_workloads": [workload.json() for workload in raw.pop("real_workloads")],
         "suite_weights": raw.pop("suite_weights"),
+        "reuse_board_timings": raw.pop("reuse_board_timings", True),
+        "reuse_completed_jobs": raw.pop("reuse_completed_jobs", True),
     }
     return raw
 

@@ -46,6 +46,8 @@ def editable_config(config):
         "synthetic_cells": list(raw.pop("synthetic_cells")),
         "real_workloads": [workload.json() for workload in raw.pop("real_workloads")],
         "suite_weights": raw.pop("suite_weights"),
+        "reuse_board_timings": raw.pop("reuse_board_timings", True),
+        "reuse_completed_jobs": raw.pop("reuse_completed_jobs", True),
     }
     return raw
 
@@ -498,6 +500,73 @@ def test_overall_and_family_evaluations_share_one_leased_comparison_bundle(store
     assert {evaluation.board for evaluation, _ in ready} == {"mlp", "resnet", "overall"}
     assert all(len(pairs) == 1 for _, pairs in ready)
     assert all(pairs[0][1]["request_hash"] == measurement_hash(pairs[0][0]) for _, pairs in ready)
+
+
+def test_independent_board_jobs_isolate_timeout_and_keep_partial_evidence(store, config, tmp_path):
+    boards = copy.deepcopy(config.boards)
+    overall_source = b"overall reference"
+    overall_path = tmp_path / "overall-independent.lean"
+    overall_path.write_bytes(overall_source)
+    boards["overall"] = {
+        "models": {"mlp": 0.5, "resnet": 0.5},
+        "reference": {
+            "path": str(overall_path),
+            "sha256": hashlib.sha256(overall_source).hexdigest(),
+        },
+        "timing": copy.deepcopy(boards["mlp"]["timing"]),
+    }
+    rewards = copy.deepcopy(config.rewards)
+    rewards["board_weights"] = {"mlp": 1 / 3, "resnet": 1 / 3, "overall": 1 / 3}
+    shared = replace(
+        config,
+        boards=boards,
+        rewards=rewards,
+        reuse_board_timings=False,
+        reuse_completed_jobs=False,
+    )
+    repo, worker = setup(store, shared)
+    accepted(store, shared)
+
+    evaluation_ids = repo.plan(shared)
+    with db.session_scope(store.sessions) as s:
+        jobs = list(s.scalars(select(m.BenchmarkJob).order_by(m.BenchmarkJob.id)))
+        links = list(s.scalars(select(m.EvaluationJob).order_by(m.EvaluationJob.id)))
+        evaluations = list(s.scalars(select(m.Evaluation).order_by(m.Evaluation.id)))
+    assert len(evaluation_ids) == len(jobs) == len(links) == 3
+    assert [evaluation.board for evaluation in evaluations] == ["mlp", "resnet", "overall"]
+    assert all("comparisons" not in job.request for job in jobs)
+    assert [link.evaluation_id for link in links] == evaluation_ids
+
+    first = worker.claim("local", "a" * 64, "family-worker")
+    assert first.id == jobs[0].id
+    assert worker.fail(
+        first.id,
+        first.owner,
+        first.token,
+        {
+            "kind": "candidate",
+            "reason": "benchmark-timeout: candidate exceeded the board budget",
+            "timeout": {"phase": "benchmark", "budget_seconds": 3600, "cell": "mlp:b1:normal"},
+            "partial": {"rounds": [{"cells": {"mlp:b1:normal": {"candidate_ns": 9}}}]},
+        },
+    )
+    assert repo.aggregate(shared) == 1
+    with db.session_scope(store.sessions) as s:
+        mlp = s.scalar(select(m.Evaluation).where(m.Evaluation.board == "mlp"))
+        assert mlp.state == "completed"
+        assert mlp.decision["outcome"] == "timed-out"
+        assert s.get(m.BenchmarkJob, first.id).error["partial"]["rounds"]
+        assert (
+            s.scalar(
+                select(func.count())
+                .select_from(m.Evaluation)
+                .where(
+                    m.Evaluation.board.in_(("resnet", "overall")), m.Evaluation.state == "pending"
+                )
+            )
+            == 2
+        )
+    assert worker.claim("local", "a" * 64, "next-family").id == jobs[1].id
 
 
 def test_execute_only_worker_role(store, config):

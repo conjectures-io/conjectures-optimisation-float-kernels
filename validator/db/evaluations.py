@@ -612,7 +612,7 @@ class EvaluationsDb:
             for group in request_groups.values():
                 requests = {entry["board"]: entry["request"] for entry in group}
                 bundled = None
-                if len(group) > 1 and len(requests) == len(group):
+                if config.reuse_board_timings and len(group) > 1 and len(requests) == len(group):
                     try:
                         bundled = bundle_requests(requests)
                     except (KeyError, TypeError, ValueError):
@@ -627,15 +627,19 @@ class EvaluationsDb:
                     request_hash = (
                         digest(request) if "comparisons" in request else measurement_hash(request)
                     )
-                    old = s.scalar(
-                        select(m.BenchmarkJob)
-                        .where(
-                            m.BenchmarkJob.request_hash == request_hash,
-                            m.BenchmarkJob.state == "completed",
-                            m.BenchmarkJob.result.is_not(None),
+                    old = (
+                        s.scalar(
+                            select(m.BenchmarkJob)
+                            .where(
+                                m.BenchmarkJob.request_hash == request_hash,
+                                m.BenchmarkJob.state == "completed",
+                                m.BenchmarkJob.result.is_not(None),
+                            )
+                            .order_by(m.BenchmarkJob.id.desc())
+                            .limit(1)
                         )
-                        .order_by(m.BenchmarkJob.id.desc())
-                        .limit(1)
+                        if config.reuse_completed_jobs
+                        else None
                     )
                     reused = old is not None
                     if old is None:

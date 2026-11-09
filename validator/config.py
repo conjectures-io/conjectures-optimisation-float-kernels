@@ -21,7 +21,7 @@ KINDS = ("normal", "wide", "sparse")
 # The scored small-device competition. Transformer cells stay measurable when a config names
 # them explicitly, but no default board or synthetic plan includes them.
 DEFAULT_MODELS = tuple(model for model in MODELS if model != "transformer")
-VERSION = "exact-boards-v13-recurrent"
+VERSION = "exact-boards-v14-independent-board-jobs"
 WARMUP_POLICY = "independent-unscored-input-v1"
 BASELINE_SOURCE = Path(__file__).resolve().parents[1] / "kernels/exact/baseline/Kernel.lean"
 DEFAULT_SYNTHETIC_CELLS = tuple(f"{model}:b1:{kind}" for model in DEFAULT_MODELS for kind in KINDS)
@@ -353,6 +353,8 @@ class Config:
     synthetic_cells: tuple[str, ...] = DEFAULT_SYNTHETIC_CELLS
     real_workloads: tuple[RealWorkloadSpec, ...] = ()
     suite_weights: dict[str, float] = field(default_factory=dict)
+    reuse_board_timings: bool = True
+    reuse_completed_jobs: bool = True
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
@@ -393,10 +395,14 @@ class Config:
             "synthetic_cells",
             "real_workloads",
             "suite_weights",
+            "reuse_board_timings",
+            "reuse_completed_jobs",
         }:
-            raise ValueError(
-                "benchmark accepts suites, synthetic_cells, real_workloads and suite_weights"
-            )
+            raise ValueError("unknown benchmark configuration key")
+        reuse_board_timings = benchmark.get("reuse_board_timings", True)
+        reuse_completed_jobs = benchmark.get("reuse_completed_jobs", True)
+        if type(reuse_board_timings) is not bool or type(reuse_completed_jobs) is not bool:
+            raise ValueError("benchmark reuse settings must be booleans")
         suites = tuple(benchmark.get("suites", ("synthetic",)))
         if (
             not suites
@@ -477,6 +483,8 @@ class Config:
         data["synthetic_cells"] = tuple(sorted(synthetic_cells))
         data["real_workloads"] = real_workloads
         data["suite_weights"] = suite_weights
+        data["reuse_board_timings"] = reuse_board_timings
+        data["reuse_completed_jobs"] = reuse_completed_jobs
         if data.get("seed_mode") == "fresh" and seeds:
             raise ValueError("fresh mode uses seed_count, not seeds")
         if type(data.get("seed_count", 1)) is not int or not 1 <= data.get("seed_count", 1) <= 100:
@@ -664,6 +672,8 @@ class Config:
             "strata": strata,
             "timing": timing,
             "admission": self.admission,
+            "reuse_board_timings": self.reuse_board_timings,
+            "reuse_completed_jobs": self.reuse_completed_jobs,
             "proof_identity": self.proof_identity,
             "benchmark_identity": self.benchmark_identity,
             "suites": suites,

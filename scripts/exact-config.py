@@ -118,6 +118,40 @@ def main():
         "--baseline-rounds", type=int, default=3, help="baseline telemetry observations"
     )
     parser.add_argument(
+        "--mlp-benchmark-seconds",
+        type=int,
+        default=3600,
+        help="independent MLP board benchmark timeout in seconds",
+    )
+    parser.add_argument(
+        "--family-benchmark-seconds",
+        type=int,
+        default=3600,
+        help="independent non-MLP family board benchmark timeout in seconds",
+    )
+    parser.add_argument(
+        "--overall-benchmark-seconds",
+        type=int,
+        default=3600,
+        help="independent overall board benchmark timeout in seconds",
+    )
+    parser.add_argument(
+        "--run-seconds",
+        type=int,
+        default=3600,
+        help="maximum time for one fresh-process benchmark invocation",
+    )
+    parser.add_argument(
+        "--reuse-board-timings",
+        action="store_true",
+        help="bundle boards and reuse shared candidate timing observations",
+    )
+    parser.add_argument(
+        "--reuse-completed-jobs",
+        action="store_true",
+        help="reuse earlier completed database measurements with identical requests",
+    )
+    parser.add_argument(
         "--min-rounds", type=int, help="minimum paired rounds required for admission"
     )
     parser.add_argument(
@@ -177,6 +211,16 @@ def main():
     )
     if min(rounds, inner, baseline_rounds) < 1:
         parser.error("round and process counts must be positive")
+    if (
+        min(
+            args.mlp_benchmark_seconds,
+            args.family_benchmark_seconds,
+            args.overall_benchmark_seconds,
+            args.run_seconds,
+        )
+        < 1
+    ):
+        parser.error("board benchmark timeouts must be positive")
     min_rounds = args.min_rounds if args.min_rounds is not None else min(5, rounds)
     if not 1 <= min_rounds <= rounds:
         parser.error("--min-rounds must be between 1 and --rounds")
@@ -217,12 +261,14 @@ def main():
         "suite_weights = { synthetic = 0.5, real = 0.5 }"
         if real_suite
         else "suite_weights = { synthetic = 1.0 }",
+        f"reuse_board_timings = {str(args.reuse_board_timings).lower()}",
+        f"reuse_completed_jobs = {str(args.reuse_completed_jobs).lower()}",
         "",
         "[timing]",
         f"rounds = {rounds}",
         f"inner = {inner}",
         f"baseline_rounds = {baseline_rounds}",
-        "run_seconds = 300",
+        f"run_seconds = {args.run_seconds}",
         "# Build and measurement limits default by architecture and model count.",
         "",
         "[admission]",
@@ -244,7 +290,10 @@ def main():
         "[rewards.board_weights]",
     ]
     names = list(FAMILIES)
-    selected = [args.board] if args.board else ["overall", *names]
+    family_order = [name for name in names if name not in ("recurrent",)]
+    if "recurrent" in names:
+        family_order.append("recurrent")
+    selected = [args.board] if args.board else [*family_order, "overall"]
     lines += [
         f"{name} = {1.0 if args.board else 0.5 if name == 'overall' else 0.5 / len(names)}"
         for name in selected
@@ -260,6 +309,16 @@ def main():
             f"[boards.{board}.reference]",
             f"path = {str(source)!r}",
             f"sha256 = {hashlib.sha256(source.read_bytes()).hexdigest()!r}",
+            "",
+            f"[boards.{board}.timing]",
+            "benchmark_seconds = "
+            + str(
+                args.overall_benchmark_seconds
+                if board == "overall"
+                else args.mlp_benchmark_seconds
+                if board == "mlp"
+                else args.family_benchmark_seconds
+            ),
         ]
     if args.real_image_zoo:
         fixtures = fixtures_for_adapter(assets_dir, "image-zoo-v1")

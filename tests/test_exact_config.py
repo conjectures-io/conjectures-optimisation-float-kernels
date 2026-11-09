@@ -56,12 +56,27 @@ def test_default_config_uses_six_families_and_seven_reward_boards(tmp_path):
     config = tomllib.loads(output.read_text())
 
     assert set(config["boards"]) == SCORED_FAMILIES | {"overall"}
+    assert list(config["boards"]) == [
+        "mlp",
+        "resnet",
+        "mobilenet",
+        "normalized_mlp",
+        "mixer",
+        "recurrent",
+        "overall",
+    ]
     assert set(config["rewards"]["board_weights"]) == set(config["boards"])
     assert set(config["boards"]["overall"]["models"]) == SCORED_FAMILIES
     assert config["timing"]["rounds"] == 12
     assert config["timing"]["inner"] == 1
     assert config["timing"]["baseline_rounds"] == 3
+    assert config["timing"]["run_seconds"] == 3600
     assert config["admission"]["min_rounds"] == 5
+    assert config["benchmark"]["reuse_board_timings"] is False
+    assert config["benchmark"]["reuse_completed_jobs"] is False
+    assert all(
+        config["boards"][board]["timing"]["benchmark_seconds"] == 3600 for board in config["boards"]
+    )
     compact_cells = config["benchmark"]["synthetic_cells"]
     assert len(compact_cells) == 18
     assert all(":b1:" in cell for cell in compact_cells)
@@ -146,12 +161,41 @@ def test_default_config_uses_six_families_and_seven_reward_boards(tmp_path):
 def test_generated_default_config_parses_and_overall_plan_includes_recurrent(tmp_path):
     configured = Config.load(generate(tmp_path, "default.toml"))
     assert set(configured.boards) == SCORED_FAMILIES | {"overall"}
+    assert list(configured.boards)[-2:] == ["recurrent", "overall"]
+    assert configured.reuse_board_timings is False
+    assert configured.reuse_completed_jobs is False
     overall = configured.plan("overall")
     assert {cell.split(":")[0] for cell in overall["cells"]} == SCORED_FAMILIES
     assert sum(overall["cells"].values()) == pytest.approx(1)
     assert configured.plan("recurrent")["cells"] == pytest.approx(
         {f"recurrent:b1:{kind}": 1 / 3 for kind in ("normal", "wide", "sparse")}
     )
+
+
+def test_board_reuse_and_timeout_profiles_are_configurable(tmp_path):
+    config = tomllib.loads(
+        generate(
+            tmp_path,
+            "custom-timeouts.toml",
+            "--reuse-board-timings",
+            "--reuse-completed-jobs",
+            "--mlp-benchmark-seconds",
+            "1800",
+            "--family-benchmark-seconds",
+            "900",
+            "--overall-benchmark-seconds",
+            "2400",
+            "--run-seconds",
+            "2700",
+        ).read_text()
+    )
+    assert config["benchmark"]["reuse_board_timings"] is True
+    assert config["benchmark"]["reuse_completed_jobs"] is True
+    assert config["boards"]["mlp"]["timing"]["benchmark_seconds"] == 1800
+    assert config["boards"]["resnet"]["timing"]["benchmark_seconds"] == 900
+    assert config["boards"]["recurrent"]["timing"]["benchmark_seconds"] == 900
+    assert config["boards"]["overall"]["timing"]["benchmark_seconds"] == 2400
+    assert config["timing"]["run_seconds"] == 2700
 
 
 def test_recurrent_board_alone_and_with_full_synthetic_cells(tmp_path):
