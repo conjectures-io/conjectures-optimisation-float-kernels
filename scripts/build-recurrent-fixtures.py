@@ -31,10 +31,9 @@ ROOT = Path(__file__).resolve().parents[1]
 TRAINING = ROOT / "training/recurrent"
 sys.path.insert(0, str(TRAINING))
 
+import data as datasets  # noqa: E402
 import reference  # noqa: E402
 from export import tensor_count  # noqa: E402
-
-import data as datasets  # noqa: E402
 
 DEFAULT_OUTPUT_ROOT = ROOT / "data/benchmark/assets"
 DEFAULT_RUNS = TRAINING / "runs"

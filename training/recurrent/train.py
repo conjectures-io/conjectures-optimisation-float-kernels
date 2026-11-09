@@ -25,10 +25,9 @@ from torch import nn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also works under `python -I`
 
+import data as datasets  # noqa: E402
 from export import export_weights  # noqa: E402
 from models import RecurrentModel  # noqa: E402
-
-import data as datasets  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 RUNS = HERE / "runs"
