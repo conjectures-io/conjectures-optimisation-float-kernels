@@ -584,8 +584,13 @@ class Config:
         timing = data["timing"]
         validate_timing(timing)
         admission = data["admission"]
-        if set(admission) != {"bar", "guard", "draws", "quantile", "min_rounds"}:
+        required_admission = {"bar", "guard", "draws", "quantile", "min_rounds"}
+        if not required_admission <= set(admission) or set(admission) - (
+            required_admission | {"guard_enabled"}
+        ):
             raise ValueError("incomplete admission settings")
+        if type(admission.get("guard_enabled", True)) is not bool:
+            raise ValueError("guard_enabled must be true or false")
         if any(not math.isfinite(v) for v in admission.values()):
             raise ValueError("admission settings must be finite")
         if (

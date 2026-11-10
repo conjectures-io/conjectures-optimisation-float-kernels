@@ -51,6 +51,12 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 
 ## Measurement
 
+Generated configs disable the per-workload regression veto (`admission.guard_enabled = false`).
+Admission still requires the aggregate speed bar and a positive bootstrap lower gain bound;
+individual workload/device ratios remain in `strata.guards` as telemetry. Pass
+`--enable-regression-guard` to `scripts/exact-config.py` to enforce the guard. Existing configs
+that omit `guard_enabled` retain the guard, preserving historical admission replay.
+
 1. Prepare shared Lean modules, then build the baseline, candidate and current champion/reference
    under separately recorded stage clocks. Each stage has its own configurable cap, while the
    environment's overall build limit remains a final ceiling. Valid cached binaries skip their

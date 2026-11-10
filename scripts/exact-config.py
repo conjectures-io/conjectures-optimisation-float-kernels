@@ -174,6 +174,11 @@ def main():
         "--min-rounds", type=int, help="minimum paired rounds required for admission"
     )
     parser.add_argument(
+        "--enable-regression-guard",
+        action="store_true",
+        help="require every workload/device ratio to pass the regression threshold",
+    )
+    parser.add_argument(
         "--board-rounds",
         action="append",
         default=[],
@@ -346,6 +351,7 @@ def main():
         "[admission]",
         "bar = 0.97",
         "guard = 1.10",
+        f"guard_enabled = {str(args.enable_regression_guard).lower()}",
         "draws = 2000",
         "quantile = 0.05",
         f"min_rounds = {min_rounds}",
