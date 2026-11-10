@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from config import DEFAULT_SYNTHETIC_CELLS, Config
+from config import BASELINE_SOURCE, DEFAULT_SYNTHETIC_CELLS, Config, baseline_hash
 from workload import RealWorkloadSpec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +55,12 @@ def test_default_config_uses_six_families_and_seven_reward_boards(tmp_path):
     )
     config = tomllib.loads(output.read_text())
 
+    # The starting incumbent and absolute telemetry must use the same kernel.
+    incumbent = ROOT / "kernels/exact/incumbent/Kernel.lean"
+    assert BASELINE_SOURCE.read_bytes() == incumbent.read_bytes()
+    assert all(
+        board["reference"]["sha256"] == baseline_hash() for board in config["boards"].values()
+    )
     assert set(config["boards"]) == SCORED_FAMILIES | {"overall"}
     assert list(config["boards"]) == [
         "mlp",

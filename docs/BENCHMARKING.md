@@ -79,6 +79,14 @@ that omit `guard_enabled` retain the guard, preserving historical admission repl
 4. Check matching output checksums. The baseline is measured separately on fewer rounds, once per
    fresh process; its timings are diagnostic and do not affect promotion. The exact
    baseline source hash and its per-request timings are stored with each measurement result.
+   The shipped initial reference and telemetry baseline use the same optimized kernel: dev entry
+   #15 (original submission hash
+   `54b3fe4568c838e7c8435776e15de7c6340d7ae3e977d8e930a78ce3963a0b08`, with trailing
+   whitespace normalized in the shipped files).
+   Their sources live in `kernels/exact/incumbent/Kernel.lean` and
+   `kernels/exact/baseline/Kernel.lean`; keep them identical. Promotions replace the board's
+   incumbent while the telemetry baseline stays fixed. Existing configs must be regenerated to
+   adopt the new initial reference; historical results retain their original source hashes.
 5. Result telemetry reports shared preparation and baseline, reference and candidate build times
    separately, each role's cache lookup separately from actual build work, plus the overall build
    duration and configured phase caps. Process startup and all measurement preparation remain
