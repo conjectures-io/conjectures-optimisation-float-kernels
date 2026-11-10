@@ -3,8 +3,11 @@ import ContractExact
 /-!
 # Exact runtime, season 2: starting champion for the new families
 
-The season-1 families are the contract's pinned kernels (`Pinned.kernels`); this entry supplies
-the `attn` and `rnn` families:
+The season-1 families are the contract's pinned kernels (`Pinned.kernels`); this entry replaces
+`conv2d` and supplies the `attn` and `rnn` families:
+- `conv2d` (`convFast`) has fast paths for depthwise layers (one exact dot over the window taps per
+  output) and pointwise 1×1 layers (`dotSel` over the input channels); other shapes use the generic
+  `conv2dWith dotFn` (`convFast_eq`, `pointwiseConv_eq`).
 - `sigmoid`, `tanh` and `exp` (for `x ≤ 0`) have fast paths (`FastAct`). `e^(−|x|)` is enclosed in
   64-bit fixed point (tables of `e^(−n)` and `e^(−j/64)`, a degree-6 Taylor sum, every product
   rounded in the safe direction); quotients start from a `Float` guess that is then checked
@@ -17,7 +20,7 @@ the `attn` and `rnn` families:
   read, and the window path, which reads them twice, measured slower there.
 
 `correct` proves the entry equals the specs; `sigmoidF_eq`, `tanhF_eq`, `expF_eq`, `dotWin_spec`
-carry the new parts.
+and `convFast_eq` carry the new parts.
 -/
 
 namespace FastAct
@@ -1523,7 +1526,8 @@ theorem convFast_eq : convFast = conv2dWith Pinned.dotFn := by
     simp [conv2dWith, hopg, dotSel_eq]
   · simpa only [pointwiseConv_eq, dotSel_eq]
 
-/-- The entry: the pinned season-1 kernels, with fast `attn` and `rnn` families. -/
+/-- The entry: the pinned season-1 kernels, with a fast `conv2d` and fast `attn` and `rnn`
+families. -/
 def kernels : Kernels :=
   { Pinned.kernels with
     conv := { Pinned.kernels.conv with conv2d := convFast }

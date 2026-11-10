@@ -1,6 +1,6 @@
 # Status: operations to add to the TorchLean competition
 
-As of 2026-11-09, branch `feat/exact-competition-upgrade` (private repo), which combines
+As of 2026-11-10, `main` (private repo), which includes the merged branch `feat/exact-competition-upgrade`, which combines
 `feat/competition-upgrade-ops`, `feat/floatlib3-attention`, `feat/real-model-benchmark` and
 `feat/recurrent-family`. Tracks the Notion task "Operations to add to TorchLean competition – part of the
 upgrade". The plan is in [competition-upgrade.md](competition-upgrade.md).
@@ -89,7 +89,7 @@ partial coverage from before this upgrade.
 |---|---|---|
 | Spec and validity rules | ✅ | `lean/contract/ContractExact.lean`, `ContractExactChecked.lean` |
 | Shape and meaning proofs | ✅ | `lean/contract/ExactToolkit/ModelProofs.lean`, `TensorProofs.lean` |
-| Incumbent and fixtures proved against the 13-kernel contract | ✅ | `kernels/exact/*/Kernel.lean`. The incumbent runs the spec's definitions with its fast dot product; it has no special fast paths for the new features, which leaves headroom for miners |
+| Incumbent and fixtures proved against the 19-kernel contract | ✅ | `kernels/exact/*/Kernel.lean`. The incumbent (dev entry #15, also the telemetry baseline) builds on the contract's pinned season-1 kernels and adds proved fast paths: correctly rounded `sigmoid`, `tanh` and `exp`, a window dot product for attention, and depthwise and 1×1 `conv2d`. Generalised convolution and pooling and `convTranspose` have no fast paths |
 | Independent oracle | ✅ | `lean/audit/SpecProbe.lean`, `scripts/audit-exact-spec.py`. Agrees on 16,883 cases and 51 models. Bit-identical to ONNX Runtime 1.31 for conv2d, depthwise, convTranspose and both pools |
 | Differential audit with planted mutants | ✅ | `lean/audit/ExactAuditCore.lean`. 13 kernels; new valid-shape generators for every conv/pool feature; `--selftest` catches 57/57 mutants (20 new, e.g. convTranspose adding +0 for taps that reach no input, maxpool reading padding as +0, ceil mode without the last-window rule) and fails if a geometry feature goes untested; `exactAudit 20 42` passes on the incumbent (5,460 cases, 0 mismatches) |
 | Shape/workload audits, proof inventory, showcase, dev bench | ✅ | `lean/audit/{SuiteAudit,WorkloadAudit,ExactSuiteProofs,SpecProofs}.lean`, `lean/showcase/Showcase.lean`, `lean/bench/ExactDev.lean`, `scripts/audit-exact-models.py`, `scripts/prepare-kernel-optimizations.py`. All targets build; the Python shape mirror agrees with Lean on 6,048 valid and invalid shapes; proof-axiom check passes (58 theorems, standard axioms only) |

@@ -24,18 +24,25 @@ reach the models that use them. See [the benchmark](BENCHMARKING.md).
 
 ## Starting implementation
 
-The season-1 families come from the contract's `Pinned.kernels`: an exact limb accumulator,
-digit-based final rounding (ending in `FastRound.roundW`) and word-level maximum pooling. Dot-based
-layers reuse that exact dot implementation; residual addition and scale/shift use the specs.
-Normalization uses `rmsnormWith dotFn` and `layernormWith dotFn`. The starting entry supplies only
-the `attn` and `rnn` families.
+The shipped incumbent (dev entry #15; the telemetry baseline is the same file) builds on the
+contract's `Pinned.kernels`: an exact limb accumulator, digit-based final rounding (ending in
+`FastRound.roundW`) and word-level maximum pooling. Dot-based layers reuse that exact dot
+implementation; residual addition and scale/shift use the specs. Normalization uses
+`rmsnormWith dotFn` and `layernormWith dotFn`. The incumbent replaces `conv2d` and supplies the
+`attn` and `rnn` families.
 
 The accumulator sums finite products exactly before final binary32 rounding. Its proof connects
 that integer representation to FloatLib's exact dot product. Special inputs follow the pinned
 FloatLib semantics.
 
-The new families have fast paths of their own, each proved equal to its spec:
+Its own fast paths, each proved equal to its spec:
 
+- **`conv2d` (`convFast`):**
+  - Depthwise layers (one group per channel, `cout = cin`) take one exact dot per output over the
+    window taps, without the general group arithmetic.
+  - Pointwise 1×1 layers (stride 1, no padding or dilation, one group) take one dot over the input
+    channels plus the bias, through `dotSel`.
+  - Every other shape uses the generic `conv2dWith dotFn` (`convFast_eq`, `pointwiseConv_eq`).
 - **`sigmoid`, `tanh` and `exp`:**
   - `FastAct.sigmoidF`, `FastAct.tanhF` and `FastAct.expF`; `exp` covers `x ≤ 0`, the softmax
     case.
@@ -44,7 +51,7 @@ The new families have fast paths of their own, each proved equal to its spec:
   - Each quotient is a `Float` guess, then checked exactly.
   - The result is accepted only when both ends of the enclosure round to the same binary32 word.
     Otherwise, and for `|x| ≥ 17`, the spec decides.
-- **Word rounding (`FastAct.roundW`):**
+- **Word rounding (`FastRound.roundW`, in the contract):**
   - Rounds `±m · 2^e` to binary32 by bit operations when the result is a normal number below
     `2^127`.
   - Proved equal to FloatLib's `roundDyadic`, about 9× faster than `finishWord`.
@@ -58,7 +65,7 @@ The new families have fast paths of their own, each proved equal to its spec:
 - **LSTM and GRU:** they keep `dotFn`. Their operands are computed on each read, and the window
   path reads them twice; measured, it was slower.
 
-Season-1 kernels keep the launch implementation. Open:
+The other season-1 kernels keep the launch implementation. Open:
 - a single-pass window sum for computed operands;
 - a fast range beyond `|x| < 17`;
 - reusing decoded weights across the `T` steps.

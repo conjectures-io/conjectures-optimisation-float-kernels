@@ -63,6 +63,31 @@ are covered:
   use FloatLib's `toReal_eq_roundAt_of_round?_eq_some`: an accepted search rounds every value in
   its enclosure, in particular the true one.
 
+## Fast paths in the shipped kernels
+
+Files: `lean/contract/ExactToolkit/FastRound.lean`, `lean/contract/ExactToolkit/Pinned.lean` and
+`kernels/exact/incumbent/Kernel.lean` (the telemetry baseline is the same file).
+
+- `roundW_eq`: bit-level rounding of `±m · 2^e` equals FloatLib's `roundDyadic`, through
+  `roundDyadicGeneral_eq_roundDyadic`; outside the normal range below `2^127` it calls FloatLib.
+- `bracket_spec`: if both ends of an enclosure `[lo, hi] · 2^e` round to the same finite nonzero
+  word, every value between them rounds to it (`roundAt_mono`, `eq_of_toReal_eq_of_nonzero`). The
+  fast activations and the window dot product rest on it.
+- `Pinned.correct`: the pinned season-1 kernels (the launch implementation's exact limb
+  accumulator) equal the specs.
+- `sigmoidF_eq`, `tanhF_eq`, `expF_eq`: the fast activations equal `sigmoidCR`, `tanhCR` and the
+  correctly rounded `exp` (for `x ≤ 0`). `expNeg_spec` encloses `e^(−c)` from tables built as powers
+  of a proved enclosure of `e^(−1/64)` (`powOf_spec`) and a degree-6 Taylor sum bounded by Mathlib's
+  `Real.exp_bound` (`expSmall_spec`); `mul128_spec` and the directed products give the bounds;
+  quotients are accepted only after an exact 128-bit check (`divLo_spec`, `divHi_spec`). The spec
+  theorems `toReal_sigmoidModel`, `toReal_tanhModel` and FloatLib's `toReal_exp_eq_roundAt` close
+  each proof.
+- `dotWin_spec`: the window dot product, when it settles, equals `dotFn`. `sumWin64_eq` proves the
+  64-bit sums equal the natural ones (no overflow), `sumNat_bounds` puts the exact total within `n`
+  window units, and `bracket_spec` gives the word.
+- `convFast_eq`, `pointwiseConv_eq`: the depthwise and 1×1 convolution fast paths equal the generic
+  `conv2dWith dotFn`.
+
 ## Tensor and reduction mathematics
 
 File: `lean/contract/ExactToolkit/TensorProofs.lean`, namespace `ExactRuntime.TensorMath`.

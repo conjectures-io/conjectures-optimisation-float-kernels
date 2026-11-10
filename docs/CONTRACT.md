@@ -8,9 +8,10 @@ The [pinned contract](../lean/contract/ContractExact.lean) brings together three
 - [`ExactToolkit.Pinned`](../lean/contract/ExactToolkit/Pinned.lean): the pinned season-1 kernels
   (`Pinned.kernels`, proved equal to the specs).
 
-An entry competes on the `attn` and `rnn` families. It builds its `kernels` as
-`{ Pinned.kernels with attn := …, rnn := … }` and proves the obligation from `Pinned.correct` and its
-own equalities. The [checked interface](../lean/contract/ContractExactChecked.lean)
+An entry supplies all 19 kernels. `Pinned.kernels` is a proved implementation of every season-1
+family to start from: an entry can write `{ Pinned.kernels with … }`, replace only the kernels it
+improves, and prove the obligation from `Pinned.correct` and its own equalities. The shipped
+incumbent does this for `conv2d` and the `attn` and `rnn` families. The [checked interface](../lean/contract/ContractExactChecked.lean)
 adds tensor shape/domain checks. Every submitted implementation must match the raw specification
 universally, including behavior outside the checked interface's accepted domain.
 
