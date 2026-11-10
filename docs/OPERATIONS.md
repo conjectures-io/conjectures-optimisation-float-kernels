@@ -27,7 +27,7 @@ for restricted credentials; keep administrator credentials off worker machines.
 
 ## Source-size limits
 
-The central API defaults to accepting 1 MiB and reads `TORCHLEAN_MAX_SOURCE_BYTES` from its
+The central API defaults to accepting 1 MiB and reads `TENSOR_KERNELS_MAX_SOURCE_BYTES` from its
 own environment (range 1–4,194,304). The competition DB, gate, auditor and miner CLI instead
 share a fixed 4 MiB safety ceiling, defined in `validator/source_limits.py`.
 
@@ -76,10 +76,10 @@ for leases, caching, retries and failure behavior.
 ## Public API connection
 
 Provision the dedicated API account and apply its grants from `deploy/platform/grant.sh` using
-administrative credentials. Configure the central API's TorchLean database URL and enable its
-TorchLean routes/uploads separately. Do not give the API coordinator or benchmark-result privileges.
+administrative credentials. Configure the central API's Tensor kernels database URL and enable its
+Tensor kernels routes/uploads separately. Do not give the API coordinator or benchmark-result privileges.
 
-**Compatibility must match the central API release.** Its current TorchLean intake expects
+**Compatibility must match the central API release.** Its current Tensor kernels intake expects
 `intake_mode` and nullable registration IDs for explicit development uploads, and its dashboard
 needs public coordinator configuration and source-restriction reads. Migration `tensor_0002`
 and the current `grant.sh` provide them: apply both before enabling that central API; a
@@ -145,7 +145,7 @@ For source disqualification/restoration and independent audits, use the commands
 ## Events
 
 With `AXIOM_TOKEN` and `AXIOM_DATASET` set, each entry point sends structured events to the
-platform's Axiom dataset (`validator/axiom.py`), every one tagged `competition: "torchlean"`.
+platform's Axiom dataset (`validator/axiom.py`), every one tagged `competition: "tensor-kernels"`.
 Without them nothing is sent. ERROR logs and uncaught exceptions arrive as `log_error`.
 
 | source | events |

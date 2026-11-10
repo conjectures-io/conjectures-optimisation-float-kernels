@@ -51,6 +51,12 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 
 ## Measurement
 
+Generated configs disable the per-workload regression veto (`admission.guard_enabled = false`).
+Admission still requires the aggregate speed bar and a positive bootstrap lower gain bound;
+individual workload/device ratios remain in `strata.guards` as telemetry. Pass
+`--enable-regression-guard` to `scripts/exact-config.py` to enforce the guard. Existing configs
+that omit `guard_enabled` retain the guard, preserving historical admission replay.
+
 1. Prepare shared Lean modules, then build the baseline, candidate and current champion/reference
    under separately recorded stage clocks. Each stage has its own configurable cap, while the
    environment's overall build limit remains a final ceiling. Valid cached binaries skip their
@@ -73,6 +79,14 @@ The generator is pinned in [ExactSuite.lean](../lean/bench/ExactSuite.lean).
 4. Check matching output checksums. The baseline is measured separately on fewer rounds, once per
    fresh process; its timings are diagnostic and do not affect promotion. The exact
    baseline source hash and its per-request timings are stored with each measurement result.
+   The shipped initial reference and telemetry baseline use the same optimized kernel: dev entry
+   #15 (original submission hash
+   `54b3fe4568c838e7c8435776e15de7c6340d7ae3e977d8e930a78ce3963a0b08`, with trailing
+   whitespace normalized in the shipped files).
+   Their sources live in `kernels/exact/incumbent/Kernel.lean` and
+   `kernels/exact/baseline/Kernel.lean`; keep them identical. Promotions replace the board's
+   incumbent while the telemetry baseline stays fixed. Existing configs must be regenerated to
+   adopt the new initial reference; historical results retain their original source hashes.
 5. Result telemetry reports shared preparation and baseline, reference and candidate build times
    separately, each role's cache lookup separately from actual build work, plus the overall build
    duration and configured phase caps. Process startup and all measurement preparation remain
@@ -113,7 +127,7 @@ the 11-round control was substantially more stable, and an even count balances w
 first. Repetition counts are configurable with
 `--rounds`, `--inner`, `--baseline-rounds` and `--min-rounds`; `--quick` emits a one-round smoke
 configuration. These are pilot defaults, not final production policy. Read
-`/v1/competitions/torchlean/boards`
+`/v1/competitions/tensor-kernels/boards`
 and submission reports for live policy and frozen evaluation settings. Full processing also includes
 proof checking, native builds and queue waiting; it is longer than the timed inference.
 Default measurement ceilings are 20 minutes for overall and 6 minutes for one family;

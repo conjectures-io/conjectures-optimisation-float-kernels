@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from config import DEFAULT_SYNTHETIC_CELLS, Config
+from config import BASELINE_SOURCE, DEFAULT_SYNTHETIC_CELLS, Config, baseline_hash
 from workload import RealWorkloadSpec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +55,12 @@ def test_default_config_uses_six_families_and_seven_reward_boards(tmp_path):
     )
     config = tomllib.loads(output.read_text())
 
+    # The starting incumbent and absolute telemetry must use the same kernel.
+    incumbent = ROOT / "kernels/exact/incumbent/Kernel.lean"
+    assert BASELINE_SOURCE.read_bytes() == incumbent.read_bytes()
+    assert all(
+        board["reference"]["sha256"] == baseline_hash() for board in config["boards"].values()
+    )
     assert set(config["boards"]) == SCORED_FAMILIES | {"overall"}
     assert list(config["boards"]) == [
         "mlp",
@@ -196,6 +202,26 @@ def test_board_reuse_and_timeout_profiles_are_configurable(tmp_path):
     assert config["boards"]["recurrent"]["timing"]["benchmark_seconds"] == 900
     assert config["boards"]["overall"]["timing"]["benchmark_seconds"] == 2400
     assert config["timing"]["run_seconds"] == 2700
+
+
+def test_board_round_profiles_are_configurable_and_validated(tmp_path):
+    output = generate(
+        tmp_path,
+        "board-rounds.toml",
+        "--rounds",
+        "12",
+        "--min-rounds",
+        "4",
+        "--board-rounds-json",
+        '{"resnet":4,"recurrent":4,"overall":4}',
+        "--board-baseline-rounds-json",
+        '{"resnet":1,"recurrent":1,"overall":1}',
+    )
+    configured = Config.load(output)
+    assert configured.plan("resnet")["timing"]["rounds"] == 4
+    assert configured.plan("resnet")["timing"]["baseline_rounds"] == 1
+    assert configured.plan("mlp")["timing"]["rounds"] == 12
+    assert configured.plan("overall")["timing"]["rounds"] == 4
 
 
 def test_recurrent_board_alone_and_with_full_synthetic_cells(tmp_path):

@@ -1,17 +1,17 @@
 # Central API database contract
 
 The HTTP API is implemented in `conjectures-validator`; this repository owns the competition
-schema and workers. The public slug and signed-message competition are `torchlean`.
+schema and workers. The public slug and signed-message competition are `tensor-kernels`.
 API and competition schema/grant releases must be deployed together.
 
 ## Intake
 
 One signed UTF-8 Kernel.lean. The API defaults to a 1 MiB upload limit, configurable with
-`TORCHLEAN_MAX_SOURCE_BYTES` within 1–4,194,304 bytes. The body cap is twice that limit.
+`TENSOR_KERNELS_MAX_SOURCE_BYTES` within 1–4,194,304 bytes. The body cap is twice that limit.
 `tensor_0004` raises the fixed database/worker ceiling to 4 MiB; migrate before enabling larger
 uploads. Workers and the CLI do not enforce the API's current policy, so previously accepted
 larger sources remain usable after it is lowered. Use the existing five-line signature
-message with competition slug `torchlean`. Validate signature
+message with competition slug `tensor-kernels`. Validate signature
 age, current recorded membership and the configured registration cutoff in the central API.
 Retired competition databases are not queried.
 
@@ -30,7 +30,7 @@ Use DB reception time; do not supply arbitrary IDs or dates.
 `tensor_0002` adds `submissions.intake_mode`, default `subnet`. Production uploads require a
 non-null registration ID. Explicit development uploads use `intake_mode=dev` with a null
 registration ID, enforced together by a check constraint. The central API permits this bypass
-only when `APP_MODE=DEV` and `TORCHLEAN_DEV_SKIP_REGISTRATION=1`; signatures, duplicate and request
+only when `APP_MODE=DEV` and `TENSOR_KERNELS_DEV_SKIP_REGISTRATION=1`; signatures, duplicate and request
 limits remain enforced. Never manufacture chain registrations to implement the bypass. No entitlement_claims, slot,
 submission_files or competition-side rate-limit table exists. The central API owns request limits.
 
@@ -62,7 +62,7 @@ and read publication fields. It cannot forge proofs, benchmark outcomes, promoti
 
 ## Central API compatibility
 
-The central TorchLean API also supports explicit development intake: `intake_mode=dev` with a
+The central Tensor kernels API also supports explicit development intake: `intake_mode=dev` with a
 null registration ID, no fabricated chain registration. Production rows use `intake_mode=subnet`.
 Its read routes require coordinator public configuration/board hashes and source restrictions.
 The `tensor_0001` schema and grants in this checkout do not yet supply all of those fields/reads;

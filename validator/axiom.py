@@ -8,7 +8,7 @@ read both. That only works if every record has the platform's shape exactly:
      critical, "source": <process>, "event_type": <what happened>, "environ": AXIOM_ENVIRON}
 
 with the envelope written last, so a details key named `source` cannot displace the label every
-query filters on. Every event here also carries `competition: "torchlean"` and, in the two
+query filters on. Every event here also carries `competition: "tensor-kernels"` and, in the two
 chain processes, `netuid` and `network`.
 
 Environment (the platform's names and meanings):
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
 
 AXIOM_API_URL: Final = "https://api.axiom.co"
 DEFAULT_ENVIRON: Final = "default"
-COMPETITION: Final = "torchlean"
+COMPETITION: Final = "tensor-kernels"
 
 # The platform's `Severity` values, verbatim: one ladder whichever side emitted the event.
 Severity: TypeAlias = Literal["debug", "info", "warning", "error", "critical"]

@@ -869,7 +869,10 @@ def assess(plan, measurements):
             envscores.append((combined, envweight))
         draws.append(1 - geomean(envscores))
     lower = quantile(draws, plan["admission"]["quantile"])
-    guard = all(v <= plan["admission"]["guard"] for d in diagnostics for v in d["guards"].values())
+    guard_enabled = plan["admission"].get("guard_enabled", True)
+    guard = not guard_enabled or all(
+        v <= plan["admission"]["guard"] for d in diagnostics for v in d["guards"].values()
+    )
     outcome = (
         "guard-failed"
         if not guard
@@ -883,6 +886,7 @@ def assess(plan, measurements):
         score=point,
         suite_scores=aggregate_suite_scores,
         gain_lower=lower,
+        guard_enabled=guard_enabled,
         guard_passed=guard,
         outcome=outcome,
         strata=diagnostics,

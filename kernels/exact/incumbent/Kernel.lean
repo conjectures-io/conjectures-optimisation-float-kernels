@@ -1459,9 +1459,74 @@ theorem siluF_eq : siluF = siluSpec := by
   funext x
   simp only [siluF, siluSpec, FastAct.sigmoidF_eq]
 
+/-- Exact 1x1 convolution fast path; all other shapes use the generic exact implementation. -/
+def pointwiseConv (s : ConvShape) (relu : Bool) (inp wts b : Array Word) : Array Word :=
+  if s.kh = 1 ∧ s.kw = 1 ∧ s.strideH = 1 ∧ s.strideW = 1 ∧
+      s.padT = 0 ∧ s.padL = 0 ∧ s.padB = 0 ∧ s.padR = 0 ∧
+      s.dilH = 1 ∧ s.dilW = 1 ∧ s.groups = 1 then
+    Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
+      let o := q.val / (s.ho * s.wo)
+      let y := q.val / s.wo % s.ho
+      let x := q.val % s.wo
+      act relu <| dotSel (s.cin + 1)
+        (fun t => if t < s.cin then
+          if y >= s.h ∨ x >= s.w then 0 else inp[(t * s.h + y) * s.w + x]!
+          else oneW)
+        (fun t => if t < s.cin then wts[o * s.cin + t]! else b[o]!)
+  else conv2dWith Pinned.dotFn s relu inp wts b
+
+theorem pointwiseConv_eq : pointwiseConv = conv2dWith Pinned.dotFn := by
+  funext s relu inp wts b
+  unfold pointwiseConv
+  split_ifs with h
+  · rcases h with ⟨hkh, hkw, hsh, hsw, hpt, hpl, hpb, hpr, hdh, hdw, hgrp⟩
+    have htaps : s.taps = s.cin := by simp [ConvShape.taps, ConvShape.cpg, hgrp, hkh, hkw]
+    have hopg : s.opg = s.cout := by simp [ConvShape.opg, hgrp]
+    apply Array.ext (by simp [conv2dWith, ConvShape.taps, ConvShape.cpg, hgrp, hkh, hkw])
+    intro q hq1 hq2
+    have hp : 0 < s.ho * s.wo := by
+      have hh : 0 < s.ho := by simp [ConvShape.ho]
+      have hw : 0 < s.wo := by simp [ConvShape.wo]
+      exact Nat.mul_pos hh hw
+    have hq : q < s.cout * (s.ho * s.wo) := by
+      simpa [conv2dWith, ConvShape.taps, ConvShape.cpg, hgrp, hkh, hkw] using hq1
+    have hqout : q / (s.ho * s.wo) < s.cout :=
+      (Nat.div_lt_iff_lt_mul hp).2 hq
+    have hgroup : q / (s.ho * s.wo) / s.cout = 0 := Nat.div_eq_of_lt hqout
+    simp [conv2dWith, windowAt, hkh, hkw, hsh, hsw, hpt, hpl, hpb, hpr, hdh, hdw,
+      ConvShape.cpg, hgrp, htaps, hopg, hgroup, Nat.mod_one, dotSel_eq]
+  · simpa only [dotSel_eq]
+
+/-- For a depthwise layer, every output group has exactly one output channel. -/
+def convFast (s : ConvShape) (relu : Bool) (inp wts b : Array Word) : Array Word :=
+  if 0 < s.cin ∧ s.groups = s.cin ∧ s.cout = s.cin then
+    Array.ofFn (n := s.cout * (s.ho * s.wo)) fun q =>
+      let o := q.val / (s.ho * s.wo)
+      let y := q.val / s.wo % s.ho
+      let x := q.val % s.wo
+      act relu <| Pinned.dotFn (s.taps + 1)
+        (fun t => if t < s.taps then windowAt s inp o y x t else oneW)
+        (fun t => if t < s.taps then wts[o * s.taps + t]! else b[o]!)
+  else pointwiseConv s relu inp wts b
+
+theorem convFast_eq : convFast = conv2dWith Pinned.dotFn := by
+  funext s relu inp wts b
+  unfold convFast
+  split_ifs with h
+  · rcases h with ⟨hcin, hgroups, hcout⟩
+    have hcpg : s.cpg = 1 := by
+      simp [ConvShape.cpg, hgroups, Nat.div_self hcin]
+    have hopg : s.opg = 1 := by
+      simp [ConvShape.opg, hcout, hgroups, Nat.div_self hcin]
+    apply Array.ext (by simp [conv2dWith])
+    intro q hq1 hq2
+    simp [conv2dWith, hopg, dotSel_eq]
+  · simpa only [pointwiseConv_eq, dotSel_eq]
+
 /-- The entry: the pinned season-1 kernels, with fast `attn` and `rnn` families. -/
 def kernels : Kernels :=
   { Pinned.kernels with
+    conv := { Pinned.kernels.conv with conv2d := convFast }
     attn := ⟨scoresWith dotSel, mixWith dotSel, softmaxExp dotSel FastAct.expF, siluF⟩
     rnn := ⟨lstmWith Pinned.dotFn FastAct.sigmoidF FastAct.tanhF,
       gruWith Pinned.dotFn FastAct.sigmoidF FastAct.tanhF⟩ }
@@ -1470,10 +1535,9 @@ theorem correct : Obligation kernels := by
   have h := Pinned.correct
   simp only [Obligation, Pinned.kernels] at h
   simp only [Obligation, kernels, Pinned.kernels, siluF_eq, FastAct.sigmoidF_eq, FastAct.tanhF_eq,
-    FastAct.expF_eq, softmaxExp_expW, dotSel_eq, Pinned.dotFn_eq_dotOf]
+    FastAct.expF_eq, softmaxExp_expW, dotSel_eq, convFast_eq, Pinned.dotFn_eq_dotOf]
   rw [← h]
   simp only [specAttn, specRnn, scoresSpec, mixSpec, softmaxSpec, siluSpec, lstmSpec, gruSpec,
     Pinned.dotFn_eq_dotOf]
 
 end Submission
-

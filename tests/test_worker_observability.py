@@ -50,7 +50,7 @@ def test_worker_heartbeat_continues_while_a_job_is_busy_and_stops_on_exit(monkey
     assert capture.events[0]["event_type"] == "service_started"
     assert capture.events[-1]["event_type"] == "service_stopped"
     assert capture.events[-1]["details"]["outcome"] == "stopped"
-    assert all(e["details"]["competition"] == "torchlean" for e in capture.events)
+    assert all(e["details"]["competition"] == "tensor-kernels" for e in capture.events)
     assert not any(t.name == "axiom-heartbeat" for t in threading.enumerate())
 
 
@@ -295,7 +295,7 @@ def test_monitor_rendering_pins_environment_host_and_notifier():
     monitors = monitor_renderer().render("conjectures-validator", "dev", "audit-host", "notify-1")
     assert len(monitors) == 4
     assert all(m["notifierIds"] == ["notify-1"] for m in monitors)
-    assert all("competition == 'torchlean'" in m["aplQuery"] for m in monitors)
+    assert all("competition == 'tensor-kernels'" in m["aplQuery"] for m in monitors)
     assert all("environ == 'dev'" in m["aplQuery"] for m in monitors)
     heartbeat = monitors[-1]
     assert "host == 'audit-host'" in heartbeat["aplQuery"]

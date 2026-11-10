@@ -554,6 +554,7 @@ class Config:
                     )
             local = board.get("timing", {})
             if set(local) - {
+                "rounds",
                 "benchmark_seconds",
                 "run_seconds",
                 "baseline_rounds",
@@ -583,8 +584,13 @@ class Config:
         timing = data["timing"]
         validate_timing(timing)
         admission = data["admission"]
-        if set(admission) != {"bar", "guard", "draws", "quantile", "min_rounds"}:
+        required_admission = {"bar", "guard", "draws", "quantile", "min_rounds"}
+        if not required_admission <= set(admission) or set(admission) - (
+            required_admission | {"guard_enabled"}
+        ):
             raise ValueError("incomplete admission settings")
+        if type(admission.get("guard_enabled", True)) is not bool:
+            raise ValueError("guard_enabled must be true or false")
         if any(not math.isfinite(v) for v in admission.values()):
             raise ValueError("admission settings must be finite")
         if (
@@ -597,6 +603,11 @@ class Config:
             raise ValueError("draws and min_rounds must be positive integers")
         if timing["rounds"] < admission["min_rounds"]:
             raise ValueError("not enough configured rounds")
+        if any(
+            board["timing"].get("rounds", timing["rounds"]) < admission["min_rounds"]
+            for board in boards.values()
+        ):
+            raise ValueError("board has fewer rounds than the admission minimum")
         rewards = data["rewards"]
         if set(rewards) != {"board_weights", "rank_shares", "paused_policy"}:
             raise ValueError("incomplete reward settings")

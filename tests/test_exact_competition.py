@@ -640,8 +640,10 @@ def test_resolved_synthetic_input_plan_is_required_and_validated(config):
         MeasurementRequest.parse(request)
 
 
-def test_stratified_hardware_guard(config):
+@pytest.mark.parametrize("enabled", [True, False])
+def test_stratified_hardware_guard(config, enabled):
     plan = config.plan("mlp")
+    plan["admission"]["guard_enabled"] = enabled
     plan["strata"] = [
         plan["strata"][0] | {"weight": 0.5},
         plan["strata"][0] | {"environment": "arm", "weight": 0.5},
@@ -650,9 +652,30 @@ def test_stratified_hardware_guard(config):
     b = a | {"environment": "arm"}
     decision = assess(plan, [(a, result(a, 0.5)), (b, result(b, 1.2))])
     assert decision["score"] < 0.97
-    assert decision["outcome"] == "guard-failed"
+    assert decision["outcome"] == ("guard-failed" if enabled else "qualifies")
+    assert decision["guard_enabled"] is enabled
+    assert decision["strata"][0]["guards"]
+    assert any(v > 1.1 for row in decision["strata"] for v in row["guards"].values())
     with pytest.raises(ValueError, match="incomplete"):
         assess(plan, [(a, result(a))])
+
+
+@pytest.mark.parametrize("ratio,outcome", [(0.9, "qualifies"), (1.2, "above-bar")])
+def test_disabled_guard_preserves_aggregate_admission(config, ratio, outcome):
+    raw = editable_config(config)
+    raw["admission"]["guard_enabled"] = False
+    configured = Config.parse(raw)
+    request = request_for(configured)
+    decision = assess(configured.plan("mlp"), [(request, result(request, ratio))])
+    assert decision["outcome"] == outcome
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", None])
+def test_guard_enabled_requires_boolean(config, value):
+    raw = editable_config(config)
+    raw["admission"]["guard_enabled"] = value
+    with pytest.raises(ValueError, match="guard_enabled must be true or false"):
+        Config.parse(raw)
 
 
 def test_peak_memory_is_telemetry_and_does_not_change_admission(config):

@@ -1,4 +1,4 @@
-# TorchLean kernel competition
+# Tensor kernels competition
 
 Make CPU inference faster while proving that every output matches the pinned specification,
 bit for bit. Submit one Lean file containing all **19 kernels** and a correctness proof.
@@ -24,7 +24,7 @@ cp -r kernels/exact/incumbent my-entry
 ```
 
 Replace `123` with the ID printed after upload. The client uses **https://conjectures.io** and
-`/v1/competitions/torchlean`. Production uploads require an eligible, unused subnet registration
+`/v1/competitions/tensor-kernels`. Production uploads require an eligible, unused subnet registration
 and a valid hotkey signature. Check the competition's open state and registration cutoff before
 submitting. Each registration permits one submission; rejection still uses that registration.
 

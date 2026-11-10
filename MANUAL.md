@@ -1,7 +1,7 @@
 # Miner manual
 
 Submit a complete kernel implementation to **https://conjectures.io**. This guide uses the
-production TorchLean API; no local database or competition services are needed to submit.
+production Tensor kernels API; no local database or competition services are needed to submit.
 
 ## 1. Check eligibility
 
@@ -10,8 +10,8 @@ The latest registration must be strictly newer than the published cutoff and mus
 have a submission. An older unused registration does not qualify instead. Check the live policy:
 
 ```bash
-curl -fsS https://conjectures.io/v1/competitions/torchlean
-curl -fsS https://conjectures.io/v1/competitions/torchlean/boards
+curl -fsS https://conjectures.io/v1/competitions/tensor-kernels
+curl -fsS https://conjectures.io/v1/competitions/tensor-kernels/boards
 ```
 
 A registration allows **one submission**, regardless of whether its proof passes or fails.
@@ -121,7 +121,7 @@ for interpretation and repeatable comparisons. Avoid concurrent builds or other 
   --hotkey ~/.bittensor/wallets/my-wallet/hotkeys/my-hotkey
 ```
 
-Replace the example wallet/key names with yours. The client hashes the file, signs the TorchLean
+Replace the example wallet/key names with yours. The client hashes the file, signs the Tensor kernels
 upload message and prints the submission ID. Keep your system clock synchronized; signatures
 have a limited validity window. `--url` overrides the API origin when using your own instance.
 
@@ -168,7 +168,7 @@ whitespace is accepted but then rejected before the proof, at stage `intake`. St
 entry it copies.
 
 Development APIs can accept unregistered test identities such as `//Alice` (with
-`TORCHLEAN_DEV_SKIP_REGISTRATION=1` and a coordinator config with `dev_intake = true`, from
+`TENSOR_KERNELS_DEV_SKIP_REGISTRATION=1` and a coordinator config with `dev_intake = true`, from
 `scripts/exact-config.py --dev-intake`). Production never evaluates such uploads, and the client
 has no flag to bypass registration.
 
